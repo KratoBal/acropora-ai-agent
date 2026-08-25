@@ -8,10 +8,12 @@
   },
   "dependencies": {
     "fastify": "^5.0.0",
-    "openai": "^5.0.0"
+    "openai": "^5.0.0",
+    "pg": "^8.13.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "@types/pg": "^8.11.10"
   }
 }
