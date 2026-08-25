@@ -2,12 +2,42 @@ import Fastify from "fastify";
 import OpenAI from "openai";
 
 const app = Fastify({
-  logger: true
+  logger: true,
+  trustProxy: true
 });
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
+
+const rateLimitPerMinute = 20;
+const rateWindowMs = 60_000;
+
+const rateBuckets = new Map<
+  string,
+  { startedAt: number; count: number }
+>();
+
+function consumeRateLimit(key: string): boolean {
+  const now = Date.now();
+  const current = rateBuckets.get(key);
+
+  if (!current || now - current.startedAt >= rateWindowMs) {
+    rateBuckets.set(key, {
+      startedAt: now,
+      count: 1
+    });
+
+    return true;
+  }
+
+  if (current.count >= rateLimitPerMinute) {
+    return false;
+  }
+
+  current.count += 1;
+  return true;
+}
 
 app.get("/health", async () => {
   return {
@@ -34,6 +64,18 @@ app.post<{
       error: "unauthorized"
     });
   }
+
+  const rateLimitKey = request.ip;
+
+  if (!consumeRateLimit(rateLimitKey)) {
+    return reply
+      .code(429)
+      .header("Retry-After", "60")
+      .send({
+        error: "rate limit exceeded"
+      });
+  }
+
   const message = request.body?.message?.trim();
 
   if (!message) {
