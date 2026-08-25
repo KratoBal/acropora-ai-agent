@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { buildApp } from "./app.js";
+import { buildApp, chatInstructions } from "./app.js";
 
 /**
  * Drives the real `/v1/chat` route.
@@ -54,9 +54,66 @@ const chat = (headers: Record<string, string>) =>
     payload: { message: "Mennyi a nitrát szintem?" }
   });
 
+describe("chatInstructions", () => {
+  it("keeps the assistant persona and adds the customer block", () => {
+    const instructions = chatInstructions({
+      ok: true,
+      mode: "customer",
+      context: {
+        subjectType: "customer",
+        customerId: "cus_1",
+        customerNumber: "V-00123",
+        entitlements: {},
+        entitlementsStatus: "not-modelled",
+        entitlementsNote: "..."
+      }
+    });
+
+    assert.match(instructions, /Acropora marine aquarium assistant/);
+    assert.match(instructions, /Customer context from the Acropora OS/);
+    assert.match(instructions, /cus_1/);
+  });
+
+  it("keeps the assistant persona and states the absence for an anonymous chat", () => {
+    // Both halves matter. Losing the persona would change every answer;
+    // losing the second half would let the model speak as if it knew the
+    // person, which is the whole reason this mode is announced rather than
+    // silently empty.
+    const instructions = chatInstructions({ ok: true, mode: "anonymous" });
+
+    assert.match(instructions, /Acropora marine aquarium assistant/);
+    assert.match(instructions, /no customer context/i);
+    assert.equal(instructions.includes("Customer context from"), false);
+  });
+});
+
 describe("POST /v1/chat", () => {
-  it("refuses a request that names no customer, before touching anything", async () => {
+  it("lets a request with no customer header through the customer gate", async () => {
+    /**
+     * An anonymous chat is a normal outcome, so the gate must not stop it.
+     *
+     * There is no database here, so the request cannot finish - and that is
+     * what makes the assertion sharp rather than vague: it got past the
+     * customer step and died at the conversation step instead. If the header
+     * were made mandatory again, this would come back as a 400 from the gate
+     * and never reach the database at all.
+     */
     const response = await chat({});
+
+    assert.notEqual(response.statusCode, 400);
+    assert.notEqual(response.statusCode, 502);
+    assert.equal(
+      ["customer_id_required", "customer_context_unavailable"].includes(
+        (response.json() as { error?: string }).error ?? ""
+      ),
+      false
+    );
+  });
+
+  it("refuses a customer header that was sent but carries nothing", async () => {
+    // An anonymous visitor sends no header. An empty one is a caller whose
+    // variable did not get filled in, and it is answered loudly.
+    const response = await chat({ "x-acropora-user-id": "   " });
 
     assert.equal(response.statusCode, 400);
     assert.deepEqual(response.json(), { error: "customer_id_required" });

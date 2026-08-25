@@ -30,8 +30,8 @@ export interface AcroporaCustomerContext {
 
 /**
  * The error codes this API answers with. The first three are Balazs's
- * mapping; `customer_id_required` is ours, for a request that cannot be sent
- * to the OS in the first place.
+ * mapping; `customer_id_required` is ours, and it now means something
+ * narrower than it once did - see `resolveCustomerContext`.
  */
 export type CustomerContextErrorCode =
   | "customer_id_required"
@@ -52,10 +52,26 @@ export interface CustomerContextFailure {
   detail: string;
 }
 
-export interface CustomerContextSuccess {
+/**
+ * A chat with no customer behind it.
+ *
+ * This is a normal outcome, not a degraded one: an anonymous visitor may use
+ * the aquarium chat, and must never be pushed into identifying themselves to
+ * do so. The Acropora OS is not called at all in this mode, which is why no
+ * 502 and no 404 can arise from it.
+ */
+export interface AnonymousChat {
   ok: true;
+  mode: "anonymous";
+}
+
+export interface ResolvedCustomer {
+  ok: true;
+  mode: "customer";
   context: AcroporaCustomerContext;
 }
+
+export type CustomerContextSuccess = AnonymousChat | ResolvedCustomer;
 
 export type CustomerContextResult =
   | CustomerContextSuccess
@@ -129,19 +145,35 @@ function isCustomerContext(value: unknown): value is AcroporaCustomerContext {
 }
 
 /**
- * Reads one customer's context from the OS, and maps every outcome to a
- * decision this API can act on.
+ * Decides which of the two chat modes a request is in, and for a customer
+ * reads their context from the OS.
  *
- * The order matters. The identifier is validated here, before anything is
- * sent: an empty one would reach the OS as a missing header and come back as
- * a 400 that says nothing to our caller, after a pointless round trip. The
- * configuration is checked next, so an unconfigured deployment never sends the
- * service token anywhere.
+ * **No header at all means anonymous, and that is the whole point.** An
+ * anonymous visitor may use the aquarium chat and must not be forced to
+ * produce a customer identifier for it. In that mode the OS is never called.
+ *
+ * **A header that is present but blank is a broken caller, and is refused.**
+ * The distinction is deliberate: an anonymous visitor sends no header, so the
+ * only thing that produces an empty one is an integration whose variable did
+ * not get filled in. Treating that as anonymous would turn a caller's bug into
+ * a silently context-free answer, which is the failure this endpoint has
+ * already been designed away from once. A duplicated header, which arrives as
+ * an array, is refused the same way.
+ *
+ * The order of the rest matters too. The configuration is checked before the
+ * call, so an unconfigured deployment never sends the service token anywhere.
  */
 export async function resolveCustomerContext(
   rawCustomerId: unknown,
   options: ResolveCustomerContextOptions = {}
 ): Promise<CustomerContextResult> {
+  if (rawCustomerId === undefined) {
+    return {
+      ok: true,
+      mode: "anonymous"
+    };
+  }
+
   const customerId =
     typeof rawCustomerId === "string" ? rawCustomerId.trim() : "";
 
@@ -150,7 +182,7 @@ export async function resolveCustomerContext(
       ok: false,
       status: 400,
       error: "customer_id_required",
-      detail: "missing or empty X-Acropora-User-Id"
+      detail: "X-Acropora-User-Id was sent but carried no usable value"
     };
   }
 
@@ -249,6 +281,7 @@ export async function resolveCustomerContext(
 
   return {
     ok: true,
+    mode: "customer",
     context: payload
   };
 }
@@ -269,38 +302,81 @@ export function customerContextErrorBody(failure: CustomerContextFailure): {
 }
 
 /**
- * The temporary customer fields on the chat answer.
+ * The customer fields on the chat answer, in both modes.
  *
- * Balazs asked for these four by name, and marked them temporary: they exist
- * so that a person can see the binding works end to end. Removing them later
- * means deleting this function and its call site, nothing else.
+ * **The four customer fields are omitted for an anonymous chat, and a named
+ * mode is always present.** Balazs allowed either omission or an unambiguous
+ * marker; this does both, because on their own each has a hole. Omission
+ * alone forces the caller to reason about a key that is not there, and in
+ * JavaScript a missing key and an empty string are both falsy, so a caller
+ * checking `if (!answer.customerId)` cannot tell "anonymous" from "resolved
+ * but empty". A named mode is a positive statement, and it borrows a shape
+ * this system already uses: `entitlementsStatus` on the OS side exists for
+ * exactly the same reason.
+ *
+ * Empty strings are never sent. A field that is not known is not present.
  */
-export function customerContextResponseFields(
-  context: AcroporaCustomerContext
-): {
-  subjectType: string;
-  customerId: string;
-  customerNumber: string;
-  entitlements: Record<string, never>;
-} {
+export function customerChatFields(
+  resolution: CustomerContextSuccess
+):
+  | { customerContextStatus: "anonymous" }
+  | {
+      customerContextStatus: "resolved";
+      subjectType: string;
+      customerId: string;
+      customerNumber: string;
+      entitlements: Record<string, never>;
+    } {
+  if (resolution.mode === "anonymous") {
+    return {
+      customerContextStatus: "anonymous"
+    };
+  }
+
   return {
-    subjectType: context.subjectType,
-    customerId: context.customerId,
-    customerNumber: context.customerNumber,
-    entitlements: context.entitlements
+    customerContextStatus: "resolved",
+    subjectType: resolution.context.subjectType,
+    customerId: resolution.context.customerId,
+    customerNumber: resolution.context.customerNumber,
+    entitlements: resolution.context.entitlements
   };
 }
 
 /**
- * What the model is told about the person it is talking to.
+ * What the model is told about the person it is talking to, in both modes.
  *
- * `entitlementsStatus` is included on purpose. Without it an empty
- * entitlement set reads as "this customer is entitled to nothing", and the
- * model would start refusing things on a fact that was never measured.
+ * The anonymous block is not an omission of the customer block. Leaving the
+ * context out silently would let the model answer as though it knew who it was
+ * speaking to - the same failure the OS side already designed away from with
+ * `entitlementsStatus`: an absence has to say why it is absent, or it gets
+ * read as a fact.
+ *
+ * The instruction about asking for identification is Balazs's rule, in the
+ * model's own words: an anonymous visitor is never pushed to identify
+ * themselves for general aquarium advice, and is asked only when the answer
+ * would need their own data.
  */
-export function customerContextInstructions(
-  context: AcroporaCustomerContext
+export function customerChatInstructions(
+  resolution: CustomerContextSuccess
 ): string {
+  if (resolution.mode === "anonymous") {
+    return [
+      "There is no customer context for this conversation.",
+      "The person you are talking to is anonymous: this API was not given a",
+      "customer identifier, and no customer record was looked up. You do not",
+      "know who they are, what they have bought, what they own, or what they",
+      "have ordered, and you must not imply otherwise.",
+      "Answer general marine aquarium questions normally and fully.",
+      "Do not ask them to identify themselves for a general question. Ask for",
+      "an e-mail address, a phone number or a sign-in ONLY when what they want",
+      "genuinely needs their own data - an order, a warranty, a device, an",
+      "aquarium of theirs, or anything else personal - and say plainly why you",
+      "need it."
+    ].join("\n");
+  }
+
+  const { context } = resolution;
+
   return [
     "Customer context from the Acropora OS:",
     `- customer id: ${context.customerId}`,
