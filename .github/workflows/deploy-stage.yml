@@ -63,5 +63,14 @@ jobs:
             -f infra/docker-compose.yml \
             up -d --build --force-recreate api caddy
 
-          curl -fsS https://ai-stage.acropora.hu/health
+                    for attempt in $(seq 1 30); do
+            if curl -4 -fsS https://ai-stage.acropora.hu/health; then
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "Health check failed after 60 seconds"
+          exit 1
           REMOTE
