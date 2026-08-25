@@ -4,6 +4,7 @@ import { initializeDatabase, pool } from "./db.js";
 import {
   conversationBelongsToClient,
   createConversation,
+  getConversationMessages,
   saveMessage
 } from "./conversations.js";
 
@@ -99,6 +100,7 @@ app.post<{
   }
 
   const clientKeyHeader = request.headers["x-client-key"];
+
   const clientKey =
     typeof clientKeyHeader === "string" &&
     clientKeyHeader.length > 0
@@ -139,6 +141,11 @@ app.post<{
     content: message
   });
 
+  const history = await getConversationMessages(
+    activeConversationId,
+    20
+  );
+
   if (!process.env.OPENAI_API_KEY) {
     return reply.code(503).send({
       error: "AI provider is not configured"
@@ -149,8 +156,11 @@ app.post<{
     const response = await openai.responses.create({
       model: process.env.OPENAI_MODEL ?? "gpt-5.1",
       instructions:
-        "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Do not invent measurements or diagnoses.",
-      input: message,
+        "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.",
+      input: history.map((item) => ({
+        role: item.role,
+        content: item.content
+      })),
       store: false
     });
 
