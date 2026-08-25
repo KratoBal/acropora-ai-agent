@@ -1,0 +1,12 @@
+{
+  "name": "@acropora/ai-agent",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm --workspace apps/api run build",
+    "start": "node dist/server.js"
+  }
+}
