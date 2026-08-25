@@ -61,7 +61,7 @@ jobs:
           docker compose \
             --env-file .env \
             -f infra/docker-compose.yml \
-            up -d --build
+            up -d --build --force-recreate api caddy
 
           curl -fsS https://ai-stage.acropora.hu/health
           REMOTE
