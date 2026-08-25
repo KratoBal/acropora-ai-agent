@@ -8,11 +8,31 @@ import {
   saveMessage
 } from "./conversations.js";
 import {
+  customerChatFields,
+  customerChatInstructions,
   customerContextErrorBody,
-  customerContextInstructions,
-  customerContextResponseFields,
-  resolveCustomerContext
+  resolveCustomerContext,
+  type CustomerContextSuccess
 } from "./customer-context.js";
+
+const ASSISTANT_INSTRUCTIONS =
+  "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.";
+
+/**
+ * The complete instruction text handed to the model.
+ *
+ * Assembled by a function rather than inline in the route so that "the model
+ * is told which mode it is in" can be asserted. It is the requirement of this
+ * change, and a requirement that only exists inside a request handler is a
+ * requirement nobody measures.
+ */
+export function chatInstructions(
+  resolution: CustomerContextSuccess
+): string {
+  return [ASSISTANT_INSTRUCTIONS, customerChatInstructions(resolution)].join(
+    "\n\n"
+  );
+}
 
 /**
  * Builds the HTTP application without starting it.
@@ -145,9 +165,7 @@ export function buildApp() {
         .send(customerContextErrorBody(resolvedCustomer));
     }
 
-    const customerContext = resolvedCustomer.context;
-
-    const clientKeyHeader = request.headers["x-client-key"];
+      const clientKeyHeader = request.headers["x-client-key"];
 
     const clientKey =
       typeof clientKeyHeader === "string" &&
@@ -205,7 +223,7 @@ export function buildApp() {
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructions: [
           "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.",
-          customerContextInstructions(customerContext)
+          customerChatInstructions(resolvedCustomer)
         ].join("\n\n"),
         input: history.map((item) => ({
           role: item.role,
@@ -226,8 +244,8 @@ export function buildApp() {
         answer: response.output_text,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         // Temporary, so that the binding is visible from the outside. See
-        // customerContextResponseFields.
-        ...customerContextResponseFields(customerContext)
+        // customerChatFields, which also decides what an anonymous chat gets.
+        ...customerChatFields(resolvedCustomer)
       };
     } catch (error) {
       request.log.error({ error }, "OpenAI request failed");

@@ -3,9 +3,9 @@ import { describe, it } from "node:test";
 
 import {
   acroporaOsConfig,
+  customerChatFields,
+  customerChatInstructions,
   customerContextErrorBody,
-  customerContextInstructions,
-  customerContextResponseFields,
   resolveCustomerContext,
   type AcroporaCustomerContext,
   type CustomerContextFailure
@@ -26,6 +26,12 @@ const context: AcroporaCustomerContext = {
   entitlementsStatus: "not-modelled",
   entitlementsNote:
     "Az Acropora OS-ben ma nincs elofizetes-, csomag- vagy funkcio-jogosultsagi modell."
+};
+
+const resolvedCustomer = {
+  ok: true as const,
+  mode: "customer" as const,
+  context
 };
 
 /**
@@ -96,7 +102,11 @@ describe("resolveCustomerContext", () => {
     });
 
     assert.equal(result.ok, true);
-    assert.deepEqual(result.ok && result.context, context);
+    assert.equal(result.ok && result.mode, "customer");
+    assert.deepEqual(
+      result.ok && result.mode === "customer" && result.context,
+      context
+    );
 
     // What went out, not what was passed in.
     assert.equal(calls.length, 1);
@@ -164,17 +174,44 @@ describe("resolveCustomerContext", () => {
     );
   });
 
-  it("refuses an empty customer id without calling the OS at all", async () => {
-    // Ordering is the assertion: an unusable request must not send the service
-    // token anywhere, and must not cost a round trip.
+  it("treats a request with no header as an anonymous chat, and never calls the OS", async () => {
+    // An anonymous visitor may use the aquarium chat, and is never pushed into
+    // identifying themselves for it. No call means no 502 and no 404 either.
     const { impl, calls } = recordingFetch(() => jsonResponse(context));
 
-    for (const value of [undefined, "", "   ", 42]) {
+    const result = await resolveCustomerContext(undefined, {
+      environment,
+      fetchImpl: impl
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.ok && result.mode, "anonymous");
+    assert.equal(calls.length, 0);
+  });
+
+  it("refuses a header that was sent but carries nothing, without calling the OS", async () => {
+    /**
+     * The distinction from the test above is the point of both.
+     *
+     * An anonymous visitor sends no header at all. The only thing that
+     * produces an empty one is a caller whose variable did not get filled in,
+     * and answering that as "anonymous" would turn their bug into a silently
+     * context-free answer. A duplicated header arrives as an array and is
+     * refused the same way.
+     */
+    const { impl, calls } = recordingFetch(() => jsonResponse(context));
+
+    for (const value of ["", "   ", 42, ["cus_1", "cus_2"]]) {
       const result = await resolveCustomerContext(value, {
         environment,
         fetchImpl: impl
       });
 
+      assert.equal(
+        result.ok,
+        false,
+        `${JSON.stringify(value)} must not pass as anonymous`
+      );
       assert.equal((result as CustomerContextFailure).status, 400);
       assert.equal(
         (result as CustomerContextFailure).error,
@@ -340,7 +377,7 @@ describe("the raw service token", () => {
 
   it("is not in the block handed to the model either", () => {
     assert.equal(
-      customerContextInstructions(context).includes(TOKEN),
+      customerChatInstructions(resolvedCustomer).includes(TOKEN),
       false
     );
   });
@@ -364,17 +401,19 @@ describe("customerContextErrorBody", () => {
   });
 });
 
-describe("customerContextResponseFields", () => {
-  it("returns the four temporary fields and nothing else", () => {
-    const fields = customerContextResponseFields(context);
+describe("customerChatFields", () => {
+  it("returns the four temporary fields and a resolved marker for a customer", () => {
+    const fields = customerChatFields(resolvedCustomer);
 
     assert.deepEqual(fields, {
+      customerContextStatus: "resolved",
       subjectType: "customer",
       customerId: "cus_1",
       customerNumber: "V-00123",
       entitlements: {}
     });
     assert.deepEqual(Object.keys(fields).sort(), [
+      "customerContextStatus",
       "customerId",
       "customerNumber",
       "entitlements",
@@ -382,10 +421,37 @@ describe("customerContextResponseFields", () => {
     ]);
   });
 
-  it("carries no note, no status and no other customer data", () => {
-    const fields = customerContextResponseFields({
-      ...context,
-      entitlementsNote: "should not travel"
+  it("omits every customer field for an anonymous chat, and says so", () => {
+    // Omission alone would not be enough: a caller testing `!customerId`
+    // cannot tell an absent field from an empty one. The named mode is the
+    // positive statement.
+    const fields = customerChatFields({ ok: true, mode: "anonymous" });
+
+    assert.deepEqual(fields, { customerContextStatus: "anonymous" });
+    assert.deepEqual(Object.keys(fields), ["customerContextStatus"]);
+  });
+
+  it("never sends an empty string in place of an identifier", () => {
+    const fields = customerChatFields({ ok: true, mode: "anonymous" }) as Record<
+      string,
+      unknown
+    >;
+
+    for (const key of [
+      "customerId",
+      "customerNumber",
+      "subjectType",
+      "entitlements"
+    ]) {
+      assert.equal(key in fields, false, `${key} must not be present`);
+    }
+  });
+
+  it("carries no note and no entitlement status for a customer either", () => {
+    const fields = customerChatFields({
+      ok: true,
+      mode: "customer",
+      context: { ...context, entitlementsNote: "should not travel" }
     }) as Record<string, unknown>;
 
     assert.equal("entitlementsNote" in fields, false);
@@ -393,13 +459,53 @@ describe("customerContextResponseFields", () => {
   });
 });
 
-describe("customerContextInstructions", () => {
+describe("customerChatInstructions", () => {
   it("tells the model the identity and that an empty entitlement set is not a denial", () => {
-    const instructions = customerContextInstructions(context);
+    const instructions = customerChatInstructions(resolvedCustomer);
 
     assert.match(instructions, /cus_1/);
     assert.match(instructions, /V-00123/);
     assert.match(instructions, /not-modelled/);
     assert.match(instructions, /not\s+because this customer was denied/);
+  });
+
+  it("tells the model outright that it has no customer, rather than saying nothing", () => {
+    /**
+     * The assertion is that the absence is stated, not merely left out.
+     *
+     * A block that simply omits the customer lets the model answer as if it
+     * knew who it was talking to. This is the same rule the OS side already
+     * follows with entitlementsStatus: an absence has to say why it is absent,
+     * or it gets read as a fact.
+     */
+    const instructions = customerChatInstructions({
+      ok: true,
+      mode: "anonymous"
+    });
+
+    assert.match(instructions, /no customer context/i);
+    assert.match(instructions, /anonymous/i);
+    assert.match(instructions, /must not imply otherwise/i);
+  });
+
+  it("does not push an anonymous visitor to identify themselves for a general question", () => {
+    const instructions = customerChatInstructions({
+      ok: true,
+      mode: "anonymous"
+    });
+
+    assert.match(instructions, /Do not ask them to identify themselves/i);
+    assert.match(instructions, /ONLY when/);
+    assert.match(instructions, /order, a warranty, a device/i);
+  });
+
+  it("leaks no customer identifier into the anonymous block", () => {
+    const instructions = customerChatInstructions({
+      ok: true,
+      mode: "anonymous"
+    });
+
+    assert.equal(instructions.includes("cus_1"), false);
+    assert.equal(instructions.includes("V-00123"), false);
   });
 });
