@@ -1,0 +1,4 @@
+ai-stage.acropora.hu {
+    encode gzip
+    reverse_proxy api:3000
+}
