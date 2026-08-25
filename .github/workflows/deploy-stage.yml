@@ -1,0 +1,52 @@
+name: Deploy AI stage
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acropora-ai-stage-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configure SSH
+        env:
+          SSH_KEY: ${{ secrets.ACROPORA_AI_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.ACROPORA_AI_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+
+      - name: Deploy to Hetzner
+        env:
+          DEPLOY_USER: ${{ secrets.ACROPORA_AI_USER }}
+          DEPLOY_HOST: ${{ secrets.ACROPORA_AI_HOST }}
+        run: |
+          ssh -o BatchMode=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            'bash -se' <<'REMOTE'
+          set -euo pipefail
+
+          cd /opt/acropora-ai/app
+
+          git pull --ff-only origin main
+
+          docker compose \
+            --env-file .env \
+            -f infra/docker-compose.yml \
+            up -d --build
+
+          curl -fsS https://ai-stage.acropora.hu/health
+          REMOTE
