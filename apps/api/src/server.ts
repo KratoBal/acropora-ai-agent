@@ -1,6 +1,11 @@
 import Fastify from "fastify";
 import OpenAI from "openai";
 import { initializeDatabase, pool } from "./db.js";
+import {
+  conversationBelongsToClient,
+  createConversation,
+  saveMessage
+} from "./conversations.js";
 
 const app = Fastify({
   logger: true,
@@ -55,6 +60,7 @@ app.get("/health", async () => {
 app.post<{
   Body: {
     message?: string;
+    conversationId?: string;
   };
 }>("/v1/chat", async (request, reply) => {
   const expectedToken = process.env.API_ACCESS_TOKEN;
@@ -92,6 +98,47 @@ app.post<{
     });
   }
 
+  const clientKeyHeader = request.headers["x-client-key"];
+  const clientKey =
+    typeof clientKeyHeader === "string" &&
+    clientKeyHeader.length > 0
+      ? clientKeyHeader.slice(0, 128)
+      : "stage-test-client";
+
+  let conversationId = request.body?.conversationId;
+
+  if (conversationId) {
+    const uuidPattern =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    if (!uuidPattern.test(conversationId)) {
+      return reply.code(400).send({
+        error: "invalid conversationId"
+      });
+    }
+
+    const belongsToClient = await conversationBelongsToClient(
+      conversationId,
+      clientKey
+    );
+
+    if (!belongsToClient) {
+      return reply.code(404).send({
+        error: "conversation not found"
+      });
+    }
+  } else {
+    conversationId = await createConversation(clientKey);
+  }
+
+  const activeConversationId = conversationId;
+
+  await saveMessage({
+    conversationId: activeConversationId,
+    role: "user",
+    content: message
+  });
+
   if (!process.env.OPENAI_API_KEY) {
     return reply.code(503).send({
       error: "AI provider is not configured"
@@ -107,7 +154,15 @@ app.post<{
       store: false
     });
 
+    await saveMessage({
+      conversationId: activeConversationId,
+      role: "assistant",
+      content: response.output_text,
+      model: process.env.OPENAI_MODEL ?? "gpt-5.1"
+    });
+
     return {
+      conversationId: activeConversationId,
       answer: response.output_text,
       model: process.env.OPENAI_MODEL ?? "gpt-5.1"
     };
