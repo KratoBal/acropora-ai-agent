@@ -64,3 +64,29 @@ export async function saveMessage(input: {
     [input.conversationId]
   );
 }
+
+export async function getConversationMessages(
+  conversationId: string,
+  limit = 20
+): Promise<
+  Array<{
+    role: "user" | "assistant" | "system";
+    content: string;
+  }>
+> {
+  const result = await pool.query<{
+    role: "user" | "assistant" | "system";
+    content: string;
+  }>(
+    `
+      SELECT role, content
+      FROM messages
+      WHERE conversation_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2
+    `,
+    [conversationId, limit]
+  );
+
+  return result.rows.reverse();
+}
