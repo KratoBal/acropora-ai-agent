@@ -18,6 +18,9 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure SSH
         env:
           SSH_KEY: ${{ secrets.ACROPORA_AI_SSH_KEY }}
@@ -29,7 +32,21 @@ jobs:
           printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
 
-      - name: Deploy to Hetzner
+      - name: Upload source
+        env:
+          DEPLOY_USER: ${{ secrets.ACROPORA_AI_USER }}
+          DEPLOY_HOST: ${{ secrets.ACROPORA_AI_HOST }}
+        run: |
+          rsync -az --delete \
+            --exclude='.env' \
+            --exclude='data/' \
+            --exclude='backups/' \
+            --exclude='logs/' \
+            --exclude='.git/' \
+            -e "ssh -o BatchMode=yes" \
+            ./ "$DEPLOY_USER@$DEPLOY_HOST:/opt/acropora-ai/app/"
+
+      - name: Deploy containers
         env:
           DEPLOY_USER: ${{ secrets.ACROPORA_AI_USER }}
           DEPLOY_HOST: ${{ secrets.ACROPORA_AI_HOST }}
@@ -40,8 +57,6 @@ jobs:
           set -euo pipefail
 
           cd /opt/acropora-ai/app
-
-          git pull --ff-only origin main
 
           docker compose \
             --env-file .env \
