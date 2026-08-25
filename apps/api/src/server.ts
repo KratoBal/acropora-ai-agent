@@ -95,19 +95,26 @@ app.post<{
       error: "AI provider is not configured"
     });
   }
+  try {
+    const response = await openai.responses.create({
+      model: process.env.OPENAI_MODEL ?? "gpt-5.1",
+      instructions:
+        "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Do not invent measurements or diagnoses.",
+      input: message,
+      store: false
+    });
 
-  const response = await openai.responses.create({
-    model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-    instructions:
-      "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Do not invent measurements or diagnoses.",
-    input: message,
-    store: false
-  });
+    return {
+      answer: response.output_text,
+      model: process.env.OPENAI_MODEL ?? "gpt-5.1"
+    };
+  } catch (error) {
+    request.log.error({ error }, "OpenAI request failed");
 
-  return {
-    answer: response.output_text,
-    model: process.env.OPENAI_MODEL ?? "gpt-5.1"
-  };
+    return reply.code(502).send({
+      error: "ai_provider_error"
+    });
+  }
 });
 
 const port = Number(process.env.PORT ?? 3000);
