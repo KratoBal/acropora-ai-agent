@@ -7,6 +7,7 @@ import {
   getConversationMessages,
   saveMessage
 } from "./conversations.js";
+import { safeErrorSummary } from "./redact.js";
 import {
   customerChatFields,
   customerChatInstructions,
@@ -248,7 +249,12 @@ export function buildApp() {
         ...customerChatFields(resolvedCustomer)
       };
     } catch (error) {
-      request.log.error({ error }, "OpenAI request failed");
+      // The error object is never handed to the logger: its shape belongs to
+      // the provider, and a provider error can quote a key back at us.
+      request.log.error(
+        { aiProviderError: safeErrorSummary(error) },
+        "OpenAI request failed"
+      );
 
       return reply.code(502).send({
         error: "ai_provider_error"
