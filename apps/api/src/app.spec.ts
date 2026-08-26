@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
-import { buildApp, chatInstructions } from "./app.js";
+import {
+  buildApp,
+  chatInstructions,
+  NO_PRODUCT_CONTEXT_INSTRUCTIONS
+} from "./app.js";
 
 /**
  * Drives the real `/v1/chat` route.
@@ -84,6 +88,59 @@ describe("chatInstructions", () => {
     assert.match(instructions, /Acropora marine aquarium assistant/);
     assert.match(instructions, /no customer context/i);
     assert.equal(instructions.includes("Customer context from"), false);
+  });
+});
+
+describe("the catalogue the model does not have", () => {
+  it("is stated in both modes, not only for an anonymous visitor", () => {
+    /**
+     * Mode-independent on purpose. A resolved customer is asking the same
+     * model, which can see just as few products as it can for a stranger.
+     * Stating it only in one mode would leave the other free to invent.
+     */
+    const anonymous = chatInstructions({ ok: true, mode: "anonymous" });
+    const customer = chatInstructions({
+      ok: true,
+      mode: "customer",
+      context: {
+        subjectType: "customer",
+        customerId: "cus_1",
+        customerNumber: "V-00123",
+        entitlements: {},
+        entitlementsStatus: "not-modelled",
+        entitlementsNote: "..."
+      }
+    });
+
+    for (const [label, instructions] of [
+      ["anonymous", anonymous],
+      ["customer", customer]
+    ] as const) {
+      assert.ok(
+        instructions.includes(NO_PRODUCT_CONTEXT_INSTRUCTIONS),
+        `the ${label} mode must carry the product block`
+      );
+    }
+  });
+
+  it("forbids filling the gap from general knowledge, not just answering", () => {
+    // The failure this prevents is not silence, it is a confident invention:
+    // a price or a stock level guessed from a familiar-sounding name speaks in
+    // place of the shop.
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /no data about Acropora/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /prices, stock/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /must\s+not fill that gap/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /say plainly that you do not have that data/i);
+  });
+
+  it("still lets the general part of a question be answered", () => {
+    // A block that turned every product-adjacent question into a refusal would
+    // cost more than it saves: the general aquarium knowledge is exactly what
+    // the first round of measurement is for.
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /answer only the general part of the question/i
+    );
   });
 });
 
