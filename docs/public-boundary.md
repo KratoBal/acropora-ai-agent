@@ -21,7 +21,9 @@ Acropora OS user-context endpoint
 
 ## What must never happen
 
-- The browser must not call `/v1/chat` directly.
+- The browser must not call `/v1/chat` directly, and the same is true of every other route
+  here: `/v1/messages/:messageId/rating` and `/v1/conversations/:conversationId/ratings` sit
+  behind the same shared token and the same absent CORS.
 - `API_ACCESS_TOKEN`, `ACROPORA_OS_AI_SERVICE_TOKEN` and any OpenAI key must not reach a browser
   bundle, a mobile app, a URL, a query parameter, a client-side log, this repository, or
   `.env.example`.
@@ -37,7 +39,13 @@ Acropora OS user-context endpoint
   `API_ACCESS_TOKEN`, which identifies the *calling system*. Whoever holds it may name any
   customer. Which mechanism replaces this is an open decision.
 - **The service is reachable from the public internet.** The reverse proxy publishes it with no
-  path restriction, so the shared token is the only gate in front of `/v1/chat`.
+  path restriction, so the shared token is the only gate in front of any route.
+- **A rating names its author, and the name is a claim like any other.** `ratedBy` is required
+  and stored as sent; this API cannot tell whether the layer in front took it from a proven
+  session. Ownership is still enforced: a rating is refused unless the answer belongs to a
+  conversation of the calling client, and the refusal is the same 404 for an unknown id, for
+  somebody else's conversation and for a message that is a question rather than an answer, so
+  the route cannot be used to find out which ids exist.
 - **No browser page on another origin can use it.** Nothing here speaks CORS: a preflight gets no
   route, and no response carries an `Access-Control-Allow-Origin` header. A cross-origin page can
   therefore neither complete a call that carries an `Authorization` header nor read a reply.
@@ -53,6 +61,10 @@ Acropora OS user-context endpoint
 | a cross-origin browser page cannot preflight or read a response | `app.spec.ts` |
 | an anonymous chat never calls the Acropora OS | `customer-context.spec.ts` |
 | a request with no API access token is refused | `app.spec.ts` |
+| a rating is refused without the token, and stored against nothing | `app.spec.ts` |
+| a rating against another client's answer is refused | `app.spec.ts` |
+| the model is handed the clause about what it cannot see | `app.spec.ts` |
+| the stored rating values and the ones the code accepts are the same set | `evaluations.spec.ts` |
 | no branch of the customer-context lookup returns a secret | `customer-context.spec.ts` |
 | an upstream error summary carries no secret, whatever the provider attached | `redact.spec.ts` |
 
@@ -71,10 +83,13 @@ purpose: a page that lists only what is settled makes the system look safer than
 - **Whether the layer in front is honest.** If the BFF takes the customer identifier from its own
   caller instead of from its session, every check here still passes.
 - **The call site of the upstream error log.** `safeErrorSummary` is covered from every angle,
-  but the line in `app.ts` that *calls* it is not: the OpenAI failure branch sits behind the
-  database, so no test in this repository reaches it. If someone puts the raw error object back
-  into that log line, nothing here turns red. Closing it needs the OpenAI client to become an
-  injectable seam, which is a larger change than this one and is tracked separately.
+  but the line in `app.ts` that *calls* it is not. If someone puts the raw error object back
+  into that log line, nothing here turns red. What blocked this has since been removed: the
+  model client and the conversation store are injectable now, so a test can reach the failure
+  branch. What is still missing is a way to read back what the logger was given. The seam was
+  built for a different reason - the route was handing the model an instruction list it had
+  assembled itself, leaving out the clause about our own catalogue, and no test went past the
+  first database call to notice.
 
 One more thing this page is not: a claim that merging here is neutral. There is no PR check in
 this repository, and the one workflow deploys to stage on a push to `main` - so a merge is a
