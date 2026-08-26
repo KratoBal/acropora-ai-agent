@@ -6,6 +6,7 @@ import {
   chatInstructions,
   NO_PRODUCT_CONTEXT_INSTRUCTIONS,
   type AppDependencies,
+  type AppLogger,
   type ConversationStore,
   type RatingStore
 } from "./app.js";
@@ -689,5 +690,155 @@ describe("rating an answer", () => {
     });
 
     assert.equal(response.statusCode, 401);
+  });
+});
+
+
+/**
+ * The one claim in this service that nothing used to hold in place.
+ *
+ * `safeErrorSummary` is covered from every angle, but the line that CALLS it
+ * was not: the upstream failure branch sits behind the database, so no test
+ * reached it, and putting the raw provider error back into that log line would
+ * have left every assertion green. The boundary document named this gap and
+ * said closing it needed an injectable model client. It has one now, so the
+ * gap closes here.
+ *
+ * An OpenAI error is the specific danger: the provider answers a bad key by
+ * quoting it back, partially masked, so the error object can carry the secret
+ * that must never reach a log.
+ */
+describe("what the upstream failure branch writes to the log", () => {
+  const OPENAI_KEY = "sk-live-do-not-log-me-1234";
+
+  const store: ConversationStore = {
+    createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+    conversationBelongsToClient: async () => true,
+    saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+    getConversationMessages: async () => [
+      { role: "user", content: "Mennyi a nitrat szintem?" }
+    ]
+  };
+
+  const providerError = Object.assign(
+    new Error(
+      `Incorrect API key provided: ${OPENAI_KEY}. You can find your API key at ...`
+    ),
+    {
+      status: 401,
+      headers: { authorization: `Bearer ${API_TOKEN}` },
+      request: { headers: { authorization: `Bearer ${OPENAI_KEY}` } }
+    }
+  );
+
+  const failingModel = {
+    responses: {
+      create: async () => {
+        throw providerError;
+      }
+    }
+  } as unknown as NonNullable<AppDependencies["openai"]>;
+
+  let lines: Array<{ level: string; payload: unknown }> = [];
+
+  const recordingLogger: AppLogger = {
+    info: (payload) => lines.push({ level: "info", payload }),
+    error: (payload) => lines.push({ level: "error", payload }),
+    warn: (payload) => lines.push({ level: "warn", payload }),
+    debug: (payload) => lines.push({ level: "debug", payload }),
+    fatal: (payload) => lines.push({ level: "fatal", payload }),
+    trace: (payload) => lines.push({ level: "trace", payload }),
+    silent: () => {},
+    level: "info",
+    child: () => recordingLogger
+  };
+
+  let failingApp: ReturnType<typeof buildApp>;
+
+  before(async () => {
+    process.env.OPENAI_API_KEY = OPENAI_KEY;
+    failingApp = buildApp({
+      conversations: store,
+      openai: failingModel,
+      logger: recordingLogger
+    });
+    await failingApp.ready();
+  });
+
+  after(async () => {
+    await failingApp.close();
+    process.env.OPENAI_API_KEY = "test-openai-key";
+  });
+
+  const askAndFail = async () => {
+    lines = [];
+
+    return failingApp.inject({
+      method: "POST",
+      url: "/v1/chat",
+      headers: {
+        authorization: `Bearer ${API_TOKEN}`,
+        "content-type": "application/json"
+      },
+      payload: { message: "Mennyi a nitrat szintem?" }
+    });
+  };
+
+  it("answers with a code and a duration rather than the provider's words", async () => {
+    const response = await askAndFail();
+
+    assert.equal(response.statusCode, 502);
+    const body = response.json() as { error: string; waitedMs: number };
+    assert.equal(body.error, "ai_provider_error");
+    assert.equal(typeof body.waitedMs, "number");
+    assert.equal(JSON.stringify(body).includes(OPENAI_KEY), false);
+  });
+
+  it("logs the failure, and logs it without the key the provider quoted back", async () => {
+    await askAndFail();
+
+    const logged = lines.filter((line) => line.level === "error");
+    assert.equal(logged.length, 1, "the failure has to be logged exactly once");
+
+    const written = JSON.stringify(logged[0]?.payload);
+    assert.equal(
+      written.includes(OPENAI_KEY),
+      false,
+      "the OpenAI key reached the log"
+    );
+    assert.equal(
+      written.includes(API_TOKEN),
+      false,
+      "the API access token reached the log"
+    );
+    assert.equal(
+      /sk-[A-Za-z0-9_-]{4,}/.test(written),
+      false,
+      "a key-shaped string reached the log"
+    );
+  });
+
+  it("hands the logger a summary, not the provider's error object", async () => {
+    /**
+     * The assertion the gap was about. A summary has a fixed, small set of
+     * fields; the error object carries whatever the provider attached, and
+     * what it attaches is not ours to predict. Anyone who passes the raw
+     * error again turns this red even if today's error happens to be clean.
+     */
+    await askAndFail();
+
+    const payload = (lines.find((line) => line.level === "error")?.payload ??
+      {}) as Record<string, unknown>;
+
+    assert.ok(payload.aiProviderError, "the summary is missing");
+    assert.equal(
+      payload.aiProviderError instanceof Error,
+      false,
+      "the raw error object was handed to the logger"
+    );
+    assert.deepEqual(
+      Object.keys(payload).sort(),
+      ["aiProviderError", "aiProviderOutcome", "timeoutMs", "waitedMs"].sort()
+    );
   });
 });

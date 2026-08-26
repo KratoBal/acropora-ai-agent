@@ -165,10 +165,39 @@ const databaseRatingStore: RatingStore = {
  * All three default to the real thing, so production wiring is unchanged and
  * there is no test-only branch inside a handler.
  */
+/**
+ * Just enough of a logger for Fastify, and for a test to read back.
+ *
+ * Typed here rather than imported from pino because what matters is the shape
+ * the route calls, not the implementation behind it.
+ */
+export interface AppLogger {
+  info(payload: unknown, message?: string): void;
+  error(payload: unknown, message?: string): void;
+  warn(payload: unknown, message?: string): void;
+  debug(payload: unknown, message?: string): void;
+  fatal(payload: unknown, message?: string): void;
+  trace(payload: unknown, message?: string): void;
+  child(bindings: unknown): AppLogger;
+  level: string;
+  silent(payload: unknown, message?: string): void;
+}
+
 export interface AppDependencies {
   openai?: OpenAI;
   conversations?: ConversationStore;
   ratings?: RatingStore;
+  /**
+   * Substituted so a test can read back what a log line was GIVEN.
+   *
+   * The upstream failure branch redacts the provider's error before logging
+   * it, and that redaction was the one claim in this service nothing held in
+   * place: `safeErrorSummary` is covered from every angle, but the line that
+   * calls it was not, so putting the raw error object back would have left
+   * every test green. Reaching the branch is not enough - the assertion needs
+   * the payload.
+   */
+  logger?: AppLogger;
 }
 
 /**
@@ -190,7 +219,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const ratings = dependencies.ratings ?? databaseRatingStore;
 
   const app = Fastify({
-    logger: process.env.NODE_ENV !== "test",
+    ...(dependencies.logger
+      ? { loggerInstance: dependencies.logger }
+      : { logger: process.env.NODE_ENV !== "test" }),
     trustProxy: true,
     /**
      * The net under the ladder, not a step on it.

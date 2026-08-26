@@ -67,6 +67,7 @@ Acropora OS user-context endpoint
 | the stored rating values and the ones the code accepts are the same set | `evaluations.spec.ts` |
 | no branch of the customer-context lookup returns a secret | `customer-context.spec.ts` |
 | an upstream error summary carries no secret, whatever the provider attached | `redact.spec.ts` |
+| the failure branch hands the logger that summary and not the provider's error | `app.spec.ts` |
 
 The CORS test is the one worth understanding: it does not claim the API is unreachable. It claims
 that **a browser page on another origin** cannot use it, and it turns red the moment a permissive
@@ -75,21 +76,18 @@ possible.
 
 ## What this page does not cover
 
-The boundary above is what the code can hold. Three things it cannot, and they are named here on
+The boundary above is what the code can hold. Two things it cannot, and they are named here on
 purpose: a page that lists only what is settled makes the system look safer than it is.
 
-- **Reachability itself.** That is a deployment property, set by the reverse proxy and the
-  network, and no test in this repository can assert it.
+A third used to stand here: the log line that redacts an upstream error was itself untested,
+because the failure branch sat behind the database and nothing could reach it. It is covered
+now - the model client is injectable, and the logger is too, so a test reads back what the
+line was given rather than trusting that it was the summary.
+
 - **Whether the layer in front is honest.** If the BFF takes the customer identifier from its own
   caller instead of from its session, every check here still passes.
-- **The call site of the upstream error log.** `safeErrorSummary` is covered from every angle,
-  but the line in `app.ts` that *calls* it is not. If someone puts the raw error object back
-  into that log line, nothing here turns red. What blocked this has since been removed: the
-  model client and the conversation store are injectable now, so a test can reach the failure
-  branch. What is still missing is a way to read back what the logger was given. The seam was
-  built for a different reason - the route was handing the model an instruction list it had
-  assembled itself, leaving out the clause about our own catalogue, and no test went past the
-  first database call to notice.
+- **What a deployment does.** Whether the service is reachable, and from where, is set by the
+  reverse proxy and the network. That is the first item above, and no test can settle it.
 
 One more thing this page is not: a claim that merging here is neutral. There is no PR check in
 this repository, and the one workflow deploys to stage on a push to `main` - so a merge is a
