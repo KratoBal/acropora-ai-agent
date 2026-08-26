@@ -140,6 +140,47 @@ describe("POST /v1/chat", () => {
     assert.deepEqual(response.json(), { error: "unauthorized" });
   });
 
+  it("cannot be called from a browser page on another origin", async () => {
+    /**
+     * The boundary this API relies on, written down as a test rather than as
+     * a sentence in a document.
+     *
+     * The architecture requires a server-side layer between the public front
+     * end and this API, and part of what keeps a browser out today is that
+     * nothing here speaks CORS. A cross-origin call carrying an Authorization
+     * header needs a successful preflight first, and there is no route to
+     * answer one; even a request that did arrive would produce a response the
+     * page is not allowed to read.
+     *
+     * This is not a claim that the API is unreachable - it is public, and the
+     * shared token is the only gate. It is a claim about what a BROWSER PAGE
+     * on someone else's origin can do, and it goes red the moment a permissive
+     * CORS plugin is added without a decision.
+     */
+    const preflight = await app.inject({
+      method: "OPTIONS",
+      url: "/v1/chat",
+      headers: {
+        origin: "https://example.invalid",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "authorization,content-type"
+      }
+    });
+
+    assert.equal(preflight.statusCode, 404);
+    assert.equal(
+      preflight.headers["access-control-allow-origin"],
+      undefined
+    );
+
+    const crossOrigin = await chat({ origin: "https://example.invalid" });
+
+    assert.equal(
+      crossOrigin.headers["access-control-allow-origin"],
+      undefined
+    );
+  });
+
   it("keeps rejecting an empty message before it looks for a customer", async () => {
     // Order check: the cheap validation stays in front of the network call.
     const response = await app.inject({
