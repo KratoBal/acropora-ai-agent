@@ -88,9 +88,20 @@ export function chatInstructions(
  * `node dist/server.js`.
  */
 export function buildApp() {
+  const limits = aiProviderLimits();
+
   const app = Fastify({
     logger: process.env.NODE_ENV !== "test",
-    trustProxy: true
+    trustProxy: true,
+    /**
+     * The net under the ladder, not a step on it.
+     *
+     * It closes the connection without an HTTP answer, so it must never be
+     * what fires in normal operation - the model call gives up five seconds
+     * earlier and says so. This is here for a handler stuck somewhere the
+     * model timeout cannot reach, the database being the obvious one.
+     */
+    connectionTimeout: limits.connectionTimeoutMs
   });
 
   /**
@@ -99,7 +110,6 @@ export function buildApp() {
    * decision: it can change with the next version of the SDK, and nobody would
    * notice until a request started taking three times as long.
    */
-  const limits = aiProviderLimits();
   const openai = createAiClient(limits);
 
   const rateLimitPerMinute = 20;

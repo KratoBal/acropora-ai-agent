@@ -20,21 +20,26 @@ import OpenAI, { APIConnectionTimeoutError } from "openai";
 
 export const OPENAI_TIMEOUT_MS_ENV = "ACROPORA_AI_OPENAI_TIMEOUT_MS";
 export const OPENAI_MAX_RETRIES_ENV = "ACROPORA_AI_OPENAI_MAX_RETRIES";
+export const CONNECTION_TIMEOUT_MS_ENV = "ACROPORA_AI_CONNECTION_TIMEOUT_MS";
 
 /**
- * Twenty-five seconds, chosen against a measured ceiling rather than a feeling.
+ * Forty seconds: the first rung of the agreed ladder, and the only one that
+ * fails with a name.
  *
- * The Next.js rewrite proxy in front of the Acropora OS API cuts at thirty
- * seconds today (measured: 25 s passes, 31 s comes back as a bare 500 at
- * 30.03 s). Staying under it means the timeout that fires is ours, and the
- * caller gets a code that names the problem instead of an "Internal Server
- * Error" that names nothing.
+ * The earlier value was twenty-five, chosen to stay under the thirty second
+ * ceiling the Next.js rewrite proxy inherited. That ceiling has been raised to
+ * fifty deliberately, and the ladder now reads outwards: this call gives up at
+ * forty, the socket net below sits at forty-five, and the proxy at fifty.
  *
- * It is deliberately configurable: the outer value is not settled, and when it
- * moves this one has to move with it. A number that cannot be changed without
- * a deploy would go stale the first time the chain is retuned.
+ * Twenty-five turned out to be tight against real questions, not theoretical
+ * ones: of eleven product questions measured on stage, one timed out at 25 s
+ * and another answered at 24.9 s. Two of eleven were at the ceiling.
+ *
+ * It stays configurable, because every number above it is configurable too and
+ * they have to move together. A limit that cannot be changed without a deploy
+ * goes stale the first time the chain is retuned.
  */
-const DEFAULT_TIMEOUT_MS = 25_000;
+const DEFAULT_TIMEOUT_MS = 40_000;
 
 /**
  * No retries, and this is the part worth reading.
@@ -48,9 +53,29 @@ const DEFAULT_TIMEOUT_MS = 25_000;
  */
 const DEFAULT_MAX_RETRIES = 0;
 
+/**
+ * Forty-five seconds, and this one is a net rather than a step.
+ *
+ * Fastify has two settings whose names invite the wrong choice.
+ * `requestTimeout` bounds READING the request, so it does nothing about a slow
+ * answer. `connectionTimeout` does bound a slow handler - measured: with 2 000
+ * ms set and a handler sleeping 5 000 ms, the connection closed at 2.004 s.
+ *
+ * But it closes the connection, it does not answer. The caller gets no HTTP
+ * status at all, which is the shape of failure this service spent a day
+ * removing. So it must never be the limit that fires in normal operation: the
+ * model call above gives up five seconds earlier, with a code and a duration.
+ *
+ * What this catches is the case nothing else does - a handler stuck somewhere
+ * other than the model call, the database being the obvious candidate, where
+ * there is no timeout at all today.
+ */
+const DEFAULT_CONNECTION_TIMEOUT_MS = 45_000;
+
 export interface AiProviderLimits {
   timeoutMs: number;
   maxRetries: number;
+  connectionTimeoutMs: number;
 }
 
 function boundedNumber(
@@ -89,6 +114,12 @@ export function aiProviderLimits(
       DEFAULT_MAX_RETRIES,
       0,
       5
+    ),
+    connectionTimeoutMs: boundedNumber(
+      environment[CONNECTION_TIMEOUT_MS_ENV],
+      DEFAULT_CONNECTION_TIMEOUT_MS,
+      1_000,
+      600_000
     )
   };
 }
