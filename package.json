@@ -9,6 +9,6 @@
     "build": "npm --workspace apps/api run build",
     "start": "node dist/server.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "tsc -p tsconfig.test.json && node --test test-dist/*.spec.js"
+    "test": "rm -rf test-dist && tsc -p tsconfig.test.json && specs=$(find test-dist -name '*.spec.js') && { [ -n \"$specs\" ] || { echo 'No spec files in test-dist, so this run proves nothing and is not a pass.' >&2; exit 1; }; } && node --test $specs"
   }
 }
