@@ -1,31 +1,101 @@
 import { pool } from "./db.js";
 
 /**
- * The four judgements the internal test surface offers, in its own keys.
+ * An answer is judged on TWO independent axes, and they never mix.
+ *
+ * The reason is a case that a single list cannot express: an answer can be
+ * factually right and written in unreadable Hungarian, or fluent and wrong.
+ * Folded into one set of buttons those two collapse into each other, and the
+ * distinction is exactly what the measurement is for.
+ *
+ * Independent also means separately absent: someone may judge the wording and
+ * leave the facts alone, or the other way round. Nothing here requires a pair.
+ */
+export const RATING_AXES = ["accuracy", "language"] as const;
+
+export type RatingAxis = (typeof RATING_AXES)[number];
+
+/**
+ * The four judgements about the FACTS, in the keys the surface uses.
  *
  * Balazs specified them on the screen, and they are stored unchanged: a
  * mapping between a button and a database value is a place where the two
  * drift apart, and the drift is silent - the numbers keep adding up, they
  * just stop meaning what the screen said.
  */
-export const RATING_VALUES = [
+export const ACCURACY_RATINGS = [
   "correct",
   "inaccurate",
   "dangerous",
   "no-data"
 ] as const;
 
-export type RatingValue = (typeof RATING_VALUES)[number];
+/**
+ * The four judgements about the WORDING, and deliberately not a copy of the
+ * accuracy set.
+ *
+ * Same shape, because it has to be used the same way - one click, no
+ * deliberation: one good value and three kinds of failure, of which one is
+ * heavier than the others.
+ *
+ * - `natural`   - reads as a Hungarian professional would say it.
+ * - `wordy`     - true, but the answer cannot be read out of it quickly.
+ * - `foreign`   - translated-sounding: English word order and phrases nobody
+ *                 says in Hungarian.
+ * - `confusing` - the WORDING allows a different reading than what is meant.
+ *                 This is the wording equivalent of `dangerous`: the other
+ *                 three are unpleasant, this one turns a factually correct
+ *                 answer into a wrong action.
+ *
+ * Tone (condescending, over-familiar, bureaucratic) was deliberately left
+ * out. It matters for the brand voice, but as a fifth button it would dilute
+ * the list, and three of these four already depend on it indirectly. Adding
+ * it later should be a decision, not an afterthought.
+ */
+export const LANGUAGE_RATINGS = [
+  "natural",
+  "wordy",
+  "foreign",
+  "confusing"
+] as const;
 
-export function isRatingValue(value: unknown): value is RatingValue {
+export const RATINGS_BY_AXIS = {
+  accuracy: ACCURACY_RATINGS,
+  language: LANGUAGE_RATINGS
+} as const satisfies Record<RatingAxis, readonly string[]>;
+
+export type AccuracyRating = (typeof ACCURACY_RATINGS)[number];
+export type LanguageRating = (typeof LANGUAGE_RATINGS)[number];
+export type RatingValue = AccuracyRating | LanguageRating;
+
+export function isRatingAxis(value: unknown): value is RatingAxis {
   return (
     typeof value === "string" &&
-    (RATING_VALUES as readonly string[]).includes(value)
+    (RATING_AXES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Is this value allowed ON THIS AXIS?
+ *
+ * Asked per axis rather than globally, because "is it one of the eight" would
+ * accept `natural` as a judgement about facts. The values are not
+ * interchangeable, and a validator that treats them as one pool would let the
+ * two lists quietly merge - which is the thing the split exists to prevent.
+ */
+export function isRatingForAxis(
+  axis: RatingAxis,
+  value: unknown
+): value is RatingValue {
+  return (
+    typeof value === "string" &&
+    (RATINGS_BY_AXIS[axis] as readonly string[]).includes(value)
   );
 }
 
 export interface StoredRating {
   messageId: string;
+  axis: RatingAxis;
   rating: RatingValue;
   ratedBy: string;
   ratedAt: string;
@@ -61,40 +131,46 @@ export async function answerIsRatable(
 }
 
 /**
- * Writes the judgement, or replaces the one this person gave before.
+ * Writes the judgement, or replaces the one this person gave before ON THIS
+ * AXIS.
  *
- * An upsert rather than an insert, because on the screen the four buttons are
- * one choice: pressing another one is a correction, not a second opinion. Two
- * different people rating the same answer are two rows, which is what the
- * unique constraint is keyed on.
+ * An upsert rather than an insert, because on the screen the buttons of one
+ * axis are a single choice: pressing another one is a correction, not a
+ * second opinion. Three things stay separate rows, and each for its own
+ * reason: two different people judging the same answer (disagreement is a
+ * finding), and one person judging the same answer on both axes (the facts
+ * and the wording are different questions).
  */
 export async function rateAnswer(input: {
   messageId: string;
+  axis: RatingAxis;
   rating: RatingValue;
   ratedBy: string;
 }): Promise<StoredRating> {
   const result = await pool.query<{
     message_id: string;
+    axis: RatingAxis;
     rating: RatingValue;
     rated_by: string;
     updated_at: Date;
   }>(
     `
-      INSERT INTO answer_ratings (message_id, rating, rated_by)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (message_id, rated_by)
+      INSERT INTO answer_ratings (message_id, axis, rating, rated_by)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (message_id, rated_by, axis)
       DO UPDATE SET
         rating = EXCLUDED.rating,
         updated_at = NOW()
-      RETURNING message_id, rating, rated_by, updated_at
+      RETURNING message_id, axis, rating, rated_by, updated_at
     `,
-    [input.messageId, input.rating, input.ratedBy]
+    [input.messageId, input.axis, input.rating, input.ratedBy]
   );
 
   const row = result.rows[0];
 
   return {
     messageId: row.message_id,
+    axis: row.axis,
     rating: row.rating,
     ratedBy: row.rated_by,
     ratedAt: row.updated_at.toISOString()
@@ -114,6 +190,7 @@ export async function conversationRatings(
 ): Promise<StoredRating[]> {
   const result = await pool.query<{
     message_id: string;
+    axis: RatingAxis;
     rating: RatingValue;
     rated_by: string;
     updated_at: Date;
@@ -121,6 +198,7 @@ export async function conversationRatings(
     `
       SELECT
         answer_ratings.message_id,
+        answer_ratings.axis,
         answer_ratings.rating,
         answer_ratings.rated_by,
         answer_ratings.updated_at
@@ -136,6 +214,7 @@ export async function conversationRatings(
 
   return result.rows.map((row) => ({
     messageId: row.message_id,
+    axis: row.axis,
     rating: row.rating,
     ratedBy: row.rated_by,
     ratedAt: row.updated_at.toISOString()

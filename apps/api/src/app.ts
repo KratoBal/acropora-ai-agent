@@ -17,9 +17,12 @@ import { buildVersion } from "./build-version.js";
 import {
   answerIsRatable,
   conversationRatings,
-  isRatingValue,
+  isRatingAxis,
+  isRatingForAxis,
   rateAnswer,
-  RATING_VALUES,
+  RATING_AXES,
+  RATINGS_BY_AXIS,
+  type RatingAxis,
   type StoredRating
 } from "./evaluations.js";
 import {
@@ -145,7 +148,8 @@ export interface RatingStore {
   answerIsRatable(messageId: string, clientKey: string): Promise<boolean>;
   rateAnswer(input: {
     messageId: string;
-    rating: (typeof RATING_VALUES)[number];
+    axis: RatingAxis;
+    rating: string;
     ratedBy: string;
   }): Promise<StoredRating>;
   conversationRatings(
@@ -532,6 +536,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
   app.post<{
     Params: { messageId: string };
     Body: {
+      axis?: unknown;
       rating?: unknown;
       ratedBy?: unknown;
     };
@@ -559,19 +564,40 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
+    const axis = request.body?.axis;
+
+    if (!isRatingAxis(axis)) {
+      /**
+       * The axis is required, with no default.
+       *
+       * Defaulting to `accuracy` would be the convenient choice and the wrong
+       * one: a caller that forgot the field would silently file a judgement
+       * about wording as a judgement about facts, and nothing downstream could
+       * tell the difference afterwards.
+       */
+      return reply.code(400).send({
+        error: "invalid axis",
+        allowed: RATING_AXES
+      });
+    }
+
     const rating = request.body?.rating;
 
-    if (!isRatingValue(rating)) {
+    if (!isRatingForAxis(axis, rating)) {
       /**
-       * The accepted values travel with the refusal.
+       * The accepted values travel with the refusal, and they are the values
+       * OF THIS AXIS.
        *
        * A bare "invalid rating" would leave the caller guessing at a list that
        * lives in two repositories, and the surface in front is written by
-       * somebody who cannot read this file.
+       * somebody who cannot read this file. Answering with the whole
+       * vocabulary of both axes would be worse than useless here: it would
+       * suggest that `natural` is a thing to send about facts.
        */
       return reply.code(400).send({
         error: "invalid rating",
-        allowed: RATING_VALUES
+        axis,
+        allowed: RATINGS_BY_AXIS[axis]
       });
     }
 
@@ -609,6 +635,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
     const stored = await ratings.rateAnswer({
       messageId,
+      axis,
       rating,
       ratedBy
     });

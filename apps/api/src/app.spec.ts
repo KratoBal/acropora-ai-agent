@@ -10,7 +10,14 @@ import {
   type ConversationStore,
   type RatingStore
 } from "./app.js";
-import { RATING_VALUES, type StoredRating } from "./evaluations.js";
+import {
+  ACCURACY_RATINGS,
+  LANGUAGE_RATINGS,
+  RATING_AXES,
+  RATINGS_BY_AXIS,
+  type RatingAxis,
+  type StoredRating
+} from "./evaluations.js";
 
 /**
  * Drives the real `/v1/chat` route.
@@ -487,6 +494,7 @@ describe("rating an answer", () => {
 
   let written: Array<{
     messageId: string;
+    axis: RatingAxis;
     rating: string;
     ratedBy: string;
   }> = [];
@@ -494,19 +502,21 @@ describe("rating an answer", () => {
   const ratingStore: RatingStore = {
     answerIsRatable: async (messageId) => messageId === ANSWER_ID,
     rateAnswer: async (input) => {
-      // The upsert, modelled: one row per rater per answer.
+      // The upsert, modelled: one row per rater per answer PER AXIS.
       written = written.filter(
         (row) =>
           !(
             row.messageId === input.messageId &&
-            row.ratedBy === input.ratedBy
+            row.ratedBy === input.ratedBy &&
+            row.axis === input.axis
           )
       );
       written.push(input);
 
       return {
         messageId: input.messageId,
-        rating: input.rating,
+        axis: input.axis,
+        rating: input.rating as StoredRating["rating"],
         ratedBy: input.ratedBy,
         ratedAt: "2026-08-26T20:00:00.000Z"
       } satisfies StoredRating;
@@ -514,6 +524,7 @@ describe("rating an answer", () => {
     conversationRatings: async () =>
       written.map((row) => ({
         messageId: row.messageId,
+        axis: row.axis,
         rating: row.rating as StoredRating["rating"],
         ratedBy: row.ratedBy,
         ratedAt: "2026-08-26T20:00:00.000Z"
@@ -553,6 +564,7 @@ describe("rating an answer", () => {
 
   it("stores a judgement against the answer it names", async () => {
     const response = await rate(ANSWER_ID, {
+      axis: "accuracy",
       rating: "inaccurate",
       ratedBy: "user_7"
     });
@@ -560,49 +572,64 @@ describe("rating an answer", () => {
     assert.equal(response.statusCode, 200);
     assert.deepEqual(response.json(), {
       messageId: ANSWER_ID,
+      axis: "accuracy",
       rating: "inaccurate",
       ratedBy: "user_7",
       ratedAt: "2026-08-26T20:00:00.000Z"
     });
     assert.deepEqual(written, [
-      { messageId: ANSWER_ID, rating: "inaccurate", ratedBy: "user_7" }
+      {
+        messageId: ANSWER_ID,
+        axis: "accuracy",
+        rating: "inaccurate",
+        ratedBy: "user_7"
+      }
     ]);
   });
 
   it("lets the same person change their mind without adding a second row", async () => {
     // On the screen the four buttons are one control, not four votes.
-    await rate(ANSWER_ID, { rating: "correct", ratedBy: "user_7" });
-    await rate(ANSWER_ID, { rating: "dangerous", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "dangerous", ratedBy: "user_7" });
 
     assert.deepEqual(written, [
-      { messageId: ANSWER_ID, rating: "dangerous", ratedBy: "user_7" }
+      {
+        messageId: ANSWER_ID,
+        axis: "accuracy",
+        rating: "dangerous",
+        ratedBy: "user_7"
+      }
     ]);
   });
 
   it("keeps two people's judgements of the same answer apart", async () => {
     // Disagreement about one answer is a finding, and it only survives if the
     // rows are kept separate.
-    await rate(ANSWER_ID, { rating: "correct", ratedBy: "user_7" });
-    await rate(ANSWER_ID, { rating: "inaccurate", ratedBy: "user_9" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "inaccurate", ratedBy: "user_9" });
 
     assert.equal(written.length, 2);
   });
 
-  it("accepts every value the surface offers, and nothing else", async () => {
+  it("accepts every value the surface offers on each axis, and nothing else", async () => {
     /**
-     * Asserted against the exported list rather than a copy of it, so a value
-     * added on one side and not the other cannot pass quietly.
+     * Asserted against the exported lists rather than copies of them, so a
+     * value added on one side and not the other cannot pass quietly.
      */
-    for (const value of RATING_VALUES) {
-      const accepted = await rate(ANSWER_ID, {
-        rating: value,
-        ratedBy: "user_7"
-      });
+    for (const axis of RATING_AXES) {
+      for (const value of RATINGS_BY_AXIS[axis]) {
+        const accepted = await rate(ANSWER_ID, {
+          axis,
+          rating: value,
+          ratedBy: "user_7"
+        });
 
-      assert.equal(accepted.statusCode, 200, `rejected ${value}`);
+        assert.equal(accepted.statusCode, 200, `rejected ${value} on ${axis}`);
+      }
     }
 
     const refused = await rate(ANSWER_ID, {
+      axis: "accuracy",
       rating: "excellent",
       ratedBy: "user_7"
     });
@@ -610,12 +637,89 @@ describe("rating an answer", () => {
     assert.equal(refused.statusCode, 400);
     assert.deepEqual(refused.json(), {
       error: "invalid rating",
-      allowed: [...RATING_VALUES]
+      axis: "accuracy",
+      allowed: [...ACCURACY_RATINGS]
     });
   });
 
+  it("refuses a value that belongs to the other axis, and says which list applies", async () => {
+    /**
+     * The assertion the split rests on. `natural` is a real rating and a
+     * valid one - just not about facts. If this passed, the two vocabularies
+     * would merge in the data even though they never merged in the code.
+     */
+    const refused = await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "natural",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(refused.statusCode, 400);
+    assert.deepEqual(refused.json(), {
+      error: "invalid rating",
+      axis: "accuracy",
+      allowed: [...ACCURACY_RATINGS]
+    });
+    assert.deepEqual(written, [], "nothing may be stored on a refusal");
+
+    const alsoRefused = await rate(ANSWER_ID, {
+      axis: "language",
+      rating: "dangerous",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(alsoRefused.statusCode, 400);
+    assert.deepEqual(
+      (alsoRefused.json() as { allowed?: string[] }).allowed,
+      [...LANGUAGE_RATINGS]
+    );
+  });
+
+  it("requires an axis rather than assuming one", async () => {
+    /**
+     * Defaulting to `accuracy` would be convenient and wrong: a caller that
+     * forgot the field would file a judgement about wording as a judgement
+     * about facts, and afterwards nothing could tell the two apart.
+     */
+    const response = await rate(ANSWER_ID, {
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), {
+      error: "invalid axis",
+      allowed: [...RATING_AXES]
+    });
+    assert.deepEqual(written, []);
+  });
+
+  it("keeps the two axes of one person on one answer as separate rows", async () => {
+    // The facts and the wording are different questions: judging one must not
+    // overwrite the other, and an answer may be judged on only one of them.
+    await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+    await rate(ANSWER_ID, {
+      axis: "language",
+      rating: "wordy",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(written.length, 2);
+    assert.deepEqual(
+      written.map((row) => `${row.axis}:${row.rating}`).sort(),
+      ["accuracy:correct", "language:wordy"]
+    );
+  });
+
   it("refuses a judgement nobody signed", async () => {
-    const response = await rate(ANSWER_ID, { rating: "correct" });
+    const response = await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "correct"
+    });
 
     assert.equal(response.statusCode, 400);
     assert.deepEqual(response.json(), { error: "ratedBy is required" });
@@ -629,6 +733,7 @@ describe("rating an answer", () => {
      * write against message ids they never saw.
      */
     const response = await rate(OTHER_CLIENTS_ANSWER, {
+      axis: "accuracy",
       rating: "correct",
       ratedBy: "user_7"
     });
@@ -640,6 +745,7 @@ describe("rating an answer", () => {
 
   it("refuses a message id that is not one", async () => {
     const response = await rate("not-a-uuid", {
+      axis: "accuracy",
       rating: "correct",
       ratedBy: "user_7"
     });
@@ -653,7 +759,7 @@ describe("rating an answer", () => {
       method: "POST",
       url: `/v1/messages/${ANSWER_ID}/rating`,
       headers: { "content-type": "application/json" },
-      payload: { rating: "correct", ratedBy: "user_7" }
+      payload: { axis: "accuracy", rating: "correct", ratedBy: "user_7" }
     });
 
     assert.equal(response.statusCode, 401);
@@ -661,7 +767,7 @@ describe("rating an answer", () => {
   });
 
   it("reads the judgements back, which is what storing them was for", async () => {
-    await rate(ANSWER_ID, { rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "correct", ratedBy: "user_7" });
 
     const response = await ratedApp.inject({
       method: "GET",
@@ -675,6 +781,7 @@ describe("rating an answer", () => {
       ratings: [
         {
           messageId: ANSWER_ID,
+          axis: "accuracy",
           rating: "correct",
           ratedBy: "user_7",
           ratedAt: "2026-08-26T20:00:00.000Z"
