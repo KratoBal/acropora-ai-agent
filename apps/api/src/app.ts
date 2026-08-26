@@ -20,6 +20,31 @@ const ASSISTANT_INSTRUCTIONS =
   "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.";
 
 /**
+ * What the model is told about our own catalogue: that it has none.
+ *
+ * This is mode-independent, and that is the point. An anonymous visitor and a
+ * resolved customer are both asking someone who cannot see a single product,
+ * price or stock level - the catalogue is simply not wired into this service.
+ *
+ * It is stated for the same reason the missing customer context is stated: an
+ * absence that says nothing gets filled in. A model that is not told it lacks
+ * product data will answer a product question from general knowledge, and a
+ * confident guess about a price or a stock level speaks in place of the shop.
+ * That is not a test-surface concern; it is the same on any surface.
+ *
+ * When the catalogue does arrive, this block is what changes - and the
+ * difference in the answers is the evidence that wiring it in was worth doing.
+ */
+export const NO_PRODUCT_CONTEXT_INSTRUCTIONS = [
+  "You have no data about Acropora's own products, prices, stock or offers.",
+  "The catalogue is not available to you in this conversation, and you must",
+  "not fill that gap from general knowledge or from a product name that sounds",
+  "familiar. If you are asked about a specific Acropora product, its price or",
+  "its availability, say plainly that you do not have that data here, and",
+  "answer only the general part of the question."
+].join("\n");
+
+/**
  * The complete instruction text handed to the model.
  *
  * Assembled by a function rather than inline in the route so that "the model
@@ -30,9 +55,11 @@ const ASSISTANT_INSTRUCTIONS =
 export function chatInstructions(
   resolution: CustomerContextSuccess
 ): string {
-  return [ASSISTANT_INSTRUCTIONS, customerChatInstructions(resolution)].join(
-    "\n\n"
-  );
+  return [
+    ASSISTANT_INSTRUCTIONS,
+    NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+    customerChatInstructions(resolution)
+  ].join("\n\n");
 }
 
 /**
