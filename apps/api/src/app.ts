@@ -15,6 +15,17 @@ import {
 import { safeErrorSummary } from "./redact.js";
 import { buildVersion } from "./build-version.js";
 import {
+  answerIsRatable,
+  conversationRatings,
+  isRatingAxis,
+  isRatingForAxis,
+  rateAnswer,
+  RATING_AXES,
+  RATINGS_BY_AXIS,
+  type RatingAxis,
+  type StoredRating
+} from "./evaluations.js";
+import {
   customerChatFields,
   customerChatInstructions,
   customerContextErrorBody,
@@ -107,7 +118,7 @@ export interface ConversationStore {
     role: "user" | "assistant" | "system";
     content: string;
     model?: string;
-  }): Promise<void>;
+  }): Promise<string>;
   getConversationMessages(
     conversationId: string,
     limit?: number
@@ -127,15 +138,71 @@ const databaseConversationStore: ConversationStore = {
 };
 
 /**
+ * Where a judgement about an answer is written and read back.
+ *
+ * Separate from the conversation store rather than folded into it, because
+ * they answer to different things: one is the transcript, the other is what
+ * somebody thought of it. A rating can be replaced and a message cannot.
+ */
+export interface RatingStore {
+  answerIsRatable(messageId: string, clientKey: string): Promise<boolean>;
+  rateAnswer(input: {
+    messageId: string;
+    axis: RatingAxis;
+    rating: string;
+    ratedBy: string;
+  }): Promise<StoredRating>;
+  conversationRatings(
+    conversationId: string,
+    clientKey: string
+  ): Promise<StoredRating[]>;
+}
+
+const databaseRatingStore: RatingStore = {
+  answerIsRatable,
+  rateAnswer,
+  conversationRatings
+};
+
+/**
  * What may be substituted when the app is built.
  *
- * Both default to the real thing, so production wiring is unchanged and there
- * is no test-only branch inside the handler. The same seam is what a stored
- * evaluation will be written through later.
+ * All three default to the real thing, so production wiring is unchanged and
+ * there is no test-only branch inside a handler.
  */
+/**
+ * Just enough of a logger for Fastify, and for a test to read back.
+ *
+ * Typed here rather than imported from pino because what matters is the shape
+ * the route calls, not the implementation behind it.
+ */
+export interface AppLogger {
+  info(payload: unknown, message?: string): void;
+  error(payload: unknown, message?: string): void;
+  warn(payload: unknown, message?: string): void;
+  debug(payload: unknown, message?: string): void;
+  fatal(payload: unknown, message?: string): void;
+  trace(payload: unknown, message?: string): void;
+  child(bindings: unknown): AppLogger;
+  level: string;
+  silent(payload: unknown, message?: string): void;
+}
+
 export interface AppDependencies {
   openai?: OpenAI;
   conversations?: ConversationStore;
+  ratings?: RatingStore;
+  /**
+   * Substituted so a test can read back what a log line was GIVEN.
+   *
+   * The upstream failure branch redacts the provider's error before logging
+   * it, and that redaction was the one claim in this service nothing held in
+   * place: `safeErrorSummary` is covered from every angle, but the line that
+   * calls it was not, so putting the raw error object back would have left
+   * every test green. Reaching the branch is not enough - the assertion needs
+   * the payload.
+   */
+  logger?: AppLogger;
   /**
    * The liveness check the health route runs against the database.
    *
@@ -163,6 +230,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const limits = aiProviderLimits();
   const conversations =
     dependencies.conversations ?? databaseConversationStore;
+  const ratings = dependencies.ratings ?? databaseRatingStore;
   const databaseCheck =
     dependencies.databaseCheck ??
     (async () => {
@@ -170,7 +238,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
     });
 
   const app = Fastify({
-    logger: process.env.NODE_ENV !== "test",
+    ...(dependencies.logger
+      ? { loggerInstance: dependencies.logger }
+      : { logger: process.env.NODE_ENV !== "test" }),
     trustProxy: true,
     /**
      * The net under the ladder, not a step on it.
@@ -192,6 +262,15 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const openai = dependencies.openai ?? createAiClient(limits);
 
   const rateLimitPerMinute = 20;
+  /**
+   * Higher than the chat ceiling, and on its own budget.
+   *
+   * Rating is a click, not a model call: someone working through a list of
+   * test questions rates far more often than they ask, and changing a mind
+   * costs another write. Sharing the chat bucket would mean the judgements
+   * eat the allowance for the questions.
+   */
+  const ratingLimitPerMinute = 60;
   const rateWindowMs = 60_000;
 
   const rateBuckets = new Map<
@@ -199,7 +278,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
     { startedAt: number; count: number }
   >();
 
-  function consumeRateLimit(key: string): boolean {
+  function consumeRateLimit(
+    key: string,
+    limit = rateLimitPerMinute
+  ): boolean {
     const now = Date.now();
     const current = rateBuckets.get(key);
 
@@ -212,12 +294,42 @@ export function buildApp(dependencies: AppDependencies = {}) {
       return true;
     }
 
-    if (current.count >= rateLimitPerMinute) {
+    if (current.count >= limit) {
       return false;
     }
 
     current.count += 1;
     return true;
+  }
+
+  /**
+   * The shared token, checked in one place.
+   *
+   * It was inline in the chat handler while there was one handler. A second
+   * route copying the comparison is how two gates end up subtly different -
+   * and the weaker of the two is the one that decides.
+   */
+  function tokenIsValid(authorization: string | undefined): boolean {
+    const expected = process.env.API_ACCESS_TOKEN;
+
+    return Boolean(expected) && authorization === `Bearer ${expected}`;
+  }
+
+  const UUID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+  /**
+   * Which caller a conversation and its ratings belong to.
+   *
+   * Read the same way by both routes on purpose: ownership is only a boundary
+   * if the two sides of it agree on what the key is. A rating route that
+   * defaulted differently would accept writes against conversations the chat
+   * route would refuse to continue.
+   */
+  function clientKeyOf(header: unknown): string {
+    return typeof header === "string" && header.length > 0
+      ? header.slice(0, 128)
+      : "stage-test-client";
   }
 
   app.get("/health", async () => {
@@ -253,13 +365,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       conversationId?: string;
     };
   }>("/v1/chat", async (request, reply) => {
-    const expectedToken = process.env.API_ACCESS_TOKEN;
-    const providedToken = request.headers.authorization;
-
-    if (
-      !expectedToken ||
-      providedToken !== `Bearer ${expectedToken}`
-    ) {
+    if (!tokenIsValid(request.headers.authorization)) {
       return reply.code(401).send({
         error: "unauthorized"
       });
@@ -315,21 +421,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
         .send(customerContextErrorBody(resolvedCustomer));
     }
 
-      const clientKeyHeader = request.headers["x-client-key"];
-
-    const clientKey =
-      typeof clientKeyHeader === "string" &&
-      clientKeyHeader.length > 0
-        ? clientKeyHeader.slice(0, 128)
-        : "stage-test-client";
+    const clientKey = clientKeyOf(request.headers["x-client-key"]);
 
     let conversationId = request.body?.conversationId;
 
     if (conversationId) {
-      const uuidPattern =
-        /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-      if (!uuidPattern.test(conversationId)) {
+      if (!UUID_PATTERN.test(conversationId)) {
         return reply.code(400).send({
           error: "invalid conversationId"
         });
@@ -381,7 +478,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         store: false
       });
 
-      await conversations.saveMessage({
+      const answerMessageId = await conversations.saveMessage({
         conversationId: activeConversationId,
         role: "assistant",
         content: response.output_text,
@@ -390,6 +487,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
       return {
         conversationId: activeConversationId,
+        /**
+         * The handle a judgement is written against.
+         *
+         * Without it the surface would have to guess which answer it is
+         * rating, and "the last one" stops being true as soon as a second
+         * question is sent before the first is judged.
+         */
+        messageId: answerMessageId,
         answer: response.output_text,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         // Temporary, so that the binding is visible from the outside. See
@@ -413,6 +518,160 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
       return reply.code(failure.status).send(failure.body);
     }
+  });
+
+  /**
+   * What somebody thought of one answer.
+   *
+   * The judgement lives here rather than in the browser because that is the
+   * entire point of collecting it: a rating kept in page state is gone on
+   * reload, and a measurement that disappears when a tab closes is not a
+   * measurement. The internal test surface is how the answers get judged, and
+   * this is where the judgement lands.
+   *
+   * It is a separate call rather than a field on the chat request, because
+   * the judgement happens after the answer has been read - sometimes minutes
+   * after, sometimes changed once the next answer puts it in context.
+   */
+  app.post<{
+    Params: { messageId: string };
+    Body: {
+      axis?: unknown;
+      rating?: unknown;
+      ratedBy?: unknown;
+    };
+  }>("/v1/messages/:messageId/rating", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(`rating:${request.ip}`, ratingLimitPerMinute)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const { messageId } = request.params;
+
+    if (!UUID_PATTERN.test(messageId)) {
+      return reply.code(400).send({
+        error: "invalid messageId"
+      });
+    }
+
+    const axis = request.body?.axis;
+
+    if (!isRatingAxis(axis)) {
+      /**
+       * The axis is required, with no default.
+       *
+       * Defaulting to `accuracy` would be the convenient choice and the wrong
+       * one: a caller that forgot the field would silently file a judgement
+       * about wording as a judgement about facts, and nothing downstream could
+       * tell the difference afterwards.
+       */
+      return reply.code(400).send({
+        error: "invalid axis",
+        allowed: RATING_AXES
+      });
+    }
+
+    const rating = request.body?.rating;
+
+    if (!isRatingForAxis(axis, rating)) {
+      /**
+       * The accepted values travel with the refusal, and they are the values
+       * OF THIS AXIS.
+       *
+       * A bare "invalid rating" would leave the caller guessing at a list that
+       * lives in two repositories, and the surface in front is written by
+       * somebody who cannot read this file. Answering with the whole
+       * vocabulary of both axes would be worse than useless here: it would
+       * suggest that `natural` is a thing to send about facts.
+       */
+      return reply.code(400).send({
+        error: "invalid rating",
+        axis,
+        allowed: RATINGS_BY_AXIS[axis]
+      });
+    }
+
+    const ratedByRaw = request.body?.ratedBy;
+    const ratedBy =
+      typeof ratedByRaw === "string" ? ratedByRaw.trim().slice(0, 128) : "";
+
+    if (!ratedBy) {
+      /**
+       * Required, and not defaulted to something anonymous.
+       *
+       * Who judged an answer is half of what makes the judgement readable
+       * later: two people disagreeing about the same answer is a finding, and
+       * it is invisible if both rows say "someone". It is also what lets a
+       * person change their own mind without overwriting anybody else's.
+       */
+      return reply.code(400).send({
+        error: "ratedBy is required"
+      });
+    }
+
+    const clientKey = clientKeyOf(request.headers["x-client-key"]);
+
+    if (!(await ratings.answerIsRatable(messageId, clientKey))) {
+      /**
+       * One 404 for three different situations - no such message, someone
+       * else's conversation, or a question rather than an answer - and that is
+       * deliberate: distinguishing them would tell the caller which message
+       * ids exist.
+       */
+      return reply.code(404).send({
+        error: "answer not found"
+      });
+    }
+
+    const stored = await ratings.rateAnswer({
+      messageId,
+      axis,
+      rating,
+      ratedBy
+    });
+
+    return reply.code(200).send(stored);
+  });
+
+  /**
+   * The judgements already given in one conversation.
+   *
+   * Read back by the surface so a rating survives a reload, which is what
+   * storing it was for.
+   */
+  app.get<{
+    Params: { conversationId: string };
+  }>("/v1/conversations/:conversationId/ratings", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    const { conversationId } = request.params;
+
+    if (!UUID_PATTERN.test(conversationId)) {
+      return reply.code(400).send({
+        error: "invalid conversationId"
+      });
+    }
+
+    const clientKey = clientKeyOf(request.headers["x-client-key"]);
+
+    return {
+      conversationId,
+      ratings: await ratings.conversationRatings(conversationId, clientKey)
+    };
   });
 
   return app;

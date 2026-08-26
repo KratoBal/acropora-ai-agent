@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 
 import {
   buildApp,
   chatInstructions,
   NO_PRODUCT_CONTEXT_INSTRUCTIONS,
   type AppDependencies,
-  type ConversationStore
+  type AppLogger,
+  type ConversationStore,
+  type RatingStore
 } from "./app.js";
+import {
+  ACCURACY_RATINGS,
+  LANGUAGE_RATINGS,
+  RATING_AXES,
+  RATINGS_BY_AXIS,
+  type RatingAxis,
+  type StoredRating
+} from "./evaluations.js";
 
 /**
  * Drives the real `/v1/chat` route.
@@ -358,6 +368,8 @@ describe("POST /v1/chat", () => {
 describe("the chat route, end to end", () => {
   const CONVERSATION_ID = "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30";
 
+  const ANSWER_MESSAGE_ID = "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f";
+
   const storedMessages: Array<{ role: string; content: string }> = [];
 
   const store: ConversationStore = {
@@ -365,6 +377,9 @@ describe("the chat route, end to end", () => {
     conversationBelongsToClient: async () => true,
     saveMessage: async (input) => {
       storedMessages.push({ role: input.role, content: input.content });
+      return input.role === "assistant"
+        ? ANSWER_MESSAGE_ID
+        : "0d9c8b7a-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
     },
     getConversationMessages: async () => [
       { role: "user", content: "Van-e Fauna Marin nyomelem-adalekunk?" }
@@ -418,6 +433,20 @@ describe("the chat route, end to end", () => {
     );
   });
 
+  it("names the answer it just stored, so it can be judged later", async () => {
+    /**
+     * Without this the rating route has nothing to address. "The last answer
+     * in the conversation" is the alternative, and it is wrong the moment a
+     * second question is asked before the first one is judged.
+     */
+    const response = await ask();
+
+    assert.equal(
+      (response.json() as { messageId?: string }).messageId,
+      ANSWER_MESSAGE_ID
+    );
+  });
+
   it("hands the model the clause about what it cannot see", async () => {
     /**
      * The assertion this file existed without.
@@ -450,6 +479,476 @@ describe("the chat route, end to end", () => {
   });
 });
 
+
+/**
+ * Storing what somebody thought of an answer.
+ *
+ * The reason this is a route at all: a rating held in page state is gone on
+ * reload, and the internal surface exists to build up a picture of answer
+ * quality over more than one sitting.
+ */
+describe("rating an answer", () => {
+  const ANSWER_ID = "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f";
+  const OTHER_CLIENTS_ANSWER = "c3d5e7f9-1b2c-4d3e-9f6a-0b8c7d6e5f4a";
+  const CONVERSATION_ID = "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30";
+
+  let written: Array<{
+    messageId: string;
+    axis: RatingAxis;
+    rating: string;
+    ratedBy: string;
+  }> = [];
+
+  const ratingStore: RatingStore = {
+    answerIsRatable: async (messageId) => messageId === ANSWER_ID,
+    rateAnswer: async (input) => {
+      // The upsert, modelled: one row per rater per answer PER AXIS.
+      written = written.filter(
+        (row) =>
+          !(
+            row.messageId === input.messageId &&
+            row.ratedBy === input.ratedBy &&
+            row.axis === input.axis
+          )
+      );
+      written.push(input);
+
+      return {
+        messageId: input.messageId,
+        axis: input.axis,
+        rating: input.rating as StoredRating["rating"],
+        ratedBy: input.ratedBy,
+        ratedAt: "2026-08-26T20:00:00.000Z"
+      } satisfies StoredRating;
+    },
+    conversationRatings: async () =>
+      written.map((row) => ({
+        messageId: row.messageId,
+        axis: row.axis,
+        rating: row.rating as StoredRating["rating"],
+        ratedBy: row.ratedBy,
+        ratedAt: "2026-08-26T20:00:00.000Z"
+      }))
+  };
+
+  let ratedApp: ReturnType<typeof buildApp>;
+
+  before(async () => {
+    ratedApp = buildApp({ ratings: ratingStore });
+    await ratedApp.ready();
+  });
+
+  after(async () => {
+    await ratedApp.close();
+  });
+
+  beforeEach(() => {
+    written = [];
+  });
+
+  const rate = (
+    messageId: string,
+    payload: Record<string, unknown>,
+    headers: Record<string, string> = {}
+  ) =>
+    ratedApp.inject({
+      method: "POST",
+      url: `/v1/messages/${messageId}/rating`,
+      headers: {
+        authorization: `Bearer ${API_TOKEN}`,
+        "content-type": "application/json",
+        ...headers
+      },
+      payload
+    });
+
+  it("stores a judgement against the answer it names", async () => {
+    const response = await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "inaccurate",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      messageId: ANSWER_ID,
+      axis: "accuracy",
+      rating: "inaccurate",
+      ratedBy: "user_7",
+      ratedAt: "2026-08-26T20:00:00.000Z"
+    });
+    assert.deepEqual(written, [
+      {
+        messageId: ANSWER_ID,
+        axis: "accuracy",
+        rating: "inaccurate",
+        ratedBy: "user_7"
+      }
+    ]);
+  });
+
+  it("lets the same person change their mind without adding a second row", async () => {
+    // On the screen the four buttons are one control, not four votes.
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "dangerous", ratedBy: "user_7" });
+
+    assert.deepEqual(written, [
+      {
+        messageId: ANSWER_ID,
+        axis: "accuracy",
+        rating: "dangerous",
+        ratedBy: "user_7"
+      }
+    ]);
+  });
+
+  it("keeps two people's judgements of the same answer apart", async () => {
+    // Disagreement about one answer is a finding, and it only survives if the
+    // rows are kept separate.
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "inaccurate", ratedBy: "user_9" });
+
+    assert.equal(written.length, 2);
+  });
+
+  it("accepts every value the surface offers on each axis, and nothing else", async () => {
+    /**
+     * Asserted against the exported lists rather than copies of them, so a
+     * value added on one side and not the other cannot pass quietly.
+     */
+    for (const axis of RATING_AXES) {
+      for (const value of RATINGS_BY_AXIS[axis]) {
+        const accepted = await rate(ANSWER_ID, {
+          axis,
+          rating: value,
+          ratedBy: "user_7"
+        });
+
+        assert.equal(accepted.statusCode, 200, `rejected ${value} on ${axis}`);
+      }
+    }
+
+    const refused = await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "excellent",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(refused.statusCode, 400);
+    assert.deepEqual(refused.json(), {
+      error: "invalid rating",
+      axis: "accuracy",
+      allowed: [...ACCURACY_RATINGS]
+    });
+  });
+
+  it("refuses a value that belongs to the other axis, and says which list applies", async () => {
+    /**
+     * The assertion the split rests on. `natural` is a real rating and a
+     * valid one - just not about facts. If this passed, the two vocabularies
+     * would merge in the data even though they never merged in the code.
+     */
+    const refused = await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "natural",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(refused.statusCode, 400);
+    assert.deepEqual(refused.json(), {
+      error: "invalid rating",
+      axis: "accuracy",
+      allowed: [...ACCURACY_RATINGS]
+    });
+    assert.deepEqual(written, [], "nothing may be stored on a refusal");
+
+    const alsoRefused = await rate(ANSWER_ID, {
+      axis: "language",
+      rating: "dangerous",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(alsoRefused.statusCode, 400);
+    assert.deepEqual(
+      (alsoRefused.json() as { allowed?: string[] }).allowed,
+      [...LANGUAGE_RATINGS]
+    );
+  });
+
+  it("requires an axis rather than assuming one", async () => {
+    /**
+     * Defaulting to `accuracy` would be convenient and wrong: a caller that
+     * forgot the field would file a judgement about wording as a judgement
+     * about facts, and afterwards nothing could tell the two apart.
+     */
+    const response = await rate(ANSWER_ID, {
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), {
+      error: "invalid axis",
+      allowed: [...RATING_AXES]
+    });
+    assert.deepEqual(written, []);
+  });
+
+  it("keeps the two axes of one person on one answer as separate rows", async () => {
+    // The facts and the wording are different questions: judging one must not
+    // overwrite the other, and an answer may be judged on only one of them.
+    await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+    await rate(ANSWER_ID, {
+      axis: "language",
+      rating: "wordy",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(written.length, 2);
+    assert.deepEqual(
+      written.map((row) => `${row.axis}:${row.rating}`).sort(),
+      ["accuracy:correct", "language:wordy"]
+    );
+  });
+
+  it("refuses a judgement nobody signed", async () => {
+    const response = await rate(ANSWER_ID, {
+      axis: "accuracy",
+      rating: "correct"
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: "ratedBy is required" });
+    assert.deepEqual(written, [], "nothing may be stored on a refusal");
+  });
+
+  it("will not write against an answer that is not the caller's", async () => {
+    /**
+     * The ownership rule the chat route already applies, applied here too. A
+     * rating endpoint without it would let anyone holding the shared token
+     * write against message ids they never saw.
+     */
+    const response = await rate(OTHER_CLIENTS_ANSWER, {
+      axis: "accuracy",
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 404);
+    assert.deepEqual(response.json(), { error: "answer not found" });
+    assert.deepEqual(written, []);
+  });
+
+  it("refuses a message id that is not one", async () => {
+    const response = await rate("not-a-uuid", {
+      axis: "accuracy",
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: "invalid messageId" });
+  });
+
+  it("is behind the same shared token as the chat", async () => {
+    const response = await ratedApp.inject({
+      method: "POST",
+      url: `/v1/messages/${ANSWER_ID}/rating`,
+      headers: { "content-type": "application/json" },
+      payload: { axis: "accuracy", rating: "correct", ratedBy: "user_7" }
+    });
+
+    assert.equal(response.statusCode, 401);
+    assert.deepEqual(written, []);
+  });
+
+  it("reads the judgements back, which is what storing them was for", async () => {
+    await rate(ANSWER_ID, { axis: "accuracy", rating: "correct", ratedBy: "user_7" });
+
+    const response = await ratedApp.inject({
+      method: "GET",
+      url: `/v1/conversations/${CONVERSATION_ID}/ratings`,
+      headers: { authorization: `Bearer ${API_TOKEN}` }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      conversationId: CONVERSATION_ID,
+      ratings: [
+        {
+          messageId: ANSWER_ID,
+          axis: "accuracy",
+          rating: "correct",
+          ratedBy: "user_7",
+          ratedAt: "2026-08-26T20:00:00.000Z"
+        }
+      ]
+    });
+  });
+
+  it("does not read a conversation back for an unauthenticated caller", async () => {
+    const response = await ratedApp.inject({
+      method: "GET",
+      url: `/v1/conversations/${CONVERSATION_ID}/ratings`
+    });
+
+    assert.equal(response.statusCode, 401);
+  });
+});
+
+
+/**
+ * The one claim in this service that nothing used to hold in place.
+ *
+ * `safeErrorSummary` is covered from every angle, but the line that CALLS it
+ * was not: the upstream failure branch sits behind the database, so no test
+ * reached it, and putting the raw provider error back into that log line would
+ * have left every assertion green. The boundary document named this gap and
+ * said closing it needed an injectable model client. It has one now, so the
+ * gap closes here.
+ *
+ * An OpenAI error is the specific danger: the provider answers a bad key by
+ * quoting it back, partially masked, so the error object can carry the secret
+ * that must never reach a log.
+ */
+describe("what the upstream failure branch writes to the log", () => {
+  const OPENAI_KEY = "sk-live-do-not-log-me-1234";
+
+  const store: ConversationStore = {
+    createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+    conversationBelongsToClient: async () => true,
+    saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+    getConversationMessages: async () => [
+      { role: "user", content: "Mennyi a nitrat szintem?" }
+    ]
+  };
+
+  const providerError = Object.assign(
+    new Error(
+      `Incorrect API key provided: ${OPENAI_KEY}. You can find your API key at ...`
+    ),
+    {
+      status: 401,
+      headers: { authorization: `Bearer ${API_TOKEN}` },
+      request: { headers: { authorization: `Bearer ${OPENAI_KEY}` } }
+    }
+  );
+
+  const failingModel = {
+    responses: {
+      create: async () => {
+        throw providerError;
+      }
+    }
+  } as unknown as NonNullable<AppDependencies["openai"]>;
+
+  let lines: Array<{ level: string; payload: unknown }> = [];
+
+  const recordingLogger: AppLogger = {
+    info: (payload) => lines.push({ level: "info", payload }),
+    error: (payload) => lines.push({ level: "error", payload }),
+    warn: (payload) => lines.push({ level: "warn", payload }),
+    debug: (payload) => lines.push({ level: "debug", payload }),
+    fatal: (payload) => lines.push({ level: "fatal", payload }),
+    trace: (payload) => lines.push({ level: "trace", payload }),
+    silent: () => {},
+    level: "info",
+    child: () => recordingLogger
+  };
+
+  let failingApp: ReturnType<typeof buildApp>;
+
+  before(async () => {
+    process.env.OPENAI_API_KEY = OPENAI_KEY;
+    failingApp = buildApp({
+      conversations: store,
+      openai: failingModel,
+      logger: recordingLogger
+    });
+    await failingApp.ready();
+  });
+
+  after(async () => {
+    await failingApp.close();
+    process.env.OPENAI_API_KEY = "test-openai-key";
+  });
+
+  const askAndFail = async () => {
+    lines = [];
+
+    return failingApp.inject({
+      method: "POST",
+      url: "/v1/chat",
+      headers: {
+        authorization: `Bearer ${API_TOKEN}`,
+        "content-type": "application/json"
+      },
+      payload: { message: "Mennyi a nitrat szintem?" }
+    });
+  };
+
+  it("answers with a code and a duration rather than the provider's words", async () => {
+    const response = await askAndFail();
+
+    assert.equal(response.statusCode, 502);
+    const body = response.json() as { error: string; waitedMs: number };
+    assert.equal(body.error, "ai_provider_error");
+    assert.equal(typeof body.waitedMs, "number");
+    assert.equal(JSON.stringify(body).includes(OPENAI_KEY), false);
+  });
+
+  it("logs the failure, and logs it without the key the provider quoted back", async () => {
+    await askAndFail();
+
+    const logged = lines.filter((line) => line.level === "error");
+    assert.equal(logged.length, 1, "the failure has to be logged exactly once");
+
+    const written = JSON.stringify(logged[0]?.payload);
+    assert.equal(
+      written.includes(OPENAI_KEY),
+      false,
+      "the OpenAI key reached the log"
+    );
+    assert.equal(
+      written.includes(API_TOKEN),
+      false,
+      "the API access token reached the log"
+    );
+    assert.equal(
+      /sk-[A-Za-z0-9_-]{4,}/.test(written),
+      false,
+      "a key-shaped string reached the log"
+    );
+  });
+
+  it("hands the logger a summary, not the provider's error object", async () => {
+    /**
+     * The assertion the gap was about. A summary has a fixed, small set of
+     * fields; the error object carries whatever the provider attached, and
+     * what it attaches is not ours to predict. Anyone who passes the raw
+     * error again turns this red even if today's error happens to be clean.
+     */
+    await askAndFail();
+
+    const payload = (lines.find((line) => line.level === "error")?.payload ??
+      {}) as Record<string, unknown>;
+
+    assert.ok(payload.aiProviderError, "the summary is missing");
+    assert.equal(
+      payload.aiProviderError instanceof Error,
+      false,
+      "the raw error object was handed to the logger"
+    );
+    assert.deepEqual(
+      Object.keys(payload).sort(),
+      ["aiProviderError", "aiProviderOutcome", "timeoutMs", "waitedMs"].sort()
+    );
+  });
+});
 
 /**
  * Which code answered.
