@@ -162,12 +162,57 @@ describe("the catalogue the model does not have", () => {
     );
   });
 
-  it("forbids both directions, not only the yes", () => {
-    // "No, we do not carry that" is the same claim about a range we cannot
-    // see, and it is the more expensive one: it sends a customer away.
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that a brand or a/i);
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that it is not/i);
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /answering it with yes or no is the mistake/i);
+  it("forbids both directions for something that exists", () => {
+    /**
+     * Both halves, and the condition they hang on.
+     *
+     * "No, we do not carry that" is the same claim about a range nobody here
+     * can see, and it is the more expensive one, because it sends a customer
+     * away. But it is only wrong when the thing EXISTS - see the exception
+     * below, which is what makes this a narrowing rather than a ban.
+     */
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /REALLY EXISTS on the market/);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that we have it/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that we do not/i);
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /answering it with yes or no is the\s+mistake/i
+    );
+  });
+
+  it("does NOT forbid correcting something that exists nowhere", () => {
+    /**
+     * The exception, and the measurement behind it.
+     *
+     * Asked whether a low-sodium Red Sea Coral Pro exists here, the model
+     * answered that there is no such thing anywhere, "not at us either". By
+     * the letter of the earlier clause that was a forbidden claim about our
+     * range. By the standard that matters it was the best answer on the list:
+     * it refuted a false premise with correct knowledge instead of retreating
+     * into "I have no data". The "not at us either" is not a guess about
+     * stock - it follows from the general fact.
+     */
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /one exception/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /NOT TO EXIST at all/);
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /does not exist here either/i
+    );
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /Correcting a false premise is worth more/i
+    );
+  });
+
+  it("forbids steering someone to buy a particular item", () => {
+    // The form the earlier wording left open: a concrete "get this one" in a
+    // conversation carried by Acropora reads as "we sell this one", even when
+    // the word "ours" never appears.
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /do not recommend a specific\s+product to buy/i
+    );
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /we sell this one/i);
   });
 
   it("keeps the general description of a brand allowed", () => {
