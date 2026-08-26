@@ -4,6 +4,13 @@
 > failure with no code and no `waitedMs` - an empty reply, or a bare 500 - that
 > is not a new mystery. It is this page, and the first suspect is the outermost
 > limit, whose value we never measured. See "What is still assumed" below.
+>
+> **One case is already explained and does not reopen anything.** On 2026-08-26
+> between 18:47 and 18:49 the stage answered `502` with an empty body and then
+> refused connections on 443 for about a minute. That is the unnamed shape this
+> condition is about, and the cause was measured: a deploy ran in the middle of
+> it, and the deploy recreates both the API and the proxy container. Timing, not
+> a timeout.
 
 A chat answer crosses six hops. Each one may give up on its own, and until this was measured the
 tolerances were in the wrong order: the innermost hop waited the longest, so the chain was cut in
