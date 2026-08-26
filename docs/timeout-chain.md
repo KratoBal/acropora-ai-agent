@@ -74,12 +74,22 @@ gave up. That failure mode - not the length - is what makes a slow chain expensi
 |---|---|---|---|
 | 1 | the model call, in this service | **40 000 ms** | `504 ai_provider_timeout` with `waitedMs` |
 | 2 | the socket net, in this service | **45 000 ms** | **nothing** - the connection closes with no HTTP answer |
-| 3 | the Next.js rewrite proxy, in the OS web app | **50 000 ms** | a bare `500` |
+| 3 | the Acropora OS API, waiting on this service | **47 000 ms** | `ai_gateway_timeout`, with its own `elapsedMs` but no `providerWaitedMs` |
+| 4 | the Next.js rewrite proxy, in the OS web app | **50 000 ms** | a bare `500` |
 | - | the Traefik proxy in front of the OS | **assumed to be unlimited** | see below |
 
-**Only rung 1 explains itself.** That is why it is the shortest: whoever gives up
-first has to be the one that can say why. Rungs 2 and 3 are there to stop a hang
-that rung 1 cannot see, and both fail in a way that tells nobody anything.
+**Only rung 1 explains itself fully.** That is why it is the shortest: whoever gives
+up first has to be the one that can say why. Rung 3 names its failure and times its
+own wait, but it cannot say how long the AI itself waited: it never received an
+answer to read that number from.
+Rungs 2 and 4 are there to stop a hang the ones below cannot see, and both fail in a
+way that tells nobody anything.
+
+Rung 3 lived outside this table until 2026-08-26, and its absence is worth naming
+rather than quietly fixing: it is the one rung that lives in the OTHER repository,
+so a page written here listed the two limits above it and the one below it and
+skipped the middle. Anyone moving rung 2 or rung 4 by reading this page alone would
+have stepped over a limit they did not know was there.
 
 The five second gaps are not taste. They are the window in which the named
 failure can fire before a silent one takes the request away.
@@ -103,6 +113,18 @@ does not matter while rung 1 holds: no answer reaches Traefik's limit unless
 that limit is under 40 seconds. **And if it were, we would see it** - the person
 asking would get an unnamed failure instead of a named one, which is exactly the
 condition at the top of this page.
+
+## One number that is deliberately not on the ladder
+
+Storing a rating - what somebody thought of an answer - waits **8 000 ms** on the OS
+side (`AI_CHAT_RATING_TIMEOUT_MS`). It is not a rung, because no model is involved:
+it is a row being written. Inheriting rung 3's 47 seconds would leave a person who
+pressed a button watching a spinner for most of a minute before being told the AI is
+unreachable - a wait sized for something that is not happening on that call.
+
+The general form is worth keeping: **the ladder bounds the slowest thing on the path,
+not every call that uses the path.** A short call inheriting a long limit is not safe
+by default; it is a failure that takes six times longer than it needs to.
 
 ## What this service does now
 
