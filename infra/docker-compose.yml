@@ -48,6 +48,10 @@ services:
       ACROPORA_AI_OPENAI_TIMEOUT_MS: ${ACROPORA_AI_OPENAI_TIMEOUT_MS}
       ACROPORA_AI_OPENAI_MAX_RETRIES: ${ACROPORA_AI_OPENAI_MAX_RETRIES}
       ACROPORA_AI_CONNECTION_TIMEOUT_MS: ${ACROPORA_AI_CONNECTION_TIMEOUT_MS}
+      # Which commit this container was built from. Set by the deploy
+      # workflow; empty for anything started another way, and the health
+      # endpoint then answers "unknown" rather than guessing.
+      ACROPORA_AI_COMMIT: ${ACROPORA_AI_COMMIT:-}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

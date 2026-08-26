@@ -13,6 +13,7 @@ import {
   createAiClient
 } from "./ai-provider.js";
 import { safeErrorSummary } from "./redact.js";
+import { buildVersion } from "./build-version.js";
 import {
   answerIsRatable,
   conversationRatings,
@@ -198,6 +199,15 @@ export interface AppDependencies {
    * the payload.
    */
   logger?: AppLogger;
+  /**
+   * The liveness check the health route runs against the database.
+   *
+   * Substitutable for the same reason the rest of this object is: without it
+   * no test can reach the health response at all, because the real query
+   * needs a database. A version field nobody can assert is a field nobody
+   * should trust.
+   */
+  databaseCheck?: () => Promise<void>;
 }
 
 /**
@@ -217,6 +227,11 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const conversations =
     dependencies.conversations ?? databaseConversationStore;
   const ratings = dependencies.ratings ?? databaseRatingStore;
+  const databaseCheck =
+    dependencies.databaseCheck ??
+    (async () => {
+      await pool.query("SELECT 1");
+    });
 
   const app = Fastify({
     ...(dependencies.logger
@@ -314,12 +329,27 @@ export function buildApp(dependencies: AppDependencies = {}) {
   }
 
   app.get("/health", async () => {
-    await pool.query("SELECT 1");
+    await databaseCheck();
 
     return {
       ok: true,
       service: "acropora-ai-api",
       environment: process.env.NODE_ENV ?? "unknown",
+      /**
+       * Which code this actually is.
+       *
+       * Added because a measurement could not be closed without it. On
+       * 2026-08-26 a clause was wired into the route, deployed, and measured
+       * on stage - and the strongest statement anyone could make about WHICH
+       * code answered those calls was "the deploy workflow ran for that sha
+       * and went green". That is evidence about a workflow, not about the
+       * process serving the request.
+       *
+       * `unknown` is a real answer and not a failure: a container started by
+       * hand has no sha to report, and pretending otherwise would be worse
+       * than saying so.
+       */
+      version: buildVersion(),
       database: "ok",
       timestamp: new Date().toISOString()
     };
