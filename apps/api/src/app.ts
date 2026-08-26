@@ -1,5 +1,4 @@
 import Fastify from "fastify";
-import OpenAI from "openai";
 import { pool } from "./db.js";
 import {
   conversationBelongsToClient,
@@ -7,6 +6,11 @@ import {
   getConversationMessages,
   saveMessage
 } from "./conversations.js";
+import {
+  aiProviderFailure,
+  aiProviderLimits,
+  createAiClient
+} from "./ai-provider.js";
 import { safeErrorSummary } from "./redact.js";
 import {
   customerChatFields,
@@ -53,9 +57,14 @@ export function buildApp() {
     trustProxy: true
   });
 
-  const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-  });
+  /**
+   * Both limits are passed explicitly, even though one of them happens to
+   * match a default we could have inherited. An inherited default is not a
+   * decision: it can change with the next version of the SDK, and nobody would
+   * notice until a request started taking three times as long.
+   */
+  const limits = aiProviderLimits();
+  const openai = createAiClient(limits);
 
   const rateLimitPerMinute = 20;
   const rateWindowMs = 60_000;
@@ -219,6 +228,8 @@ export function buildApp() {
       });
     }
 
+    const askedAt = Date.now();
+
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
@@ -249,16 +260,21 @@ export function buildApp() {
         ...customerChatFields(resolvedCustomer)
       };
     } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
       // The error object is never handed to the logger: its shape belongs to
       // the provider, and a provider error can quote a key back at us.
       request.log.error(
-        { aiProviderError: safeErrorSummary(error) },
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
         "OpenAI request failed"
       );
 
-      return reply.code(502).send({
-        error: "ai_provider_error"
-      });
+      return reply.code(failure.status).send(failure.body);
     }
   });
 
