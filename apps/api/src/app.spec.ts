@@ -449,3 +449,63 @@ describe("the chat route, end to end", () => {
     );
   });
 });
+
+
+/**
+ * Which code answered.
+ *
+ * Asserted through the ROUTE rather than on the function, because the value
+ * only helps if it reaches the response. It exists because a stage
+ * measurement could not be closed without it: the strongest statement anyone
+ * could make about which code served those calls was that a deploy workflow
+ * had gone green for a sha.
+ */
+describe("the health endpoint's version field", () => {
+  const alive = async () => {};
+
+  it("reports what the deploy set", async () => {
+    process.env.ACROPORA_AI_COMMIT = "982a33ff51e438e4467a4a84ff51b265c915f292";
+
+    const healthApp = buildApp({ databaseCheck: alive });
+    await healthApp.ready();
+
+    try {
+      const response = await healthApp.inject({
+        method: "GET",
+        url: "/health"
+      });
+
+      assert.equal(response.statusCode, 200);
+      assert.equal(
+        (response.json() as { version?: string }).version,
+        "982a33ff51e438e4467a4a84ff51b265c915f292"
+      );
+    } finally {
+      await healthApp.close();
+      delete process.env.ACROPORA_AI_COMMIT;
+    }
+  });
+
+  it("says unknown when nothing set it, rather than leaving the field out", async () => {
+    // An absent field reads as "nothing to report". This one always reports,
+    // and "unknown" is the honest report.
+    delete process.env.ACROPORA_AI_COMMIT;
+
+    const healthApp = buildApp({ databaseCheck: alive });
+    await healthApp.ready();
+
+    try {
+      const response = await healthApp.inject({
+        method: "GET",
+        url: "/health"
+      });
+
+      assert.equal(
+        (response.json() as { version?: string }).version,
+        "unknown"
+      );
+    } finally {
+      await healthApp.close();
+    }
+  });
+});

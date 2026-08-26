@@ -50,13 +50,20 @@ jobs:
         env:
           DEPLOY_USER: ${{ secrets.ACROPORA_AI_USER }}
           DEPLOY_HOST: ${{ secrets.ACROPORA_AI_HOST }}
+          DEPLOY_COMMIT: ${{ github.sha }}
         run: |
           ssh -o BatchMode=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            'bash -se' <<'REMOTE'
+            "ACROPORA_AI_COMMIT=$DEPLOY_COMMIT bash -se" <<'REMOTE'
           set -euo pipefail
 
           cd /opt/acropora-ai/app
+
+          # The sha travels into the container, so /health can say which code
+          # is answering. Without it the only evidence about the running code
+          # is that this workflow went green - which is a fact about the
+          # workflow, not about the process serving requests.
+          export ACROPORA_AI_COMMIT
 
           docker compose \
             --env-file .env \
