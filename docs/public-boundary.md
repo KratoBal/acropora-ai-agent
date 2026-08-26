@@ -63,9 +63,19 @@ possible.
 
 ## What this page does not cover
 
-The boundary above is what the code can hold. Two things it cannot:
+The boundary above is what the code can hold. Three things it cannot, and they are named here on
+purpose: a page that lists only what is settled makes the system look safer than it is.
 
 - **Reachability itself.** That is a deployment property, set by the reverse proxy and the
   network, and no test in this repository can assert it.
 - **Whether the layer in front is honest.** If the BFF takes the customer identifier from its own
   caller instead of from its session, every check here still passes.
+- **The call site of the upstream error log.** `safeErrorSummary` is covered from every angle,
+  but the line in `app.ts` that *calls* it is not: the OpenAI failure branch sits behind the
+  database, so no test in this repository reaches it. If someone puts the raw error object back
+  into that log line, nothing here turns red. Closing it needs the OpenAI client to become an
+  injectable seam, which is a larger change than this one and is tracked separately.
+
+One more thing this page is not: a claim that merging here is neutral. There is no PR check in
+this repository, and the one workflow deploys to stage on a push to `main` - so a merge is a
+release, not a checkpoint.
