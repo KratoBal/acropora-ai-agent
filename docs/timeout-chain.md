@@ -16,6 +16,16 @@ the middle and the caller saw a failure while the work was still running.
 Plus the proxy in front of the Acropora OS deployment, which is configured outside every
 repository.
 
+## The chain is mixed, and the numbers do not belong to one system
+
+The internal test surface lives on the **production** Acropora OS dashboard and calls the
+**stage** AI API. So hops 1-3 are production, hops 5-6 are stage, and the proxy in front of the
+Acropora OS deployment sits between them on the production side.
+
+This matters when reading any number below: a limit measured on one side is not evidence about
+the other. Two deployments running the same software with the same defaults is a reasonable
+guess, and a guess is what it stays until someone measures the side they are talking about.
+
 ## The rule
 
 **The inner limit must be shorter than the outer one.** Whoever gives up first is the one that
@@ -35,7 +45,12 @@ this service does not retry by default.
 | Caddy (4) | response timeout | none configured | read from the Caddyfile |
 | this service (5) | Fastify `requestTimeout` | 0, no limit | measured from the running config |
 | this service → OpenAI (6) | SDK timeout | was 600 000 ms with 2 retries | measured, `openai` 5.23.2 defaults |
-| the proxy in front of the OS | ? | **not measured** | its configuration lives outside the repositories |
+| the proxy in front of the OS | ? | **not measured** | its configuration lives outside the repositories, on the production host |
+
+One limit on that list was measured locally rather than in production: the 30 000 ms came from a
+development server on a developer machine, and the constant that produces it is the same one the
+production server uses. That is source-level evidence for the production path, not a measurement
+of it - and since the surface will run on production, the difference is worth keeping in sight.
 
 The Next.js number deserves its detail: when it fires, the browser receives a plain
 `500 Internal Server Error`. Nothing in it says a timeout happened, and nothing says which hop
