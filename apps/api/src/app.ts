@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import type OpenAI from "openai";
 import { pool } from "./db.js";
 import {
   conversationBelongsToClient,
@@ -85,6 +86,58 @@ export function chatInstructions(
 }
 
 /**
+ * The conversation storage the chat route uses.
+ *
+ * Named as a type so a test can hand the route a stand-in and drive the whole
+ * handler, model call included. Before this existed, every route test had to
+ * stop at the first database call, which left the last third of the handler -
+ * the part that decides what the model is told - with no test going through it
+ * at all. That is not a hypothetical gap: the clause about our own catalogue
+ * was written, exported and asserted, and the route never called it.
+ */
+export interface ConversationStore {
+  createConversation(clientKey: string): Promise<string>;
+  conversationBelongsToClient(
+    conversationId: string,
+    clientKey: string
+  ): Promise<boolean>;
+  saveMessage(input: {
+    conversationId: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    model?: string;
+  }): Promise<void>;
+  getConversationMessages(
+    conversationId: string,
+    limit?: number
+  ): Promise<
+    Array<{
+      role: "user" | "assistant" | "system";
+      content: string;
+    }>
+  >;
+}
+
+const databaseConversationStore: ConversationStore = {
+  createConversation,
+  conversationBelongsToClient,
+  saveMessage,
+  getConversationMessages
+};
+
+/**
+ * What may be substituted when the app is built.
+ *
+ * Both default to the real thing, so production wiring is unchanged and there
+ * is no test-only branch inside the handler. The same seam is what a stored
+ * evaluation will be written through later.
+ */
+export interface AppDependencies {
+  openai?: OpenAI;
+  conversations?: ConversationStore;
+}
+
+/**
  * Builds the HTTP application without starting it.
  *
  * Split out of `server.ts` so that a test can drive the real routes with
@@ -96,8 +149,10 @@ export function chatInstructions(
  * `server.ts` stays the entry point, so the container still runs
  * `node dist/server.js`.
  */
-export function buildApp() {
+export function buildApp(dependencies: AppDependencies = {}) {
   const limits = aiProviderLimits();
+  const conversations =
+    dependencies.conversations ?? databaseConversationStore;
 
   const app = Fastify({
     logger: process.env.NODE_ENV !== "test",
@@ -119,7 +174,7 @@ export function buildApp() {
    * decision: it can change with the next version of the SDK, and nobody would
    * notice until a request started taking three times as long.
    */
-  const openai = createAiClient(limits);
+  const openai = dependencies.openai ?? createAiClient(limits);
 
   const rateLimitPerMinute = 20;
   const rateWindowMs = 60_000;
@@ -250,7 +305,7 @@ export function buildApp() {
         });
       }
 
-      const belongsToClient = await conversationBelongsToClient(
+      const belongsToClient = await conversations.conversationBelongsToClient(
         conversationId,
         clientKey
       );
@@ -261,18 +316,18 @@ export function buildApp() {
         });
       }
     } else {
-      conversationId = await createConversation(clientKey);
+      conversationId = await conversations.createConversation(clientKey);
     }
 
     const activeConversationId = conversationId;
 
-    await saveMessage({
+    await conversations.saveMessage({
       conversationId: activeConversationId,
       role: "user",
       content: message
     });
 
-    const history = await getConversationMessages(
+    const history = await conversations.getConversationMessages(
       activeConversationId,
       20
     );
@@ -288,10 +343,7 @@ export function buildApp() {
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-        instructions: [
-          "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.",
-          customerChatInstructions(resolvedCustomer)
-        ].join("\n\n"),
+        instructions: chatInstructions(resolvedCustomer),
         input: history.map((item) => ({
           role: item.role,
           content: item.content
@@ -299,7 +351,7 @@ export function buildApp() {
         store: false
       });
 
-      await saveMessage({
+      await conversations.saveMessage({
         conversationId: activeConversationId,
         role: "assistant",
         content: response.output_text,
