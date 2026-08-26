@@ -133,6 +133,40 @@ describe("the catalogue the model does not have", () => {
     assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /say plainly that you do not have that data/i);
   });
 
+  it("covers brands, not only individual products", () => {
+    /**
+     * The gap this closes was measured, not imagined.
+     *
+     * Asked "do we have any Fauna Marin trace element supplement?", the model
+     * answered "Yes, there are several" and listed product lines as ours. The
+     * earlier wording spoke about our products, and the model read that at the
+     * level of a single item: a question about a BRAND looked like general
+     * knowledge to it, and "at our place" slipped in unnoticed.
+     */
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /includes BRANDS/i);
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /cannot see which\s+brands or product lines/i
+    );
+  });
+
+  it("forbids both directions, not only the yes", () => {
+    // "No, we do not carry that" is the same claim about a range we cannot
+    // see, and it is the more expensive one: it sends a customer away.
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that a brand or a/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that it is not/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /answering it with yes or no is the mistake/i);
+  });
+
+  it("keeps the general description of a brand allowed", () => {
+    // Without this the clause would turn every brand question into a refusal,
+    // and the general knowledge is the part worth having.
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /Describing a brand or a product in general terms is welcome/i
+    );
+  });
+
   it("still lets the general part of a question be answered", () => {
     // A block that turned every product-adjacent question into a refusal would
     // cost more than it saves: the general aquarium knowledge is exactly what
