@@ -45,7 +45,16 @@ export const NO_PRODUCT_CONTEXT_INSTRUCTIONS = [
   "not fill that gap from general knowledge or from a product name that sounds",
   "familiar. If you are asked about a specific Acropora product, its price or",
   "its availability, say plainly that you do not have that data here, and",
-  "answer only the general part of the question."
+  "answer only the general part of the question.",
+  "",
+  "This includes BRANDS, not only individual products. You cannot see which",
+  "brands or product lines Acropora carries, so never say that a brand or a",
+  "product is available from us, and never say that it is not - both are",
+  "claims about a range you cannot see. A question that takes it for granted",
+  "that we stock something ('do we have any X?') is still such a claim, and",
+  "answering it with yes or no is the mistake.",
+  "Describing a brand or a product in general terms is welcome and useful.",
+  "What is forbidden is placing it inside or outside our range."
 ].join("\n");
 
 /**
