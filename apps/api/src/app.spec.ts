@@ -4,7 +4,9 @@ import { after, before, describe, it } from "node:test";
 import {
   buildApp,
   chatInstructions,
-  NO_PRODUCT_CONTEXT_INSTRUCTIONS
+  NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+  type AppDependencies,
+  type ConversationStore
 } from "./app.js";
 
 /**
@@ -334,5 +336,116 @@ describe("POST /v1/chat", () => {
 
     assert.equal(response.statusCode, 400);
     assert.deepEqual(response.json(), { error: "message is required" });
+  });
+});
+
+
+/**
+ * The whole handler, model call included.
+ *
+ * Everything above stops before the database on purpose, which is useful and
+ * was not enough: it meant no test ever reached the point where the route
+ * decides what to tell the model. That is where a real defect sat. The clause
+ * about our own catalogue was written, exported and asserted by four tests,
+ * and the route assembled its own instruction list by hand and left the clause
+ * out - on this branch and on every commit before it. The stage measurements
+ * of the "narrowed brand clause" were therefore measuring a service that had
+ * never been given the clause.
+ *
+ * So these tests go all the way through with a stand-in store and a stand-in
+ * model client, and read back what the model was actually handed.
+ */
+describe("the chat route, end to end", () => {
+  const CONVERSATION_ID = "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30";
+
+  const storedMessages: Array<{ role: string; content: string }> = [];
+
+  const store: ConversationStore = {
+    createConversation: async () => CONVERSATION_ID,
+    conversationBelongsToClient: async () => true,
+    saveMessage: async (input) => {
+      storedMessages.push({ role: input.role, content: input.content });
+    },
+    getConversationMessages: async () => [
+      { role: "user", content: "Van-e Fauna Marin nyomelem-adalekunk?" }
+    ]
+  };
+
+  let handedToModel: { instructions?: unknown } = {};
+
+  const modelClient = {
+    responses: {
+      create: async (parameters: { instructions?: unknown }) => {
+        handedToModel = parameters;
+        return { output_text: "valasz" };
+      }
+    }
+  } as unknown as NonNullable<AppDependencies["openai"]>;
+
+  let routedApp: ReturnType<typeof buildApp>;
+
+  before(async () => {
+    routedApp = buildApp({ conversations: store, openai: modelClient });
+    await routedApp.ready();
+  });
+
+  after(async () => {
+    await routedApp.close();
+  });
+
+  const ask = () =>
+    routedApp.inject({
+      method: "POST",
+      url: "/v1/chat",
+      headers: {
+        authorization: `Bearer ${API_TOKEN}`,
+        "content-type": "application/json"
+      },
+      payload: { message: "Van-e Fauna Marin nyomelem-adalekunk?" }
+    });
+
+  it("answers an anonymous question without touching the database", async () => {
+    const response = await ask();
+
+    assert.equal(response.statusCode, 200);
+    assert.equal(
+      (response.json() as { answer?: string }).answer,
+      "valasz"
+    );
+    assert.ok(
+      storedMessages.some((message) => message.role === "assistant"),
+      "the answer has to be stored, not only returned"
+    );
+  });
+
+  it("hands the model the clause about what it cannot see", async () => {
+    /**
+     * The assertion this file existed without.
+     *
+     * It is written against the text the model receives rather than against
+     * the function that builds it, because the function was never the broken
+     * part. Anyone who assembles the instructions inline again turns this red.
+     */
+    await ask();
+
+    assert.equal(typeof handedToModel.instructions, "string");
+    assert.ok(
+      (handedToModel.instructions as string).includes(
+        NO_PRODUCT_CONTEXT_INSTRUCTIONS
+      ),
+      "the route sent the model instructions without the catalogue clause"
+    );
+  });
+
+  it("sends exactly what chatInstructions builds, with nothing dropped", async () => {
+    // Not "contains the clause" but "is the assembled text": a route that
+    // keeps its own copy of two of the three blocks would pass the test above
+    // and still drift away from the function the other tests assert on.
+    await ask();
+
+    assert.equal(
+      handedToModel.instructions,
+      chatInstructions({ ok: true, mode: "anonymous" })
+    );
   });
 });
