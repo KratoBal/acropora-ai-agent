@@ -135,72 +135,58 @@ describe("the catalogue the model does not have", () => {
     }
   });
 
-  it("forbids filling the gap from general knowledge, not just answering", () => {
+  it("forbids filling the gap from general knowledge", () => {
     // The failure this prevents is not silence, it is a confident invention:
-    // a price or a stock level guessed from a familiar-sounding name speaks in
-    // place of the shop.
+    // a price or a stock level guessed from a familiar-sounding name.
     assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /no data about Acropora/i);
     assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /prices, stock/i);
     assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /must\s+not fill that gap/i);
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /say plainly that you do not have that data/i);
   });
 
-  it("covers brands, not only individual products", () => {
+  it("allows nothing at all about our range: not yes, not no, not 'typically'", () => {
     /**
-     * The gap this closes was measured, not imagined.
+     * Three shapes, because all three were measured on stage.
      *
-     * Asked "do we have any Fauna Marin trace element supplement?", the model
-     * answered "Yes, there are several" and listed product lines as ours. The
-     * earlier wording spoke about our products, and the model read that at the
-     * level of a single item: a question about a BRAND looked like general
-     * knowledge to it, and "at our place" slipped in unnoticed.
+     * "Yes, we have several" was the first. "Not at us either" was the second,
+     * and it is the more expensive of the two, because a denial sends a
+     * customer away. The third is the quiet one: "typically available from us"
+     * - a claim at the level of categories rather than products, made in
+     * answers that never named a brand at all. All three are about a range
+     * nobody in this conversation can see.
      */
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /includes BRANDS/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /what you can\s+SEE/);
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
-      /cannot see which\s+brands or product lines/i
+      /not yes, not no, not 'typically available from us'/
     );
-  });
-
-  it("forbids both directions for something that exists", () => {
-    /**
-     * Both halves, and the condition they hang on.
-     *
-     * "No, we do not carry that" is the same claim about a range nobody here
-     * can see, and it is the more expensive one, because it sends a customer
-     * away. But it is only wrong when the thing EXISTS - see the exception
-     * below, which is what makes this a narrowing rather than a ban.
-     */
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /REALLY EXISTS on the market/);
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that we have it/i);
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /never say that we do not/i);
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
       /answering it with yes or no is the\s+mistake/i
     );
   });
 
-  it("does NOT forbid correcting something that exists nowhere", () => {
+  it("does NOT stop the model correcting a false premise", () => {
     /**
-     * The exception, and the measurement behind it.
+     * The assertion that guards against tightening this back.
      *
-     * Asked whether a low-sodium Red Sea Coral Pro exists here, the model
-     * answered that there is no such thing anywhere, "not at us either". By
-     * the letter of the earlier clause that was a forbidden claim about our
-     * range. By the standard that matters it was the best answer on the list:
-     * it refuted a false premise with correct knowledge instead of retreating
-     * into "I have no data". The "not at us either" is not a guess about
-     * stock - it follows from the general fact.
+     * Asked whether a low-sodium Red Sea Coral Pro exists, the model said
+     * there is no such thing - and that refutation is the most useful thing on
+     * the whole test list, better than "I have no data". What had to go was
+     * only the half-sentence it added about our range. A clause that silenced
+     * the refutation along with it would trade the best behaviour we measured
+     * for a rule that reads more tidily.
      */
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /one exception/i);
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /NOT TO EXIST at all/);
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
-      /does not exist here either/i
+      /Correcting a false premise is different, and it is welcome/
     );
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
-      /Correcting a false premise is worth more/i
+      /say that it does not exist and why/
+    );
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /correct the premise, and do not add\s+whether we carry it/
     );
   });
 
@@ -210,9 +196,9 @@ describe("the catalogue the model does not have", () => {
     // the word "ours" never appears.
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
-      /do not recommend a specific\s+product to buy/i
+      /do not recommend a specific product to\s+buy/i
     );
-    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /we sell this one/i);
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /we sell\s+this one/i);
   });
 
   it("keeps the general description of a brand allowed", () => {
@@ -220,17 +206,21 @@ describe("the catalogue the model does not have", () => {
     // and the general knowledge is the part worth having.
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
-      /Describing a brand or a product in general terms is welcome/i
+      /Describing a brand or a product in\s+general terms is welcome/i
+    );
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /What you know about the world you may say/
     );
   });
 
-  it("still lets the general part of a question be answered", () => {
-    // A block that turned every product-adjacent question into a refusal would
-    // cost more than it saves: the general aquarium knowledge is exactly what
-    // the first round of measurement is for.
+  it("does not aim at a grammatical pattern", () => {
+    // Two patterns were tried and both failed against our own data: the
+    // possessive ("from our range" appears in questions that behaved well) and
+    // the named brand (brandless questions still claimed things about us).
     assert.match(
       NO_PRODUCT_CONTEXT_INSTRUCTIONS,
-      /answer only the general part of the question/i
+      /not about how a question is phrased/
     );
   });
 });
