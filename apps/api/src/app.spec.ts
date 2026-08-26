@@ -58,6 +58,18 @@ const chat = (headers: Record<string, string>) =>
     payload: { message: "Mennyi a nitrát szintem?" }
   });
 
+describe("buildApp", () => {
+  it("puts the socket net on the server, not just in the config object", () => {
+    /**
+     * Reads it back off the built app rather than trusting that the value was
+     * passed. A limit that is computed and then never handed to Fastify would
+     * leave the handler unbounded while every unit test stayed green - the
+     * same gap that let an inherited ten minute SDK timeout survive.
+     */
+    assert.equal(app.initialConfig.connectionTimeout, 45_000);
+  });
+});
+
 describe("chatInstructions", () => {
   it("keeps the assistant persona and adds the customer block", () => {
     const instructions = chatInstructions({

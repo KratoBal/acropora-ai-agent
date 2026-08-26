@@ -5,6 +5,7 @@ import { APIConnectionTimeoutError, APIError } from "openai";
 import {
   aiProviderFailure,
   aiProviderLimits,
+  CONNECTION_TIMEOUT_MS_ENV,
   createAiClient,
   isTimeoutFailure,
   OPENAI_MAX_RETRIES_ENV,
@@ -12,14 +13,32 @@ import {
 } from "./ai-provider.js";
 
 describe("aiProviderLimits", () => {
-  it("has a default that stays under the measured outer ceiling", () => {
-    // The hop in front cuts at 30 000 ms. If this default ever creeps past it,
-    // the timeout that fires stops being ours and the caller goes back to
-    // receiving an unexplained 500.
+  it("keeps the ladder in order: model call, then the net, then the proxy", () => {
+    /**
+     * The order is the whole design, so it is asserted as an order.
+     *
+     * The model call must give up FIRST, because it is the only one of the
+     * three that answers with a code and a duration. The socket net closes the
+     * connection without any HTTP answer, and the proxy above it returns a
+     * bare 500 - both are failures that explain nothing, and neither may be
+     * what a person meets in normal operation.
+     */
     const limits = aiProviderLimits({});
 
-    assert.equal(limits.timeoutMs, 25_000);
-    assert.ok(limits.timeoutMs < 30_000);
+    assert.equal(limits.timeoutMs, 40_000);
+    assert.equal(limits.connectionTimeoutMs, 45_000);
+    assert.ok(
+      limits.timeoutMs < limits.connectionTimeoutMs,
+      "the named failure has to fire before the silent one"
+    );
+    // The proxy above sits at 50 000; both of these stay under it.
+    assert.ok(limits.connectionTimeoutMs < 50_000);
+  });
+
+  it("no longer carries the value chosen against the old 30 second ceiling", () => {
+    // 25 000 was tight against real questions: of eleven measured on stage,
+    // one timed out and another answered 51 ms under the limit.
+    assert.notEqual(aiProviderLimits({}).timeoutMs, 25_000);
   });
 
   it("does not retry by default", () => {
@@ -28,13 +47,18 @@ describe("aiProviderLimits", () => {
     assert.equal(aiProviderLimits({}).maxRetries, 0);
   });
 
-  it("takes both values from the environment", () => {
+  it("takes all three values from the environment", () => {
     const limits = aiProviderLimits({
       [OPENAI_TIMEOUT_MS_ENV]: "12000",
-      [OPENAI_MAX_RETRIES_ENV]: "2"
+      [OPENAI_MAX_RETRIES_ENV]: "2",
+      [CONNECTION_TIMEOUT_MS_ENV]: "13000"
     });
 
-    assert.deepEqual(limits, { timeoutMs: 12_000, maxRetries: 2 });
+    assert.deepEqual(limits, {
+      timeoutMs: 12_000,
+      maxRetries: 2,
+      connectionTimeoutMs: 13_000
+    });
   });
 
   it("falls back to the default rather than crashing on a bad value", () => {
@@ -43,8 +67,14 @@ describe("aiProviderLimits", () => {
     for (const raw of ["", "   ", "abc", "-1", "1.5", "9999999", "NaN"]) {
       assert.equal(
         aiProviderLimits({ [OPENAI_TIMEOUT_MS_ENV]: raw }).timeoutMs,
-        25_000,
+        40_000,
         `"${raw}" should fall back`
+      );
+      assert.equal(
+        aiProviderLimits({ [CONNECTION_TIMEOUT_MS_ENV]: raw })
+          .connectionTimeoutMs,
+        45_000,
+        `"${raw}" should fall back for the net too`
       );
     }
 
@@ -77,7 +107,7 @@ describe("createAiClient", () => {
      * change exists to prevent.
      */
     const client = createAiClient(
-      { timeoutMs: 12_345, maxRetries: 1 },
+      { timeoutMs: 12_345, maxRetries: 1, connectionTimeoutMs: 45_000 },
       { OPENAI_API_KEY: "test-key" }
     );
 
@@ -90,7 +120,7 @@ describe("createAiClient", () => {
       OPENAI_API_KEY: "test-key"
     });
 
-    assert.equal(client.timeout, 25_000);
+    assert.equal(client.timeout, 40_000);
     assert.notEqual(client.timeout, 600_000);
     assert.equal(client.maxRetries, 0);
     assert.notEqual(client.maxRetries, 2);

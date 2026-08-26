@@ -1,5 +1,10 @@
 # The timeout chain
 
+> **Reopen this page the moment an unnamed failure shows up.** If anyone sees a
+> failure with no code and no `waitedMs` - an empty reply, or a bare 500 - that
+> is not a new mystery. It is this page, and the first suspect is the outermost
+> limit, whose value we never measured. See "What is still assumed" below.
+
 A chat answer crosses six hops. Each one may give up on its own, and until this was measured the
 tolerances were in the wrong order: the innermost hop waited the longest, so the chain was cut in
 the middle and the caller saw a failure while the work was still running.
@@ -56,11 +61,49 @@ The Next.js number deserves its detail: when it fires, the browser receives a pl
 `500 Internal Server Error`. Nothing in it says a timeout happened, and nothing says which hop
 gave up. That failure mode - not the length - is what makes a slow chain expensive to debug.
 
+## The ladder, as agreed
+
+| Rung | Limit | Value | What the caller gets when it fires |
+|---|---|---|---|
+| 1 | the model call, in this service | **40 000 ms** | `504 ai_provider_timeout` with `waitedMs` |
+| 2 | the socket net, in this service | **45 000 ms** | **nothing** - the connection closes with no HTTP answer |
+| 3 | the Next.js rewrite proxy, in the OS web app | **50 000 ms** | a bare `500` |
+| - | the Traefik proxy in front of the OS | **assumed to be unlimited** | see below |
+
+**Only rung 1 explains itself.** That is why it is the shortest: whoever gives up
+first has to be the one that can say why. Rungs 2 and 3 are there to stop a hang
+that rung 1 cannot see, and both fail in a way that tells nobody anything.
+
+The five second gaps are not taste. They are the window in which the named
+failure can fire before a silent one takes the request away.
+
+Rung 1 was 25 000 until the ladder was agreed. It was measured tight against
+real questions rather than theoretical ones: of eleven product questions run on
+stage, one timed out at 25 s and another answered at 24.9 s.
+
+## What is still assumed, and what would reopen it
+
+**The Traefik proxy in front of the Acropora OS was never measured.** Two
+independent readings of its configuration came back empty - no timeout key
+among the container's start flags, and none in the three files of its dynamic
+configuration - so it runs on the image's defaults. That those defaults leave
+the response side unlimited is a **documentation-level claim, not a measurement
+of ours**: this machine has no container runtime, so the image could not be
+started and timed here.
+
+It is written down rather than hidden because the ladder depends on it. It also
+does not matter while rung 1 holds: no answer reaches Traefik's limit unless
+that limit is under 40 seconds. **And if it were, we would see it** - the person
+asking would get an unnamed failure instead of a named one, which is exactly the
+condition at the top of this page.
+
 ## What this service does now
 
-`ACROPORA_AI_OPENAI_TIMEOUT_MS` (default **25 000**) and `ACROPORA_AI_OPENAI_MAX_RETRIES`
-(default **0**), both passed to the OpenAI client explicitly. The default sits under the measured
-30 second ceiling on purpose, so the timeout that fires is this one.
+`ACROPORA_AI_OPENAI_TIMEOUT_MS` (default **40 000**) and `ACROPORA_AI_OPENAI_MAX_RETRIES`
+(default **0**), both passed to the OpenAI client explicitly, plus
+`ACROPORA_AI_CONNECTION_TIMEOUT_MS` (default **45 000**) for the socket net. The first sits under
+everything in front of it on purpose, so the timeout that fires is the one that can explain
+itself.
 
 When it fires, the answer is:
 
