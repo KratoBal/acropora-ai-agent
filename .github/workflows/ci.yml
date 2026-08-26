@@ -1,0 +1,53 @@
+# The check this repository did not have.
+#
+# The only other workflow here deploys to stage on a push to `main`, which
+# makes a merge a release rather than a checkpoint: nothing ran the tests
+# between the decision to merge and the code being live. On 2026-08-26 that
+# gap sat next to a real defect - a clause the route never passed to the model,
+# green tests beside it - and the deploy would have carried either outcome out
+# just as readily.
+#
+# It runs on every push and every pull request, deliberately. A check that only
+# guards `main` reports the problem after the merge, which is after the deploy.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: acropora-ai-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Types first: it is the cheaper failure, and a type error would make the
+      # test compile step fail with a longer, less obvious message.
+      - name: Typecheck
+        run: npm run typecheck
+
+      # No database and no OpenAI key: every spec here answers before either is
+      # reached, and that is an assertion of this suite rather than a
+      # convenience. If a test ever needs them, it has moved something into the
+      # wrong place.
+      - name: Test
+        run: npm test
