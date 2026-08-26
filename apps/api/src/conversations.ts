@@ -31,13 +31,21 @@ export async function conversationBelongsToClient(
   return result.rowCount === 1;
 }
 
+/**
+ * Stores one message and hands back its id.
+ *
+ * The id used to be discarded. It is returned because an answer has to be
+ * addressable from the outside: a rating names the message it judges, and
+ * "the last assistant message in this conversation" would be a guess that
+ * goes wrong the moment two questions are in flight.
+ */
 export async function saveMessage(input: {
   conversationId: string;
   role: "user" | "assistant" | "system";
   content: string;
   model?: string;
-}): Promise<void> {
-  await pool.query(
+}): Promise<string> {
+  const inserted = await pool.query<{ id: string }>(
     `
       INSERT INTO messages (
         conversation_id,
@@ -46,6 +54,7 @@ export async function saveMessage(input: {
         model
       )
       VALUES ($1, $2, $3, $4)
+      RETURNING id
     `,
     [
       input.conversationId,
@@ -63,6 +72,8 @@ export async function saveMessage(input: {
     `,
     [input.conversationId]
   );
+
+  return inserted.rows[0].id;
 }
 
 export async function getConversationMessages(

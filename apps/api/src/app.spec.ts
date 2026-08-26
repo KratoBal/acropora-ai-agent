@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { after, before, describe, it } from "node:test";
+import { after, before, beforeEach, describe, it } from "node:test";
 
 import {
   buildApp,
   chatInstructions,
   NO_PRODUCT_CONTEXT_INSTRUCTIONS,
   type AppDependencies,
-  type ConversationStore
+  type ConversationStore,
+  type RatingStore
 } from "./app.js";
+import { RATING_VALUES, type StoredRating } from "./evaluations.js";
 
 /**
  * Drives the real `/v1/chat` route.
@@ -358,6 +360,8 @@ describe("POST /v1/chat", () => {
 describe("the chat route, end to end", () => {
   const CONVERSATION_ID = "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30";
 
+  const ANSWER_MESSAGE_ID = "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f";
+
   const storedMessages: Array<{ role: string; content: string }> = [];
 
   const store: ConversationStore = {
@@ -365,6 +369,9 @@ describe("the chat route, end to end", () => {
     conversationBelongsToClient: async () => true,
     saveMessage: async (input) => {
       storedMessages.push({ role: input.role, content: input.content });
+      return input.role === "assistant"
+        ? ANSWER_MESSAGE_ID
+        : "0d9c8b7a-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
     },
     getConversationMessages: async () => [
       { role: "user", content: "Van-e Fauna Marin nyomelem-adalekunk?" }
@@ -418,6 +425,20 @@ describe("the chat route, end to end", () => {
     );
   });
 
+  it("names the answer it just stored, so it can be judged later", async () => {
+    /**
+     * Without this the rating route has nothing to address. "The last answer
+     * in the conversation" is the alternative, and it is wrong the moment a
+     * second question is asked before the first one is judged.
+     */
+    const response = await ask();
+
+    assert.equal(
+      (response.json() as { messageId?: string }).messageId,
+      ANSWER_MESSAGE_ID
+    );
+  });
+
   it("hands the model the clause about what it cannot see", async () => {
     /**
      * The assertion this file existed without.
@@ -447,5 +468,226 @@ describe("the chat route, end to end", () => {
       handedToModel.instructions,
       chatInstructions({ ok: true, mode: "anonymous" })
     );
+  });
+});
+
+
+/**
+ * Storing what somebody thought of an answer.
+ *
+ * The reason this is a route at all: a rating held in page state is gone on
+ * reload, and the internal surface exists to build up a picture of answer
+ * quality over more than one sitting.
+ */
+describe("rating an answer", () => {
+  const ANSWER_ID = "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f";
+  const OTHER_CLIENTS_ANSWER = "c3d5e7f9-1b2c-4d3e-9f6a-0b8c7d6e5f4a";
+  const CONVERSATION_ID = "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30";
+
+  let written: Array<{
+    messageId: string;
+    rating: string;
+    ratedBy: string;
+  }> = [];
+
+  const ratingStore: RatingStore = {
+    answerIsRatable: async (messageId) => messageId === ANSWER_ID,
+    rateAnswer: async (input) => {
+      // The upsert, modelled: one row per rater per answer.
+      written = written.filter(
+        (row) =>
+          !(
+            row.messageId === input.messageId &&
+            row.ratedBy === input.ratedBy
+          )
+      );
+      written.push(input);
+
+      return {
+        messageId: input.messageId,
+        rating: input.rating,
+        ratedBy: input.ratedBy,
+        ratedAt: "2026-08-26T20:00:00.000Z"
+      } satisfies StoredRating;
+    },
+    conversationRatings: async () =>
+      written.map((row) => ({
+        messageId: row.messageId,
+        rating: row.rating as StoredRating["rating"],
+        ratedBy: row.ratedBy,
+        ratedAt: "2026-08-26T20:00:00.000Z"
+      }))
+  };
+
+  let ratedApp: ReturnType<typeof buildApp>;
+
+  before(async () => {
+    ratedApp = buildApp({ ratings: ratingStore });
+    await ratedApp.ready();
+  });
+
+  after(async () => {
+    await ratedApp.close();
+  });
+
+  beforeEach(() => {
+    written = [];
+  });
+
+  const rate = (
+    messageId: string,
+    payload: Record<string, unknown>,
+    headers: Record<string, string> = {}
+  ) =>
+    ratedApp.inject({
+      method: "POST",
+      url: `/v1/messages/${messageId}/rating`,
+      headers: {
+        authorization: `Bearer ${API_TOKEN}`,
+        "content-type": "application/json",
+        ...headers
+      },
+      payload
+    });
+
+  it("stores a judgement against the answer it names", async () => {
+    const response = await rate(ANSWER_ID, {
+      rating: "inaccurate",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      messageId: ANSWER_ID,
+      rating: "inaccurate",
+      ratedBy: "user_7",
+      ratedAt: "2026-08-26T20:00:00.000Z"
+    });
+    assert.deepEqual(written, [
+      { messageId: ANSWER_ID, rating: "inaccurate", ratedBy: "user_7" }
+    ]);
+  });
+
+  it("lets the same person change their mind without adding a second row", async () => {
+    // On the screen the four buttons are one control, not four votes.
+    await rate(ANSWER_ID, { rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { rating: "dangerous", ratedBy: "user_7" });
+
+    assert.deepEqual(written, [
+      { messageId: ANSWER_ID, rating: "dangerous", ratedBy: "user_7" }
+    ]);
+  });
+
+  it("keeps two people's judgements of the same answer apart", async () => {
+    // Disagreement about one answer is a finding, and it only survives if the
+    // rows are kept separate.
+    await rate(ANSWER_ID, { rating: "correct", ratedBy: "user_7" });
+    await rate(ANSWER_ID, { rating: "inaccurate", ratedBy: "user_9" });
+
+    assert.equal(written.length, 2);
+  });
+
+  it("accepts every value the surface offers, and nothing else", async () => {
+    /**
+     * Asserted against the exported list rather than a copy of it, so a value
+     * added on one side and not the other cannot pass quietly.
+     */
+    for (const value of RATING_VALUES) {
+      const accepted = await rate(ANSWER_ID, {
+        rating: value,
+        ratedBy: "user_7"
+      });
+
+      assert.equal(accepted.statusCode, 200, `rejected ${value}`);
+    }
+
+    const refused = await rate(ANSWER_ID, {
+      rating: "excellent",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(refused.statusCode, 400);
+    assert.deepEqual(refused.json(), {
+      error: "invalid rating",
+      allowed: [...RATING_VALUES]
+    });
+  });
+
+  it("refuses a judgement nobody signed", async () => {
+    const response = await rate(ANSWER_ID, { rating: "correct" });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: "ratedBy is required" });
+    assert.deepEqual(written, [], "nothing may be stored on a refusal");
+  });
+
+  it("will not write against an answer that is not the caller's", async () => {
+    /**
+     * The ownership rule the chat route already applies, applied here too. A
+     * rating endpoint without it would let anyone holding the shared token
+     * write against message ids they never saw.
+     */
+    const response = await rate(OTHER_CLIENTS_ANSWER, {
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 404);
+    assert.deepEqual(response.json(), { error: "answer not found" });
+    assert.deepEqual(written, []);
+  });
+
+  it("refuses a message id that is not one", async () => {
+    const response = await rate("not-a-uuid", {
+      rating: "correct",
+      ratedBy: "user_7"
+    });
+
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(response.json(), { error: "invalid messageId" });
+  });
+
+  it("is behind the same shared token as the chat", async () => {
+    const response = await ratedApp.inject({
+      method: "POST",
+      url: `/v1/messages/${ANSWER_ID}/rating`,
+      headers: { "content-type": "application/json" },
+      payload: { rating: "correct", ratedBy: "user_7" }
+    });
+
+    assert.equal(response.statusCode, 401);
+    assert.deepEqual(written, []);
+  });
+
+  it("reads the judgements back, which is what storing them was for", async () => {
+    await rate(ANSWER_ID, { rating: "correct", ratedBy: "user_7" });
+
+    const response = await ratedApp.inject({
+      method: "GET",
+      url: `/v1/conversations/${CONVERSATION_ID}/ratings`,
+      headers: { authorization: `Bearer ${API_TOKEN}` }
+    });
+
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      conversationId: CONVERSATION_ID,
+      ratings: [
+        {
+          messageId: ANSWER_ID,
+          rating: "correct",
+          ratedBy: "user_7",
+          ratedAt: "2026-08-26T20:00:00.000Z"
+        }
+      ]
+    });
+  });
+
+  it("does not read a conversation back for an unauthenticated caller", async () => {
+    const response = await ratedApp.inject({
+      method: "GET",
+      url: `/v1/conversations/${CONVERSATION_ID}/ratings`
+    });
+
+    assert.equal(response.statusCode, 401);
   });
 });
