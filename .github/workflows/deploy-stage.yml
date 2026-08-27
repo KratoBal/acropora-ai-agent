@@ -78,8 +78,25 @@ jobs:
             -f infra/docker-compose.yml \
             up -d --build --force-recreate api caddy
 
-                    for attempt in $(seq 1 30); do
-            if curl -4 -fsS https://ai-stage.acropora.hu/health; then
+          # The check runs ON THIS MACHINE, against the loopback address the api
+          # container binds - not against the public name.
+          #
+          # It used to call https://ai-stage.acropora.hu/health, which goes out to
+          # DNS, back through Caddy, and only then reaches the container. That
+          # works today and will stop working the moment the API moves behind a
+          # private network: the deploy would fail, sixty seconds later, and the
+          # failure would look like the network change had broken the deploy.
+          # It would not have. The check would simply be looking in from outside.
+          #
+          # What this trades away, said out loud: the old call also proved that
+          # Caddy was serving the site publicly. This one does not. That
+          # assertion is going away on purpose - the API is meant to stop being
+          # publicly reachable - so keeping a check that depends on it would mean
+          # keeping a check we intend to break.
+          #
+          # -4 because the container publishes on 127.0.0.1, not on ::1.
+          for attempt in $(seq 1 30); do
+            if curl -4 -fsS http://127.0.0.1:3000/health; then
               exit 0
             fi
 
