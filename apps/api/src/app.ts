@@ -13,7 +13,7 @@ import {
   createAiClient
 } from "./ai-provider.js";
 import { safeErrorSummary } from "./redact.js";
-import { buildVersion } from "./build-version.js";
+import { buildTime, buildVersion } from "./build-version.js";
 import {
   answerIsRatable,
   conversationRatings,
@@ -354,6 +354,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
        * than saying so.
        */
       version: buildVersion(),
+      /**
+       * The commit says WHICH code; this says WHICH IMAGE of it.
+       *
+       * They are not the same question, and one morning proved it: the same
+       * commit built twice gave two images, one with a patched `libssl3` and
+       * one that kept a cached layer. `version` was identical in both.
+       */
+      builtAt: buildTime(),
       database: "ok",
       timestamp: new Date().toISOString()
     };

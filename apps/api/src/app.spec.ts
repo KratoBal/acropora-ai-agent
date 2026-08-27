@@ -985,6 +985,58 @@ describe("the health endpoint's version field", () => {
     }
   });
 
+  it("reports the image's build time next to the commit", async () => {
+    /**
+     * Asserted through the route for the same reason the sha is: a value that
+     * only exists inside a function answers nobody's question about a running
+     * container.
+     *
+     * The two fields are separate because they answer separate questions. The
+     * commit says which code; this says which image of it. One morning cost a
+     * measurement to that difference: the same commit built twice produced one
+     * image with a patched `libssl3` and one that kept a cached layer, and
+     * `version` was identical in both.
+     */
+    process.env.ACROPORA_AI_COMMIT = "982a33ff51e438e4467a4a84ff51b265c915f292";
+    process.env.ACROPORA_AI_BUILT_AT = "2026-08-27T08:41:03Z";
+
+    const healthApp = buildApp({ databaseCheck: alive });
+    await healthApp.ready();
+
+    try {
+      const body = (
+        await healthApp.inject({ method: "GET", url: "/health" })
+      ).json() as { version?: string; builtAt?: string };
+
+      assert.equal(body.version, "982a33ff51e438e4467a4a84ff51b265c915f292");
+      assert.equal(body.builtAt, "2026-08-27T08:41:03.000Z");
+    } finally {
+      await healthApp.close();
+      delete process.env.ACROPORA_AI_COMMIT;
+      delete process.env.ACROPORA_AI_BUILT_AT;
+    }
+  });
+
+  it("says unknown for a build time nothing set, rather than leaving the field out", async () => {
+    // The whole point of the field: an absence that says so. A field that is
+    // always missing and a field that is always null look the same from
+    // outside, and neither one can be told apart from "not deployed yet".
+    delete process.env.ACROPORA_AI_BUILT_AT;
+
+    const healthApp = buildApp({ databaseCheck: alive });
+    await healthApp.ready();
+
+    try {
+      const body = (
+        await healthApp.inject({ method: "GET", url: "/health" })
+      ).json() as { builtAt?: string };
+
+      assert.equal(body.builtAt, "unknown");
+    } finally {
+      await healthApp.close();
+    }
+  });
+
   it("says unknown when nothing set it, rather than leaving the field out", async () => {
     // An absent field reads as "nothing to report". This one always reports,
     // and "unknown" is the honest report.

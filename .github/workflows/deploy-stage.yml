@@ -65,6 +65,14 @@ jobs:
           # workflow, not about the process serving requests.
           export ACROPORA_AI_COMMIT
 
+          # And a second fact the sha cannot carry: which IMAGE of that commit.
+          # The same commit built twice can differ - one build pulls a patched
+          # system package, the next one hits a cached layer and keeps the old
+          # one - and `version` reads identically in both. Stamped here, one
+          # step before the build that consumes it as a build argument.
+          ACROPORA_AI_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          export ACROPORA_AI_BUILT_AT
+
           docker compose \
             --env-file .env \
             -f infra/docker-compose.yml \

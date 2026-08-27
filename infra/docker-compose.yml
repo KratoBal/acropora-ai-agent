@@ -34,6 +34,10 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
+      args:
+        # Stamped into the image, not into the container. See the Dockerfile
+        # for why the difference matters.
+        ACROPORA_AI_BUILT_AT: ${ACROPORA_AI_BUILT_AT:-}
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV}
