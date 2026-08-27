@@ -202,6 +202,35 @@ describe("the catalogue the model does not have", () => {
     );
   });
 
+  it("puts what we know in front of what we cannot see", () => {
+    /**
+     * Measured, not preferred: six of six stage answers to the false-premise
+     * question opened with the disclaimer and put the refutation second. The
+     * refutation itself was intact - one repetition was the strongest we have
+     * measured - so nothing here is about silencing or strengthening it. It is
+     * about position: a reader who stops at the first line gets "I cannot see
+     * our stock" instead of "that product does not exist".
+     *
+     * What this test can prove is narrow, and saying so is the point. It
+     * proves the instruction states where the answer goes. It cannot prove the
+     * model follows it - only a repeated stage run can, the same three items
+     * three times, and the disclaimer-first opening is what that run counts.
+     */
+    assert.match(NO_PRODUCT_CONTEXT_INSTRUCTIONS, /And say it first/);
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /the\s+limit above is not an opening line/
+    );
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /you do not mention it at all/
+    );
+    assert.match(
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+      /not as the headline in front of it/
+    );
+  });
+
   it("forbids steering someone to buy a particular item", () => {
     // The form the earlier wording left open: a concrete "get this one" in a
     // conversation carried by Acropora reads as "we sell this one", even when

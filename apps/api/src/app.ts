@@ -51,6 +51,16 @@ const ASSISTANT_INSTRUCTIONS =
  *
  * When the catalogue does arrive, this block is what changes - and the
  * difference in the answers is the evidence that wiring it in was worth doing.
+ *
+ * The paragraph about ORDER was added after the block was already live, and it
+ * is here because of a measurement rather than a preference. Six of six stage
+ * answers to the false-premise question opened with "I cannot see the stock"
+ * and only then said the thing the customer actually needed - that the product
+ * does not exist. Nothing was wrong with either sentence; the refutation had
+ * not weakened. It had been pushed behind a disclaimer that the question never
+ * asked for, and a reader who stops at the first line leaves with the least
+ * useful half of the answer. Stating what may be said turned out not to state
+ * where it goes, and on this surface the position is part of the answer.
  */
 export const NO_PRODUCT_CONTEXT_INSTRUCTIONS = [
   "You have no data about Acropora's own products, prices, stock or offers.",
@@ -72,6 +82,13 @@ export const NO_PRODUCT_CONTEXT_INSTRUCTIONS = [
   "that is knowledge about the world, and it is worth more than declining to",
   "answer. Just leave our range out of it: correct the premise, and do not add",
   "whether we carry it.",
+  "",
+  "And say it first. What you know belongs at the front of the answer; the",
+  "limit above is not an opening line. If the whole answer is about the world -",
+  "what a thing is, whether it exists, what it is for - then the limit has",
+  "nothing to do with it and you do not mention it at all. Where the question",
+  "did reach for our price, our stock or our range, say so plainly, but as one",
+  "clause inside the answer, not as the headline in front of it.",
   "",
   "And whether or not our name comes up: do not recommend a specific product to",
   "buy. In a conversation carried by Acropora, 'get this one' reads as 'we sell",
