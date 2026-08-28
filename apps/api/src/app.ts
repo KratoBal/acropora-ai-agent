@@ -14,6 +14,7 @@ import {
   aiProviderLimits,
   createAiClient
 } from "./ai-provider.js";
+import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
 import {
   productContextInstructions,
@@ -61,6 +62,10 @@ export function chatInstructions(
 ): string {
   return [
     ASSISTANT_INSTRUCTIONS,
+    // FELTETEL NELKUL, es a helye sem veletlen: a szojegyzek nyelvi szabaly,
+    // tehat a szemely-blokk mellett all, NEM a termekkontextus agai kozott. Ott
+    // egy uzemzavar csendben elvinne a szohasznalatot is.
+    GLOSSARY_INSTRUCTIONS,
     productContext,
     customerChatInstructions(resolution)
   ].join("\n\n");
