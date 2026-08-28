@@ -15,7 +15,10 @@ import {
   createAiClient
 } from "./ai-provider.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
-import { productContextInstructions } from "./product-context.js";
+import {
+  productContextInstructions,
+  productContextSummary
+} from "./product-context.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
 import { buildTime, buildVersion } from "./build-version.js";
@@ -529,6 +532,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
      */
     const productSearch = await searchProducts({ query: message });
     const productContext = productContextInstructions(productSearch);
+    /**
+     * The same search, in the shape the surface reads.
+     *
+     * Built from the SAME outcome the prompt was built from, through the same
+     * classifier - so "what the model was told" and "what we report it was
+     * told" are one claim, not two that can drift.
+     */
+    const productContextSeen = productContextSummary(productSearch);
 
     if (!productSearch.ok) {
       request.log.warn(
@@ -572,6 +583,17 @@ export function buildApp(dependencies: AppDependencies = {}) {
         messageId: answerMessageId,
         answer: response.output_text,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
+        /**
+         * What this answer actually had in front of it.
+         *
+         * The surface that judges answers used to be handed a fixed sentence
+         * saying there was no product context. That sentence stops being true
+         * the moment the catalogue is wired in, and it would go on being
+         * displayed - confidently, on the one screen where a human decides
+         * whether an answer was good. A judgement is only interpretable if the
+         * judge can see what the answer was built from.
+         */
+        productContext: productContextSeen,
         // Temporary, so that the binding is visible from the outside. See
         // customerChatFields, which also decides what an anonymous chat gets.
         ...customerChatFields(resolvedCustomer)
