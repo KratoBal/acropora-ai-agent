@@ -410,6 +410,7 @@ describe("the chat route, end to end", () => {
         ? ANSWER_MESSAGE_ID
         : "0d9c8b7a-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
     },
+    setMessageOutcome: async () => {},
     getConversationMessages: async () => [
       { role: "user", content: "Van-e Fauna Marin nyomelem-adalekunk?" }
     ]
@@ -851,6 +852,7 @@ describe("what the upstream failure branch writes to the log", () => {
     createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
     conversationBelongsToClient: async () => true,
     saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+    setMessageOutcome: async () => {},
     getConversationMessages: async () => [
       { role: "user", content: "Mennyi a nitrat szintem?" }
     ]

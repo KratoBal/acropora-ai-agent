@@ -97,6 +97,30 @@ export async function saveMessage(input: {
   return inserted.rows[0].id;
 }
 
+/**
+ * Writes down what became of one question.
+ *
+ * Separate from `saveMessage` because the outcome is not known when the row is
+ * written: the user message is stored before the model is called, on purpose,
+ * so nothing can lose it. The code arrives one step later.
+ *
+ * The caller is expected to swallow a failure here. Losing the note is
+ * cheaper than losing the answer it describes.
+ */
+export async function setMessageOutcome(
+  messageId: string,
+  outcome: string
+): Promise<void> {
+  await pool.query(
+    `
+      UPDATE messages
+      SET outcome = $2
+      WHERE id = $1
+    `,
+    [messageId, outcome]
+  );
+}
+
 export async function getConversationMessages(
   conversationId: string,
   limit = 20

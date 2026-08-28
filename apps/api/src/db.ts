@@ -44,6 +44,22 @@ export const SCHEMA_SQL = `
       input_tokens INTEGER,
       output_tokens INTEGER,
       total_tokens INTEGER,
+      /*
+       * What became of this question, in one named code.
+       *
+       * Written on the USER row, because that is the only row that exists in
+       * every outcome: an answer produces a second row, a failure does not.
+       *
+       * NULL is not "it went fine". A successful answer writes 'answered'
+       * explicitly, so NULL means only two things: the row predates this
+       * column, or an exit was added that forgot to write. Both are things
+       * worth seeing. If success were left NULL instead, those two would be
+       * mixed in with every ordinary answer and the column would quietly
+       * report a number that is wrong.
+       *
+       * Codes only, never content.
+       */
+      outcome TEXT,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
@@ -57,6 +73,7 @@ export const SCHEMA_SQL = `
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS input_tokens INTEGER;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS output_tokens INTEGER;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS total_tokens INTEGER;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS outcome TEXT;
 
     /**
      * What somebody thought of one answer.
