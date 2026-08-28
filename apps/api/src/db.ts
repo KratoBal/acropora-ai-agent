@@ -29,8 +29,34 @@ export const SCHEMA_SQL = `
       role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
       content TEXT NOT NULL,
       model TEXT,
+      /*
+       * What the model call cost, in tokens. NULL where we do not know.
+       *
+       * Three columns rather than one, because the two halves are priced
+       * differently and a single total cannot be taken apart afterwards.
+       *
+       * NULL is a real value here and not a gap to be filled with zero: a
+       * user message never had a call, an answer written before this column
+       * existed cannot be recovered, and a provider response that carried no
+       * usage told us nothing. Zero would say the call was free, which is a
+       * different claim.
+       */
+      input_tokens INTEGER,
+      output_tokens INTEGER,
+      total_tokens INTEGER,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
+
+    /*
+     * And the same three for a database that already exists.
+     *
+     * The CREATE TABLE above only runs on an empty database; every deployed
+     * instance already has this table, so without these the columns would
+     * appear on a developer's fresh database and nowhere else.
+     */
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS input_tokens INTEGER;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS output_tokens INTEGER;
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS total_tokens INTEGER;
 
     /**
      * What somebody thought of one answer.

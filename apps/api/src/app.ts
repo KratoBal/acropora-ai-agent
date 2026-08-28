@@ -5,7 +5,8 @@ import {
   conversationBelongsToClient,
   createConversation,
   getConversationMessages,
-  saveMessage
+  saveMessage,
+  type MessageUsage
 } from "./conversations.js";
 import {
   aiProviderFailure,
@@ -115,6 +116,52 @@ export function chatInstructions(
 }
 
 /**
+ * The token counts out of a provider answer, if it carried any.
+ *
+ * WRITTEN DEFENSIVELY ON PURPOSE, and this is the part worth reading. The
+ * usage block is the provider's, not ours: it can be absent, it can arrive
+ * with a different set of fields after an SDK upgrade, and it can hold
+ * something that is not a number. None of that is a reason to fail a chat
+ * answer the caller is already waiting for - the answer is the product, the
+ * accounting is a note in the margin.
+ *
+ * So every field is read one by one and only kept if it really is a finite
+ * number. Anything else becomes `undefined`, which the column stores as NULL:
+ * "we do not know", which is true, rather than zero, which would claim the
+ * call was free.
+ *
+ * `undefined` for the whole object when nothing usable came back, so the
+ * caller writes three NULLs and moves on.
+ */
+export function readUsage(response: unknown): MessageUsage | undefined {
+  const usage = (response as { usage?: unknown })?.usage;
+
+  if (!usage || typeof usage !== "object") return undefined;
+
+  const source = usage as Record<string, unknown>;
+
+  const count = (key: string): number | undefined => {
+    const value = source[key];
+
+    return typeof value === "number" && Number.isFinite(value)
+      ? value
+      : undefined;
+  };
+
+  const parsed: MessageUsage = {
+    inputTokens: count("input_tokens"),
+    outputTokens: count("output_tokens"),
+    totalTokens: count("total_tokens")
+  };
+
+  return parsed.inputTokens === undefined &&
+    parsed.outputTokens === undefined &&
+    parsed.totalTokens === undefined
+    ? undefined
+    : parsed;
+}
+
+/**
  * The conversation storage the chat route uses.
  *
  * Named as a type so a test can hand the route a stand-in and drive the whole
@@ -135,6 +182,7 @@ export interface ConversationStore {
     role: "user" | "assistant" | "system";
     content: string;
     model?: string;
+    usage?: MessageUsage;
   }): Promise<string>;
   getConversationMessages(
     conversationId: string,
@@ -507,7 +555,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
         conversationId: activeConversationId,
         role: "assistant",
         content: response.output_text,
-        model: process.env.OPENAI_MODEL ?? "gpt-5.1"
+        model: process.env.OPENAI_MODEL ?? "gpt-5.1",
+        usage: readUsage(response)
       });
 
       return {

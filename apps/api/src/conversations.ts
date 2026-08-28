@@ -32,6 +32,20 @@ export async function conversationBelongsToClient(
 }
 
 /**
+ * What one model call cost, in tokens.
+ *
+ * Every field is optional on its own, not just the object as a whole. A
+ * provider answer can carry a total and no breakdown, and half an answer is
+ * still worth writing down: the alternative is discarding a number we already
+ * hold because a neighbouring one is missing.
+ */
+export interface MessageUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+/**
  * Stores one message and hands back its id.
  *
  * The id used to be discarded. It is returned because an answer has to be
@@ -44,6 +58,7 @@ export async function saveMessage(input: {
   role: "user" | "assistant" | "system";
   content: string;
   model?: string;
+  usage?: MessageUsage;
 }): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `
@@ -51,16 +66,22 @@ export async function saveMessage(input: {
         conversation_id,
         role,
         content,
-        model
+        model,
+        input_tokens,
+        output_tokens,
+        total_tokens
       )
-      VALUES ($1, $2, $3, $4)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING id
     `,
     [
       input.conversationId,
       input.role,
       input.content,
-      input.model ?? null
+      input.model ?? null,
+      input.usage?.inputTokens ?? null,
+      input.usage?.outputTokens ?? null,
+      input.usage?.totalTokens ?? null
     ]
   );
 
