@@ -95,7 +95,9 @@ describe("chatInstructions", () => {
         entitlementsStatus: "not-modelled",
         entitlementsNote: "..."
       }
-    });
+    },
+    NO_PRODUCT_CONTEXT_INSTRUCTIONS
+    );
 
     assert.match(instructions, /Acropora marine aquarium assistant/);
     assert.match(instructions, /Customer context from the Acropora OS/);
@@ -107,7 +109,10 @@ describe("chatInstructions", () => {
     // losing the second half would let the model speak as if it knew the
     // person, which is the whole reason this mode is announced rather than
     // silently empty.
-    const instructions = chatInstructions({ ok: true, mode: "anonymous" });
+    const instructions = chatInstructions(
+      { ok: true, mode: "anonymous" },
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS
+    );
 
     assert.match(instructions, /Acropora marine aquarium assistant/);
     assert.match(instructions, /no customer context/i);
@@ -122,7 +127,10 @@ describe("the catalogue the model does not have", () => {
      * model, which can see just as few products as it can for a stranger.
      * Stating it only in one mode would leave the other free to invent.
      */
-    const anonymous = chatInstructions({ ok: true, mode: "anonymous" });
+    const anonymous = chatInstructions(
+      { ok: true, mode: "anonymous" },
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS
+    );
     const customer = chatInstructions({
       ok: true,
       mode: "customer",
@@ -134,7 +142,9 @@ describe("the catalogue the model does not have", () => {
         entitlementsStatus: "not-modelled",
         entitlementsNote: "..."
       }
-    });
+    },
+    NO_PRODUCT_CONTEXT_INSTRUCTIONS
+    );
 
     for (const [label, instructions] of [
       ["anonymous", anonymous],
@@ -504,7 +514,10 @@ describe("the chat route, end to end", () => {
 
     assert.equal(
       handedToModel.instructions,
-      chatInstructions({ ok: true, mode: "anonymous" })
+      chatInstructions(
+      { ok: true, mode: "anonymous" },
+      NO_PRODUCT_CONTEXT_INSTRUCTIONS
+    )
     );
   });
 });

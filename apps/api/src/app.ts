@@ -14,6 +14,9 @@ import {
   aiProviderLimits,
   createAiClient
 } from "./ai-provider.js";
+import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
+import { productContextInstructions } from "./product-context.js";
+import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
 import { buildTime, buildVersion } from "./build-version.js";
 import {
@@ -38,65 +41,6 @@ import {
 const ASSISTANT_INSTRUCTIONS =
   "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.";
 
-/**
- * What the model is told about our own catalogue: that it has none.
- *
- * This is mode-independent, and that is the point. An anonymous visitor and a
- * resolved customer are both asking someone who cannot see a single product,
- * price or stock level - the catalogue is simply not wired into this service.
- *
- * It is stated for the same reason the missing customer context is stated: an
- * absence that says nothing gets filled in. A model that is not told it lacks
- * product data will answer a product question from general knowledge, and a
- * confident guess about a price or a stock level speaks in place of the shop.
- * That is not a test-surface concern; it is the same on any surface.
- *
- * When the catalogue does arrive, this block is what changes - and the
- * difference in the answers is the evidence that wiring it in was worth doing.
- *
- * The paragraph about ORDER was added after the block was already live, and it
- * is here because of a measurement rather than a preference. Six of six stage
- * answers to the false-premise question opened with "I cannot see the stock"
- * and only then said the thing the customer actually needed - that the product
- * does not exist. Nothing was wrong with either sentence; the refutation had
- * not weakened. It had been pushed behind a disclaimer that the question never
- * asked for, and a reader who stops at the first line leaves with the least
- * useful half of the answer. Stating what may be said turned out not to state
- * where it goes, and on this surface the position is part of the answer.
- */
-export const NO_PRODUCT_CONTEXT_INSTRUCTIONS = [
-  "You have no data about Acropora's own products, prices, stock or offers.",
-  "The catalogue is not available to you in this conversation, and you must",
-  "not fill that gap from general knowledge or from a product name that sounds",
-  "familiar.",
-  "",
-  "The line is not about how a question is phrased. It is about what you can",
-  "SEE. What you know about the world you may say - about a brand, about a type",
-  "of product, about what a thing is for. What you cannot see is what Acropora",
-  "carries, what is in stock and what it costs, and about that you say nothing",
-  "at all: not yes, not no, not 'typically available from us'. A question that",
-  "takes it for granted that we stock something ('do we have any X?') is still",
-  "a question about what you cannot see, and answering it with yes or no is the",
-  "mistake.",
-  "",
-  "Correcting a false premise is different, and it is welcome. If someone asks",
-  "about a product that does not exist, say that it does not exist and why -",
-  "that is knowledge about the world, and it is worth more than declining to",
-  "answer. Just leave our range out of it: correct the premise, and do not add",
-  "whether we carry it.",
-  "",
-  "And say it first. What you know belongs at the front of the answer; the",
-  "limit above is not an opening line. If the whole answer is about the world -",
-  "what a thing is, whether it exists, what it is for - then the limit has",
-  "nothing to do with it and you do not mention it at all. Where the question",
-  "did reach for our price, our stock or our range, say so plainly, but as one",
-  "clause inside the answer, not as the headline in front of it.",
-  "",
-  "And whether or not our name comes up: do not recommend a specific product to",
-  "buy. In a conversation carried by Acropora, 'get this one' reads as 'we sell",
-  "this one' even when nobody said so. Describing a brand or a product in",
-  "general terms is welcome; steering someone to a particular item is not."
-].join("\n");
 
 /**
  * The complete instruction text handed to the model.
@@ -106,12 +50,15 @@ export const NO_PRODUCT_CONTEXT_INSTRUCTIONS = [
  * change, and a requirement that only exists inside a request handler is a
  * requirement nobody measures.
  */
+export { NO_PRODUCT_CONTEXT_INSTRUCTIONS };
+
 export function chatInstructions(
-  resolution: CustomerContextSuccess
+  resolution: CustomerContextSuccess,
+  productContext: string
 ): string {
   return [
     ASSISTANT_INSTRUCTIONS,
-    NO_PRODUCT_CONTEXT_INSTRUCTIONS,
+    productContext,
     customerChatInstructions(resolution)
   ].join("\n\n");
 }
@@ -561,12 +508,41 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
+    /**
+     * The catalogue, looked up before the model is told anything about it.
+     *
+     * THE SEARCH AND THE CLAUSE MOVE TOGETHER, and that is the requirement,
+     * not a preference: until now the prompt said unconditionally that there
+     * is no product data. Wiring the search in without replacing that sentence
+     * would leave a state where the model HAS the catalogue in front of it and
+     * is told in the same breath that it has none - the two texts sit in one
+     * `join`, so they would both be there.
+     *
+     * The raw question goes over as-is. The OS builds the search expression
+     * from it (the brief says so, and `product-search.ts` says the same in
+     * other words: how the search works is the OS's business). Turning the
+     * question into keywords here would put half the engine on this side.
+     *
+     * A failure never throws: `searchProducts` reports outcomes, and each one
+     * gets its own paragraph in the prompt. An outage must not read like an
+     * empty catalogue.
+     */
+    const productSearch = await searchProducts({ query: message });
+    const productContext = productContextInstructions(productSearch);
+
+    if (!productSearch.ok) {
+      request.log.warn(
+        { reason: productSearch.error, detail: productSearch.detail },
+        "the catalogue search did not run for this answer"
+      );
+    }
+
     const askedAt = Date.now();
 
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-        instructions: chatInstructions(resolvedCustomer),
+        instructions: chatInstructions(resolvedCustomer, productContext),
         input: history.map((item) => ({
           role: item.role,
           content: item.content
