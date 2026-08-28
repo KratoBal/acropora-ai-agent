@@ -6,6 +6,7 @@ import {
   createConversation,
   getConversationMessages,
   saveMessage,
+  setMessageOutcome,
   type MessageUsage
 } from "./conversations.js";
 import {
@@ -184,6 +185,7 @@ export interface ConversationStore {
     model?: string;
     usage?: MessageUsage;
   }): Promise<string>;
+  setMessageOutcome(messageId: string, outcome: string): Promise<void>;
   getConversationMessages(
     conversationId: string,
     limit?: number
@@ -199,6 +201,7 @@ const databaseConversationStore: ConversationStore = {
   createConversation,
   conversationBelongsToClient,
   saveMessage,
+  setMessageOutcome,
   getConversationMessages
 };
 
@@ -521,11 +524,29 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
     const activeConversationId = conversationId;
 
-    await conversations.saveMessage({
+    const questionMessageId = await conversations.saveMessage({
       conversationId: activeConversationId,
       role: "user",
       content: message
     });
+
+    /**
+     * Writes the outcome down, and never lets that write cost the answer.
+     *
+     * Same rule as the token counts: the answer is the product, the note in
+     * the margin is a note. A failed UPDATE here would turn a served answer
+     * into a 500 for the person waiting.
+     */
+    const noteOutcome = async (outcome: string): Promise<void> => {
+      try {
+        await conversations.setMessageOutcome(questionMessageId, outcome);
+      } catch (error) {
+        request.log.error(
+          { outcome, reason: safeErrorSummary(error) },
+          "could not record the question outcome"
+        );
+      }
+    };
 
     const history = await conversations.getConversationMessages(
       activeConversationId,
@@ -533,6 +554,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
     );
 
     if (!process.env.OPENAI_API_KEY) {
+      await noteOutcome("provider_not_configured");
+
       return reply.code(503).send({
         error: "AI provider is not configured"
       });
@@ -558,6 +581,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         usage: readUsage(response)
       });
+
+      await noteOutcome("answered");
 
       return {
         conversationId: activeConversationId,
@@ -589,6 +614,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
         },
         "OpenAI request failed"
       );
+
+      await noteOutcome(failure.body.error);
 
       return reply.code(failure.status).send(failure.body);
     }

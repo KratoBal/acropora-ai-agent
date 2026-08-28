@@ -38,6 +38,10 @@ function storeRecording(saved: Array<Record<string, unknown>>) {
         ? ANSWER_ID
         : "0d9c8b7a-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
     },
+    // Nem díszítés: enélkül ez a hamisítvány a kimenet-jegyzetnél dobna, és a
+    // két teszt csak azért maradna zöld, mert a hívó elnyeli a hibát. Egy
+    // teszt, ami a saját tárgyát egy őrzőnek köszönheti, rossz okból zöld.
+    setMessageOutcome: async () => {},
     getConversationMessages: async () => []
   } as unknown as ConversationStore;
 }
