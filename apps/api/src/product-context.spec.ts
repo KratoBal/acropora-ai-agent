@@ -7,6 +7,7 @@ import {
   PRODUCT_CONTEXT_CLOSE,
   PRODUCT_CONTEXT_OPEN,
   productContextInstructions,
+  productContextSummary,
   SEARCH_UNAVAILABLE_INSTRUCTIONS
 } from "./product-context.js";
 
@@ -130,5 +131,104 @@ describe("what the model is told about the catalogue", () => {
 
     assert.match(instructions, /ajánlasz megvételre/i);
     assert.match(instructions, /Ami NINCS a blokkban/);
+  });
+});
+
+/**
+ * The prompt and the report have to be one claim.
+ *
+ * This is the test that would catch the failure the whole change exists to
+ * prevent: a surface that says "no catalogue" about an answer that had one.
+ * Computing the two separately is exactly how that happens, so the guard is
+ * not "the summary looks right" but "the summary agrees with the text the
+ * model was given".
+ */
+describe("what we report and what the model was told", () => {
+  const cases = [
+    { name: "találat", outcome: withHits, expected: "hits" },
+    {
+      name: "üres",
+      outcome: { ok: true as const, result: { hits: [] } },
+      expected: "empty"
+    },
+    {
+      name: "kimaradás",
+      outcome: {
+        ok: false as const,
+        error: "product_search_unavailable" as const,
+        detail: "timeout"
+      },
+      expected: "unavailable"
+    },
+    {
+      name: "nincs beállítva",
+      outcome: {
+        ok: false as const,
+        error: "product_search_not_configured" as const,
+        detail: "no base url"
+      },
+      expected: "not_configured"
+    }
+  ];
+
+  for (const testCase of cases) {
+    it(`${testCase.name}: az állapot ugyanaz, mint a promptba tett ág`, () => {
+      const summary = productContextSummary(testCase.outcome);
+      const instructions = productContextInstructions(testCase.outcome);
+
+      assert.equal(summary.state, testCase.expected);
+
+      const expectedText =
+        testCase.expected === "hits"
+          ? null
+          : testCase.expected === "empty"
+            ? EMPTY_RESULT_INSTRUCTIONS
+            : testCase.expected === "unavailable"
+              ? SEARCH_UNAVAILABLE_INSTRUCTIONS
+              : NO_PRODUCT_CONTEXT_INSTRUCTIONS;
+
+      if (expectedText === null) {
+        assert.ok(instructions.includes(PRODUCT_CONTEXT_OPEN));
+      } else {
+        assert.equal(instructions, expectedText);
+      }
+    });
+  }
+
+  it("megmondja, hány terméket látott és melyik leírás-forrásból", () => {
+    const summary = productContextSummary(withHits);
+
+    assert.equal(summary.hitCount, 1);
+    assert.equal(summary.projectionVersion, 1);
+    assert.deepEqual(summary.descriptionSources, ["acropora"]);
+  });
+
+  it("nem tippel: ha nem volt találat, nincs szám és nincs forrás", () => {
+    const summary = productContextSummary({
+      ok: false,
+      error: "product_search_unavailable",
+      detail: "timeout"
+    });
+
+    assert.equal(summary.hitCount, null);
+    assert.equal(summary.projectionVersion, null);
+    assert.deepEqual(summary.descriptionSources, []);
+  });
+
+  it("a leírás-forrásokat összevonja, nem soronként sorolja", () => {
+    const summary = productContextSummary({
+      ok: true,
+      result: {
+        projectionVersion: 1,
+        hits: [
+          { descriptionSource: "unas" },
+          { descriptionSource: "acropora" },
+          { descriptionSource: "unas" }
+        ]
+      }
+    });
+
+    assert.equal(summary.hitCount, 3);
+    assert.deepEqual(summary.descriptionSources, ["acropora", "unas"]);
   });
 });

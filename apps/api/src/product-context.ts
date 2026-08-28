@@ -69,15 +69,19 @@ export const SEARCH_UNAVAILABLE_INSTRUCTIONS = [
 export function productContextInstructions(
   outcome: ProductSearchOutcome
 ): string {
+  const state = classifyProductContext(outcome);
+
+  // The failure branches are split by `outcome.ok` rather than by the state
+  // alone, because that is what narrows the type for the block below. The
+  // DECISION still comes from one place - `state` decides which of the two
+  // failure texts is right - so the surface and the prompt cannot disagree.
   if (!outcome.ok) {
-    return outcome.error === "product_search_not_configured"
+    return state === "not_configured"
       ? NO_PRODUCT_CONTEXT_INSTRUCTIONS
       : SEARCH_UNAVAILABLE_INSTRUCTIONS;
   }
 
-  if (!hasAnyHit(outcome.result)) {
-    return EMPTY_RESULT_INSTRUCTIONS;
-  }
+  if (state === "empty") return EMPTY_RESULT_INSTRUCTIONS;
 
   return [
     "Az alábbi adatblokk a saját katalógusunkból való, erre a kérdésre keresve.",
@@ -109,4 +113,95 @@ function hasAnyHit(result: unknown): boolean {
   if (typeof result !== "object" || result === null) return false;
   const hits = (result as { hits?: unknown }).hits;
   return Array.isArray(hits) && hits.length > 0;
+}
+
+/**
+ * Which of the four states this search ended in.
+ *
+ * EXTRACTED SO THAT THE PROMPT AND THE SURFACE CANNOT DISAGREE. The model is
+ * told one of four things, and the test surface reports what the answer was
+ * built from - and those two must be the same claim. Computed twice, they can
+ * drift apart on a branch nobody re-reads, and then the surface says "no
+ * catalogue" about an answer that had one. That is the failure this whole
+ * change exists to prevent, so it must not be reintroduced one level down.
+ */
+export type ProductContextState =
+  | "hits"
+  | "empty"
+  | "unavailable"
+  | "not_configured";
+
+export function classifyProductContext(
+  outcome: ProductSearchOutcome
+): ProductContextState {
+  if (!outcome.ok) {
+    return outcome.error === "product_search_not_configured"
+      ? "not_configured"
+      : "unavailable";
+  }
+
+  return hasAnyHit(outcome.result) ? "hits" : "empty";
+}
+
+/**
+ * What the answer was built from, in the shape a surface can display.
+ *
+ * The brief asks for `descriptionSource` and every relevant source field to be
+ * visible on the test surface, and the reason is not curiosity: a judgement
+ * about an answer is only interpretable if the judge can see what the answer
+ * had in front of it. An answer that invented a price and one that reported a
+ * mirrored price read the same on the screen.
+ *
+ * Everything here is read defensively. The projection's shape belongs to the
+ * OS, which versions it; this side reports what it can read and says null for
+ * the rest, rather than throwing inside a request that already has an answer.
+ */
+export interface ProductContextSummary {
+  state: ProductContextState;
+  /** How many products the model was given. Null when it was given none. */
+  hitCount: number | null;
+  /** The OS's own version for the shape it sent, when it sent one. */
+  projectionVersion: number | null;
+  /**
+   * Which description each hit came from, deduplicated. "acropora" means a
+   * local edit is what the model read; "unas" means the mirrored text.
+   */
+  descriptionSources: string[];
+}
+
+export function productContextSummary(
+  outcome: ProductSearchOutcome
+): ProductContextSummary {
+  const state = classifyProductContext(outcome);
+
+  if (state !== "hits" || !outcome.ok) {
+    return {
+      state,
+      hitCount: null,
+      projectionVersion: null,
+      descriptionSources: []
+    };
+  }
+
+  const result = outcome.result as {
+    hits?: unknown;
+    projectionVersion?: unknown;
+  };
+  const hits = Array.isArray(result.hits) ? result.hits : [];
+
+  const sources = new Set<string>();
+  for (const hit of hits) {
+    const source = (hit as { descriptionSource?: unknown })?.descriptionSource;
+    if (typeof source === "string" && source.length > 0) sources.add(source);
+  }
+
+  return {
+    state,
+    hitCount: hits.length,
+    projectionVersion:
+      typeof result.projectionVersion === "number"
+        ? result.projectionVersion
+        : null,
+    descriptionSources: [...sources].sort()
+  };
 }
