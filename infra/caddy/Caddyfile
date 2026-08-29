@@ -2,3 +2,28 @@ ai-stage.acropora.hu {
     encode gzip
     reverse_proxy api:3000
 }
+
+# A HAROM STAGING NEV A GEP SAJAT BELSO CIMERE MUTAT, NEM COMPOSE SZOLGALTATASRA.
+# Ok: az Acropora OS staging es a Medusa commerce staging 2026-08-29 ota ezen a
+# gepen fut, de a Coolify alatt, MASIK docker halozaton. Nevuk innen nincs, a
+# gazdagep belso cime (10.20.0.3) viszont mindharom portot eleri, es ez merve van.
+#
+# MIERT ALL EZ A FAJLBAN ES NEM A GAZDAGEPEN: 2026-08-29 17:11-kor kezzel kerult a
+# gazdagepre, 18:16-kor pedig egy telepites TOROLTE. A deploy-stage.yml rsync-je
+# --delete kapcsoloval fut, es az infra/ mappa NINCS a kivetelek kozott. Ami tehat
+# nem ebben a tarhazban all, azt a kovetkezo beolvasztas elviszi, csendben.
+
+staging.acropora.hu {
+    encode gzip
+    reverse_proxy 10.20.0.3:3010
+}
+
+api-staging.acropora.hu {
+    encode gzip
+    reverse_proxy 10.20.0.3:3001
+}
+
+commerce-stage.acropora.hu {
+    encode gzip
+    reverse_proxy 10.20.0.3:9000
+}
