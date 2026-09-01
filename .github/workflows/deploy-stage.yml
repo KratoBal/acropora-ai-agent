@@ -1,9 +1,23 @@
 name: Deploy AI stage
 
+# MANUAL ONLY, FROM 2026-09-01. The push trigger is gone on purpose.
+#
+# The service moves under Coolify, which deploys it from now on. If this
+# workflow still fired on every merge to main, the NEXT merge would deploy the
+# old shape alongside the new one, and two containers would advertise the same
+# hostname. That is not a theoretical risk: it happened on this very machine on
+# 2026-08-29, when two Medusa containers claimed the same routing rule for the
+# same address.
+#
+# WHY THE FILE STAYS, AND WHY workflow_dispatch STAYS WITH IT: the Coolify path
+# has not been exercised yet tonight. Keeping the manual trigger keeps the way
+# back one click away. Deleting the file would remove that too, and a file
+# recovered from git history at midnight is not a recovery plan.
+#
+# Restoring the automatic deploy is one block: put `push: branches: [main]`
+# back. Do that only if the Coolify path is abandoned -- while both are live,
+# the collision above is the failure mode.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
