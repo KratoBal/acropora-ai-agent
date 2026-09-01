@@ -27,3 +27,34 @@ commerce-stage.acropora.hu {
     encode gzip
     reverse_proxy 10.20.0.3:9000
 }
+
+# A COOLIFY SAJAT FELULETE. Ugyanaz a minta, mint a harom staging nevnel: a
+# gazdagep belso cimere mutat, mert a Coolify a 8000-es gazdaporton jon ki
+# (merve 2026-09-01: `0.0.0.0:8000->8080/tcp` a coolify kontenernel).
+#
+# MIERT KELL A KET WEBSOCKET UTVONAL: a Coolify elo naploja es a beepitett
+# terminalja nem a 8000-es porton beszel, hanem a coolify-realtime kontenerrel
+# (merve: `0.0.0.0:6001-6002->6001-6002/tcp`). Ha ez a ket blokk hianyzik, a
+# felulet BETOLT es be lehet jelentkezni, csak a telepitesi naplo nem frissul
+# elo, es a terminal nem nyilik meg.
+#
+# AMIT NEM MERTUNK: hogy a /app a 6001-es es a /terminal/ws a 6002-es porthoz
+# tartozik-e, vagy forditva. A ket portot lattuk, a hozzajuk tarto utvonalakat
+# nem. Ha a naplo vagy a terminal nem mukodik, ez a ket sor a gyanus, es a
+# csere egy percbe kerul. A felulet magat egyik esetben sem tudja elrontani:
+# ami nem illeszkedik ezekre az utvonalakra, az a harmadik blokkba esik.
+coolify2.acropora.hu {
+    encode gzip
+
+    handle /app/* {
+        reverse_proxy 10.20.0.3:6001
+    }
+
+    handle /terminal/ws {
+        reverse_proxy 10.20.0.3:6002
+    }
+
+    handle {
+        reverse_proxy 10.20.0.3:8000
+    }
+}
