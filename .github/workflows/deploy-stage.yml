@@ -73,10 +73,25 @@ jobs:
           ACROPORA_AI_BUILT_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           export ACROPORA_AI_BUILT_AT
 
+          # ONLY THE API. Caddy is no longer a service in this compose file --
+          # Traefik holds 80 and 443 now, and naming a service that is not
+          # there would fail the whole command, taking the API down with it.
+          #
+          # SO THIS WORKFLOW NO LONGER RESTORES THE FRONT DOOR, only the
+          # application behind it. That is deliberate, and it is the half a
+          # reader would walk past: bringing the front door back is a separate,
+          # manual step (`docker start infra-caddy-1`), and it has to be
+          # preceded by stopping the Coolify-side proxy, or both will want the
+          # same two ports.
+          #
+          # The container is still there to start: measured on the host,
+          # `infra-caddy-1` sits in Exited (0) - stopped on purpose, not
+          # crashed. `up -d api` does not remove it, because this command
+          # carries neither --remove-orphans nor a preceding `compose down`.
           docker compose \
             --env-file .env \
             -f infra/docker-compose.yml \
-            up -d --build --force-recreate api caddy
+            up -d --build --force-recreate api
 
           # The check runs ON THIS MACHINE, against the loopback address the api
           # container binds - not against the public name.
