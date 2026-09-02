@@ -30,6 +30,18 @@ services:
       timeout: 5s
       retries: 5
 
+  # THIS SERVICE STAYS FOR NOW, AND THAT IS DELIBERATE.
+  #
+  # Coolify builds and runs the API from the same Dockerfile from now on, which
+  # makes this block redundant -- but only ONCE the Coolify one is proven to
+  # answer. Removing it in the same step would mean that if the new path does
+  # not come up, there is no AI service at all and nothing to fall back to.
+  #
+  # WHEN TO DELETE IT: after the Coolify container has served a real request and
+  # its /health reports the expected commit. Then this block and its port
+  # binding go, in one commit. Until then two copies may run side by side; they
+  # are stateless and share the same database, so that is untidy rather than
+  # dangerous -- 127.0.0.1:3000 here, its own port over there.
   api:
     build:
       context: ..
@@ -66,21 +78,23 @@ services:
     networks:
       - ai-internal
 
-  caddy:
-    image: caddy:2-alpine
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ../data/caddy:/data
-      - ../data/caddy_config:/config
-    depends_on:
-      api:
-        condition: service_started
-    networks:
-      - ai-internal
+# THE FRONT DOOR MOVED TO TRAEFIK (Coolify), 2026-09-01.
+#
+# The caddy service used to live here and hold 80 and 443. Only one process can
+# hold those, so it had to go in the SAME step that brings Traefik up -- not
+# before (nothing would answer) and not after (the ports would already be taken).
+#
+# infra/caddy/Caddyfile IS KEPT ON PURPOSE, even though nothing here mounts it
+# any more. It is the record of what this machine served: five names, four of
+# them nothing to do with the AI service (staging, api-staging, commerce-stage,
+# and Coolify's own coolify2). Whoever configures Traefik needs that list, and a
+# deleted file would send them looking through git history for it.
+#
+# AND THE ONE THAT BITES: coolify2.acropora.hu is Coolify's OWN interface. When
+# Caddy stops, the tool being used to do the move disappears with it. Coolify
+# also answers directly on host port 8000 -- open that BEFORE stopping Caddy,
+# because afterwards there is nothing left to open it with.
+
 networks:
   ai-internal:
     driver: bridge
