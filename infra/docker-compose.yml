@@ -8,21 +8,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
       - ../data/postgres:/var/lib/postgresql/data
-    # REACHABLE FROM OUTSIDE THIS COMPOSE NETWORK, AND ONLY FROM THE DOCKER HOST.
-    #
-    # The API moves under Coolify, onto a different docker network, where the
-    # service name `postgres` no longer resolves. Without a binding the move
-    # fails QUIETLY in the worst way: the container starts, Coolify shows green,
-    # and the first question answers ECONNREFUSED.
-    #
-    # WHY 10.20.0.3 AND NOT 127.0.0.1: the loopback binding would be the HOST's
-    # loopback, which another container cannot reach -- the same refusal, one
-    # layer down. 10.20.0.3 is the host's address on the docker bridge: every
-    # container can reach it, and nothing outside the machine can, because it is
-    # not on the public interface. It is the same address the Caddyfile already
-    # uses for the other three services, seen from the binding side.
-    ports:
-      - "10.20.0.3:5432:5432"
     networks:
       - ai-internal
     healthcheck:
