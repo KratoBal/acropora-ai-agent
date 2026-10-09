@@ -22,6 +22,12 @@ import {
 } from "./product-context.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
+import {
+  guardRecommendationText,
+  MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
+  measurementRecommendationInput,
+  parseRecommendationRequest
+} from "./measurement-recommendation.js";
 import { buildTime, buildVersion } from "./build-version.js";
 import {
   answerIsRatable,
@@ -619,6 +625,97 @@ export function buildApp(dependencies: AppDependencies = {}) {
       );
 
       await noteOutcome(failure.body.error);
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * The water-measurement product recommendation (Acropora OS card 2b3983e1).
+   *
+   * The OS server calls it with the shared token, never a browser (the public
+   * boundary). Nothing is stored here: the OS keeps the draft, the approved
+   * text and the example pairs, and sends the pairs back with each request.
+   * The answer's product ids are filtered against the candidates in
+   * `guardRecommendationText`, not only asked for in the prompt.
+   */
+  app.post("/v1/measurement-recommendations", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseRecommendationRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
+        input: [
+          {
+            role: "user",
+            content: measurementRecommendationInput(parsed.request)
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardRecommendationText(
+        response.output_text ?? "",
+        new Set(parsed.request.candidates.map((c) => c.productId))
+      );
+
+      if (guarded.removedProductIds.length) {
+        request.log.warn(
+          { removed: guarded.removedProductIds.length },
+          "the recommendation named products outside the candidates"
+        );
+      }
+
+      return {
+        text: guarded.text,
+        model,
+        removedProductIds: guarded.removedProductIds
+      };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      // The error object is never handed to the logger: its shape belongs to
+      // the provider, and a provider error can quote a key back at us.
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a measurement recommendation"
+      );
 
       return reply.code(failure.status).send(failure.body);
     }

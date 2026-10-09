@@ -22,7 +22,8 @@ Acropora OS user-context endpoint
 ## What must never happen
 
 - The browser must not call `/v1/chat` directly, and the same is true of every other route
-  here: `/v1/messages/:messageId/rating` and `/v1/conversations/:conversationId/ratings` sit
+  here: `/v1/messages/:messageId/rating`, `/v1/conversations/:conversationId/ratings` and
+  `/v1/measurement-recommendations` (the Acropora OS server's water-measurement draft) sit
   behind the same shared token and the same absent CORS.
 - `API_ACCESS_TOKEN`, `ACROPORA_OS_AI_SERVICE_TOKEN` and any OpenAI key must not reach a browser
   bundle, a mobile app, a URL, a query parameter, a client-side log, this repository, or
