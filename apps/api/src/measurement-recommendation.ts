@@ -54,7 +54,8 @@ export interface RecommendationCandidate {
    * `true` when only Acropora's own data claims the effect (the JEV's
    * UNVERIFIED result), with no manufacturer or supplier confirming it
    * (Acropora OS #1673). The model is told to word such a candidate
-   * cautiously. Missing means confirmed, or not from the JEV.
+   * cautiously. Missing means confirmed, or not from the JEV; a `null` is
+   * read as missing, like `false`.
    */
   unverified?: boolean;
 }
@@ -124,7 +125,9 @@ function candidateOf(value: unknown): RecommendationCandidate | null {
     !Array.isArray(effects) ||
     (basis !== "CATEGORY" && basis !== "JEV") ||
     (evidenceRef !== undefined && !text(evidenceRef, 1000)) ||
-    (unverified !== undefined && typeof unverified !== "boolean")
+    (unverified !== undefined &&
+      unverified !== null &&
+      typeof unverified !== "boolean")
   )
     return null;
   const parsedEffects = effects.map((effect) =>

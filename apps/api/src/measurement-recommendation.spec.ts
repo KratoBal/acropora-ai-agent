@@ -80,6 +80,12 @@ describe("the unverified candidate", () => {
     assert.equal("unverified" in first, false);
   });
 
+  it("RECO-UNVERIFIED-NULL: a null mark is the same as no mark, not a refused request", () => {
+    const [first, second] = modelCandidates({ unverified: null });
+    assert.equal("unverified" in first, false);
+    assert.equal("unverified" in second, false);
+  });
+
   it("RECO-UNVERIFIED-SHAPE: a non-boolean mark is refused", () => {
     const result = parseRecommendationRequest(
       request({ candidates: [{ ...candidate, unverified: "yes" }] })
