@@ -5,6 +5,8 @@ import { buildApp, type AppDependencies } from "./app.js";
 import {
   guardRecommendationText,
   MAX_EXAMPLES,
+  MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
+  measurementRecommendationInput,
   NO_PRODUCT_SENTENCE,
   parseRecommendationRequest
 } from "./measurement-recommendation.js";
@@ -38,6 +40,60 @@ const request = (over: Record<string, unknown> = {}) => ({
   candidates: [candidate],
   examples: [],
   ...over
+});
+
+/*
+  THE UNVERIFIED MARK (Acropora OS #1673, t5-5). What turns these red: the
+  parser dropping the mark (the model never sees it); a non-boolean mark let
+  through; a confirmed candidate given a mark; the rule missing from the
+  instructions.
+*/
+describe("the unverified candidate", () => {
+  const parsed = (over: Record<string, unknown>) => {
+    const result = parseRecommendationRequest(
+      request({
+        candidates: [
+          { ...candidate, productId: "cmp1", basis: "JEV", ...over },
+          { ...candidate, productId: "cmp2", basis: "JEV" }
+        ]
+      })
+    );
+    assert.equal(result.ok, true);
+    return (result as { request: Parameters<typeof measurementRecommendationInput>[0] })
+      .request;
+  };
+  const modelCandidates = (over: Record<string, unknown>) =>
+    (
+      JSON.parse(measurementRecommendationInput(parsed(over))) as {
+        candidates: Record<string, unknown>[];
+      }
+    ).candidates;
+
+  it("RECO-UNVERIFIED-IN: the mark reaches the model's input, a confirmed one gets none", () => {
+    const [unverified, confirmed] = modelCandidates({ unverified: true });
+    assert.equal(unverified.unverified, true);
+    assert.equal("unverified" in confirmed, false);
+  });
+
+  it("RECO-UNVERIFIED-FALSE: an explicit false is the same as no mark", () => {
+    const [first] = modelCandidates({ unverified: false });
+    assert.equal("unverified" in first, false);
+  });
+
+  it("RECO-UNVERIFIED-SHAPE: a non-boolean mark is refused", () => {
+    const result = parseRecommendationRequest(
+      request({ candidates: [{ ...candidate, unverified: "yes" }] })
+    );
+    assert.deepEqual(result, { ok: false, error: "a candidate is malformed" });
+  });
+
+  it("RECO-UNVERIFIED-RULE: the instructions tell the model to word it cautiously", () => {
+    assert.match(MEASUREMENT_RECOMMENDATION_INSTRUCTIONS, /"unverified": true/);
+    assert.match(
+      MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
+      /Do not state its effect as a fact/
+    );
+  });
 });
 
 describe("parseRecommendationRequest", () => {

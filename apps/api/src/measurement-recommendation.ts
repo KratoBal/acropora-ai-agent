@@ -50,6 +50,13 @@ export interface RecommendationCandidate {
   effects: { parameterCode: string; direction: "EMEL" | "CSOKKENT" }[];
   basis: "CATEGORY" | "JEV";
   evidenceRef?: string;
+  /**
+   * `true` when only Acropora's own data claims the effect (the JEV's
+   * UNVERIFIED result), with no manufacturer or supplier confirming it
+   * (Acropora OS #1673). The model is told to word such a candidate
+   * cautiously. Missing means confirmed, or not from the JEV.
+   */
+  unverified?: boolean;
 }
 
 export interface RecommendationExample {
@@ -107,7 +114,8 @@ function deviationOf(value: unknown): RecommendationDeviation | null {
 
 function candidateOf(value: unknown): RecommendationCandidate | null {
   if (!isRecord(value)) return null;
-  const { productId, name, category, effects, basis, evidenceRef } = value;
+  const { productId, name, category, effects, basis, evidenceRef, unverified } =
+    value;
   if (
     !text(productId, 64) ||
     !PRODUCT_ID.test(productId) ||
@@ -115,7 +123,8 @@ function candidateOf(value: unknown): RecommendationCandidate | null {
     !text(category, 300) ||
     !Array.isArray(effects) ||
     (basis !== "CATEGORY" && basis !== "JEV") ||
-    (evidenceRef !== undefined && !text(evidenceRef, 1000))
+    (evidenceRef !== undefined && !text(evidenceRef, 1000)) ||
+    (unverified !== undefined && typeof unverified !== "boolean")
   )
     return null;
   const parsedEffects = effects.map((effect) =>
@@ -135,7 +144,8 @@ function candidateOf(value: unknown): RecommendationCandidate | null {
     category,
     effects: parsedEffects as RecommendationCandidate["effects"],
     basis,
-    ...(evidenceRef !== undefined ? { evidenceRef } : {})
+    ...(evidenceRef !== undefined ? { evidenceRef } : {}),
+    ...(unverified === true ? { unverified: true } : {})
   };
 }
 
@@ -215,6 +225,7 @@ export const MEASUREMENT_RECOMMENDATION_INSTRUCTIONS = [
   `- If the candidate list is empty, or no candidate fits a deviation, write exactly: "${NO_PRODUCT_SENTENCE}" and give general steps without products.`,
   "- Never calculate or invent a dose. If dosing matters, say to follow the product's own dosing instructions.",
   "- A candidate with an empty effects list has no manufacturer claim behind it: do not state that it moves the parameter for sure.",
+  '- A candidate marked "unverified": true has its effect claimed only by our own data, not confirmed by the manufacturer or a supplier. Do not state its effect as a fact: word it cautiously (for example, that it may help with the parameter based on the product data), and prefer a candidate without the mark when one fits the same deviation.',
   "- At most 8 sentences. No greeting and no signature.",
   "- If example pairs are given: each shows a draft (aiDraft) and what a colleague approved (approvedText). Follow the approved versions' content decisions and style; the difference shows what the colleagues corrected."
 ].join("\n");
@@ -232,7 +243,9 @@ export function measurementRecommendationInput(
       name: c.name,
       category: c.category,
       effects: c.effects,
-      basis: c.basis
+      basis: c.basis,
+      // only the cautious case is marked; a confirmed candidate carries no flag
+      ...(c.unverified ? { unverified: true } : {})
     })),
     examples: request.examples
   });
