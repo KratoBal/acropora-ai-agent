@@ -167,6 +167,49 @@ describe("guardRecommendationText", () => {
   });
 });
 
+/*
+  THE THREE PARTS (Balázs, 2026-10-14: Vélemény, Javaslat, Ajánlott termékek).
+  What turns this red: the instructions not asking for the three titles; a
+  product line whose product the guard removed staying as an empty bullet; the
+  no-product sentence landing before the first title instead of under its own,
+  or missing from a products part the guard emptied.
+*/
+describe("the three parts", () => {
+  it("RECO-SECTIONS-PROMPT: the instructions ask for the three titles and the product lines", () => {
+    for (const title of ["Vélemény", "Javaslat", "Ajánlott termékek"])
+      assert.ok(MEASUREMENT_RECOMMENDATION_INSTRUCTIONS.includes(`"${title}"`), title);
+    assert.match(MEASUREMENT_RECOMMENDATION_INSTRUCTIONS, /- \{\{termek:<productId>\}\}: a short reason/);
+    assert.doesNotMatch(MEASUREMENT_RECOMMENDATION_INSTRUCTIONS, /At most 8 sentences/);
+  });
+
+  it("RECO-SECTIONS-GUARD: a removed product's line goes whole; an emptied part gets the sentence under its title", () => {
+    const text = [
+      "Vélemény",
+      "A KH alacsony.",
+      "",
+      "Javaslat",
+      "Emelje lassan.",
+      "",
+      "Ajánlott termékek",
+      "- {{termek:cmp1}}: a KH emeléséhez",
+      "- {{termek:kitalalt}}: ez kimarad",
+    ].join("\n");
+    assert.deepEqual(guardRecommendationText(text, new Set(["cmp1"])), {
+      text: text.split("\n").slice(0, 8).join("\n"),
+      removedProductIds: ["kitalalt"],
+    });
+    const emptied = guardRecommendationText(text, new Set(["masik"])).text.split("\n");
+    assert.deepEqual(emptied.slice(6), ["Ajánlott termékek", NO_PRODUCT_SENTENCE]);
+    const none = guardRecommendationText(text, new Set()).text.split("\n");
+    assert.deepEqual([none[0], none.slice(6)], ["Vélemény", ["Ajánlott termékek", NO_PRODUCT_SENTENCE]]);
+    // a title written with markdown or without accents is found as the OS finds it (barracuda, #37)
+    for (const title of ["**Ajánlott termékek**", "## ajanlott termekek:"]) {
+      const marked = guardRecommendationText(text.replace("Ajánlott termékek", title), new Set()).text.split("\n");
+      assert.deepEqual([marked[0], marked.slice(6)], ["Vélemény", [title, NO_PRODUCT_SENTENCE]], title);
+    }
+  });
+});
+
 describe("POST /v1/measurement-recommendations", () => {
   const API_TOKEN = "test-api-access-token";
   const saved = { ...process.env };
