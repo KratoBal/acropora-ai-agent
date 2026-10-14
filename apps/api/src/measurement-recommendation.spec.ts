@@ -202,6 +202,11 @@ describe("the three parts", () => {
     assert.deepEqual(emptied.slice(6), ["Ajánlott termékek", NO_PRODUCT_SENTENCE]);
     const none = guardRecommendationText(text, new Set()).text.split("\n");
     assert.deepEqual([none[0], none.slice(6)], ["Vélemény", ["Ajánlott termékek", NO_PRODUCT_SENTENCE]]);
+    // a title written with markdown or without accents is found as the OS finds it (barracuda, #37)
+    for (const title of ["**Ajánlott termékek**", "## ajanlott termekek:"]) {
+      const marked = guardRecommendationText(text.replace("Ajánlott termékek", title), new Set()).text.split("\n");
+      assert.deepEqual([marked[0], marked.slice(6)], ["Vélemény", [title, NO_PRODUCT_SENTENCE]], title);
+    }
   });
 });
 

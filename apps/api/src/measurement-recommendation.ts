@@ -28,9 +28,20 @@ export const MAX_DEVIATIONS = 40;
 export const MAX_CANDIDATES = 300;
 export const MAX_EXAMPLES = 3;
 
-/** The three part titles the model writes, each alone on its line (Balázs, 2026-10-14). */
-const ANY_TITLE = /^\s*(Vélemény|Javaslat|Ajánlott termékek)\s*:?\s*$/i;
-const PRODUCTS_TITLE = /^\s*Ajánlott termékek\s*:?\s*$/i;
+/**
+ * The three part titles the model writes, each alone on its line (Balázs,
+ * 2026-10-14). Read as tolerantly as the OS reads them
+ * (`recommendationBlocks`): markdown `**` and `#`, a colon, any case, with or
+ * without accents (barracuda, #37), so a title the OS shows as one is found here too.
+ */
+const fold = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+const titleOf = (line: string): string | null => {
+  const bare = fold(line.replace(/\*\*/g, "").replace(/^\s*#+\s*/, "")).trim().replace(/\s*:$/, "");
+  return ["velemeny", "javaslat", "ajanlott termekek"].includes(bare) ? bare : null;
+};
+const ANY_TITLE = { test: (line: string) => titleOf(line) !== null };
+const PRODUCTS_TITLE = { test: (line: string) => titleOf(line) === "ajanlott termekek" };
 
 /** Said when there is nothing on the list to recommend. */
 export const NO_PRODUCT_SENTENCE =
