@@ -28,6 +28,10 @@ export const MAX_DEVIATIONS = 40;
 export const MAX_CANDIDATES = 300;
 export const MAX_EXAMPLES = 3;
 
+/** The three part titles the model writes, each alone on its line (Balázs, 2026-10-14). */
+const ANY_TITLE = /^\s*(Vélemény|Javaslat|Ajánlott termékek)\s*:?\s*$/i;
+const PRODUCTS_TITLE = /^\s*Ajánlott termékek\s*:?\s*$/i;
+
 /** Said when there is nothing on the list to recommend. */
 export const NO_PRODUCT_SENTENCE =
   "Ehhez a méréshez nincs ajánlható termék a listán.";
@@ -229,8 +233,9 @@ export const MEASUREMENT_RECOMMENDATION_INSTRUCTIONS = [
   "- Never calculate or invent a dose. If dosing matters, say to follow the product's own dosing instructions.",
   "- A candidate with an empty effects list has no manufacturer claim behind it: do not state that it moves the parameter for sure.",
   '- A candidate marked "unverified": true has its effect claimed only by our own data, not confirmed by the manufacturer or a supplier. Do not state its effect as a fact: word it cautiously (for example, that it may help with the parameter based on the product data), and prefer a candidate without the mark when one fits the same deviation.',
-  "- At most 8 sentences. No greeting and no signature.",
-  "- If example pairs are given: each shows a draft (aiDraft) and what a colleague approved (approvedText). Follow the approved versions' content decisions and style; the difference shows what the colleagues corrected."
+  "- Write exactly three parts, in this order, each starting with its title alone on its own line, and an empty line between the parts: \"Vélemény\" (what the deviations mean for the aquarium, at most 4 sentences), \"Javaslat\" (what to do, at most 4 sentences, without product references), \"Ajánlott termékek\" (one line per recommended product, as \"- {{termek:<productId>}}: a short reason\"; with no fitting candidate, the single sentence above instead of the lines).",
+  "- No other titles and no formatting marks (no **, no #). No greeting and no signature.",
+  "- If example pairs are given: each shows a draft (aiDraft) and what a colleague approved (approvedText). Follow the approved versions' content decisions and style; the difference shows what the colleagues corrected. Keep the three-part structure even when an example has none."
 ].join("\n");
 
 /** The model's input: the request as data, without anything about a person. */
@@ -265,19 +270,36 @@ export function guardRecommendationText(
   candidateIds: ReadonlySet<string>
 ): { text: string; removedProductIds: string[] } {
   const removed: string[] = [];
-  const kept = text.replace(ANY_PRODUCT_TOKEN, (token, id: string) => {
-    if (PRODUCT_ID.test(id) && candidateIds.has(id)) return token;
-    removed.push(id);
-    return "";
-  });
+  const kept = text
+    .replace(ANY_PRODUCT_TOKEN, (token, id: string) => {
+      if (PRODUCT_ID.test(id) && candidateIds.has(id)) return token;
+      removed.push(id);
+      return "";
+    })
+    // a product line whose product was removed is left as "- : reason";
+    // it goes whole, not as an empty bullet with a reason for nothing
+    .split("\n")
+    .filter((line) => !/^\s*[-•]\s*(?::.*)?$/.test(line))
+    .join("\n");
   let cleaned = kept
     .replace(/[ \t]{2,}/g, " ")
     .replace(/ +([.,;:!?])/g, "$1")
     .trim();
-  if (
-    candidateIds.size === 0 &&
-    !cleaned.toLowerCase().includes(NO_PRODUCT_SENTENCE.toLowerCase())
-  )
-    cleaned = `${NO_PRODUCT_SENTENCE}${cleaned ? ` ${cleaned}` : ""}`;
+  const said = cleaned.toLowerCase().includes(NO_PRODUCT_SENTENCE.toLowerCase());
+  const lines = cleaned.split("\n");
+  const title = lines.findIndex((line) => PRODUCTS_TITLE.test(line));
+  // the "Ajánlott termékek" part, up to the next title or the end
+  const nextTitle = lines.findIndex((line, i) => i > title && ANY_TITLE.test(line));
+  const section = title < 0 ? [] : lines.slice(title + 1, nextTitle < 0 ? undefined : nextTitle);
+  const emptySection = title >= 0 && !section.some((line) => line.trim());
+  if (!said && (candidateIds.size === 0 || emptySection)) {
+    if (title >= 0) {
+      // the sentence goes under its title, where the products would stand
+      lines.splice(title + 1, 0, NO_PRODUCT_SENTENCE);
+      cleaned = lines.join("\n");
+    } else if (candidateIds.size === 0) {
+      cleaned = `${NO_PRODUCT_SENTENCE}${cleaned ? ` ${cleaned}` : ""}`;
+    }
+  }
   return { text: cleaned, removedProductIds: removed };
 }
