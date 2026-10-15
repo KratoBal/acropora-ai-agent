@@ -125,6 +125,23 @@ export function summarize(tool, text) {
   };
 }
 
+/**
+ * The counts and the findings must agree on whether anything is at or above the level (barracuda,
+ * #1702): strict mode decides from the findings, so a format change that keeps the counts but
+ * moves the findings would otherwise pass "high 16" with zero items. A disagreement is "not
+ * measurable", never clean.
+ */
+export function checkConsistent(level, { counts, items }) {
+  const at = LEVELS.indexOf(level);
+  const counted = LEVELS.slice(at).reduce((sum, l) => sum + counts[l], 0);
+  const listed = items.filter((i) => LEVELS.indexOf(i.severity) >= at).length;
+  if (counted > 0 !== listed > 0) {
+    throw new Error(
+      `the counts (${counted} at ${level} or above) and the findings (${listed}) disagree`,
+    );
+  }
+}
+
 export function report({ tool, label, level, strict }, { counts, items }) {
   const at = LEVELS.indexOf(level);
   const shown = items
@@ -174,6 +191,7 @@ function main() {
       ? readFileSync(args.input, "utf8")
       : runAudit(args.tool, args.dir);
     summary = summarize(args.tool, text);
+    checkConsistent(args.level, summary);
   } catch (e) {
     const msg = `NEM MÉRHETŐ (${args.label || args.tool}): ${e.message}`;
     console.error(`::error::${msg}`);

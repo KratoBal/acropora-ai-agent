@@ -248,6 +248,47 @@ describe("dependency-audit (B32)", () => {
     );
   });
 
+  it("AUDIT-CONSISTENT: counts and findings that disagree are exit 2 in both modes, never a green strict run", () => {
+    const szamSzerint = fajl("counts-only.json", {
+      advisories: {},
+      metadata: {
+        vulnerabilities: { info: 0, low: 0, moderate: 0, high: 1, critical: 0 },
+      },
+    });
+    const tetelSzerint = fajl("items-only.json", {
+      vulnerabilities: {
+        "shell-quote": {
+          name: "shell-quote",
+          severity: "critical",
+          via: [],
+          fixAvailable: true,
+        },
+      },
+      metadata: {
+        vulnerabilities: {
+          info: 0,
+          low: 0,
+          moderate: 0,
+          high: 0,
+          critical: 0,
+          total: 0,
+        },
+      },
+    });
+    const kodok = [
+      futtat(["--tool", "pnpm", "--input", szamSzerint]).kod,
+      futtat(["--tool", "pnpm", "--strict", "--input", szamSzerint]).kod,
+      futtat(["--tool", "npm", "--input", tetelSzerint]).kod,
+      futtat(["--tool", "npm", "--strict", "--input", tetelSzerint]).kod,
+    ];
+    assert.deepEqual(kodok, [2, 2, 2, 2], "AUDIT-CONSISTENT codes");
+    assert.match(
+      futtat(["--tool", "pnpm", "--strict", "--input", szamSzerint]).kimenet,
+      /NEM MÉRHETŐ .*disagree/,
+      "AUDIT-CONSISTENT reason",
+    );
+  });
+
   it("AUDIT-SUMMARY: the summary is appended to GITHUB_STEP_SUMMARY", () => {
     const summary = fajl("summary.md", "");
     futtat(["--tool", "npm", "--label", "mobile", "--input", NPM], {
