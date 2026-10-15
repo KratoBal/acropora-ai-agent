@@ -51,3 +51,24 @@ jobs:
       # wrong place.
       - name: Test
         run: npm test
+
+  # Security Baseline B32: the lockfile's known vulnerabilities. REPORT MODE: the job lists, it
+  # does not block, so today's findings show first; `--strict` makes it fail at --level (default
+  # high). An audit it cannot read is exit 2 in both modes, never a clean result. No new service
+  # and no token: the registry `npm ci` already uses answers the audit.
+  dependency-audit:
+    name: Dependency audit (report)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: npm lockfile
+        run: node scripts/dependency-audit.mjs --tool npm --label acropora-ai
