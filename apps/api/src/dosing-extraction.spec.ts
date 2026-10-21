@@ -75,6 +75,56 @@ describe("a modell válaszának őre", () => {
       assert.deepEqual(guardDosingAnswer(text, PAGE), { ok: false, refusal }, text.slice(0, 60));
   });
 
+  // barracuda, #40: a true excerpt next to a wrong number is what the excerpt check alone lets through
+  it("a fix adag minden száma a kivonatból jön; ezres csoport és gallon emberhez megy", () => {
+    const page = [
+      "Add 10 ml per 1,000 l weekly.",
+      "Dose 1 ml per 25 gallons daily.",
+      "Dose 2 ml per 100 l, 2-3 times per week.",
+      "Adagolás: 0,5 ml 100 literre naponta."
+    ].join("\n");
+    const fixed = (dose: string, excerpt: string) =>
+      guardDosingAnswer(answer({ mode: "FIXED", dose, excerpt }), page);
+    assert.deepEqual(fixed("10 ml/1 L/week", "Add 10 ml per 1,000 l weekly."), {
+      ok: false,
+      refusal: "DOSE_NUMBER_NOT_IN_EXCERPT"
+    });
+    assert.deepEqual(fixed("10 ml/1000 L/week", "Add 10 ml per 1,000 l weekly."), {
+      ok: false,
+      refusal: "DOSE_NUMBER_NOT_IN_EXCERPT"
+    });
+    assert.deepEqual(fixed("10 ml/1,000 L/week", "Add 10 ml per 1,000 l weekly."), {
+      ok: false,
+      refusal: "THOUSANDS_GROUP"
+    });
+    assert.deepEqual(fixed("1 ml/100 L/day", "Dose 1 ml per 25 gallons daily."), {
+      ok: false,
+      refusal: "DOSE_NUMBER_NOT_IN_EXCERPT"
+    });
+    assert.deepEqual(fixed("1 ml/25 L/day", "Dose 1 ml per 25 gallons daily."), {
+      ok: false,
+      refusal: "OTHER_UNIT"
+    });
+    // a fragment of the page: true, but the dose's numbers are not in it
+    assert.deepEqual(fixed("1 ml/100 L/day", "ml"), { ok: false, refusal: "DOSE_NUMBER_NOT_IN_EXCERPT" });
+    // controls: the right numbers pass, the frequency's too, and a decimal comma is a point
+    assert.equal(fixed("2 ml/100 L, 2-3/week", "Dose 2 ml per 100 l, 2-3 times per week.").ok, true);
+    assert.equal(fixed("0.5 ml/100 L/day", "Adagolás: 0,5 ml 100 literre naponta.").ok, true);
+  });
+
+  it("a mérendő paraméter a kivonatban vagy az útmutatóban néven áll", () => {
+    const guidance = "Az adagolás a heti kalcium- és KH-mérés alapján történik";
+    const tested = (tests: string[]) =>
+      guardDosingAnswer(answer({ mode: "TEST_DEPENDENT", tests, guidance, excerpt: guidance }), TEST_PAGE);
+    assert.equal(tested(["KALCIUM", "KH"]).ok, true);
+    assert.deepEqual(tested(["KALCIUM", "MAGNEZIUM"]), { ok: false, refusal: "TEST_CODE_NOT_IN_TEXT" });
+  });
+
+  it("az indoklás hossza korlátos", () => {
+    const r = guardDosingAnswer(answer({ reason: "x".repeat(1000) }), PAGE);
+    assert.equal(r.ok && r.answer.reason.length, 300);
+  });
+
   it("nincs adat: kivonat nélkül is érvényes válasz, és kódkerítés mögül is olvasható", () => {
     const r = guardDosingAnswer("```json\n" + answer({ reason: "nincs adag a lapon" }) + "\n```", PAGE);
     assert.deepEqual(r.ok && [r.answer.mode, r.answer.reason], ["NO_DATA", "nincs adag a lapon"]);

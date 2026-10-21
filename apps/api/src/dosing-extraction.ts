@@ -14,6 +14,7 @@
 export const MAX_PAGE_TEXT = 60_000;
 export const MAX_PRODUCT_NAME = 200;
 export const MAX_EXCERPT = 400;
+export const MAX_REASON = 300;
 
 /** The water parameters to measure, as the OS codes them (JEV `water-parameters.ts`). */
 export const TEST_CODES = [
@@ -107,11 +108,57 @@ function jsonOf(text: string): unknown {
   }
 }
 
+/** Lower case, accents off: the names below match Hungarian, German and English text. */
+const fold = (value: string) =>
+  value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+
+/** The numbers of a text, a decimal comma read as a point: "0,5" and "0.5" are one number. */
+const numbersOf = (value: string): string[] =>
+  (value.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => n.replace(",", "."));
+
+/**
+ * A THOUSANDS GROUP ("1,000 l", "1.000 Liter", "10 000"): one separator reads as a
+ * decimal, so the dose would be a thousand times wrong (the OS's #1800 lesson).
+ * "0.125" is a decimal, not a group.
+ */
+const THOUSANDS = /(?<!\d)(?!0[.,]\d)\d{1,3}(?:[\s.,'’\u00a0\u202f]\d{3})+(?!\d)/;
+
+/** A unit next to a number that the dose form cannot hold or a person has to interpret. */
+const OTHER_UNIT =
+  /\d\s*(?:us\s*)?(?:gallons?|gal\b|g\b|gramm?s?\b|grams?\b|capful|caps?\b|scoops?|spoons?|teaspoons?|tablespoons?|tsp\b|messloffel|loffel|kupak|merokanal|kanal)/;
+
+/** The names a parameter goes by on a page, folded; the code alone is a fallback. */
+const TEST_NAMES: Record<TestCode, RegExp> = {
+  HOMERSEKLET: /homerseklet|temperatur|\btemp\b/,
+  SOTARTALOM: /sotartalom|salinit|salzgehalt/,
+  SURUSEG: /suruseg|density|dichte|specific gravity/,
+  PH: /\bph\b/,
+  KH: /\bd?kh\b|alkalinit|karbonat|carbonate|lugossag/,
+  GH: /\bgh\b|gesamtharte|general hardness|osszkemenyseg/,
+  KALCIUM: /kalcium|kalzium|calcium|\bca\b/,
+  MAGNEZIUM: /magnezium|magnesium|\bmg\b/,
+  NITRAT: /nitrat|\bno3\b/,
+  FOSZFAT: /foszfat|phosphat|\bpo4\b/,
+  AMMONIA: /ammoni/,
+  NITRIT: /nitrit|\bno2\b/,
+  SZILIKAT: /szilikat|silikat|silicat|\bsio2\b/,
+  ORP: /\borp\b|redox/,
+  VAS: /\bvas\b|\biron\b|\beisen\b|\bfe\b/,
+  REZ: /\brez\b|copper|kupfer|\bcu\b/,
+  VEZETOKEPESSEG: /vezetokepesseg|conductiv|leitfahigkeit/
+};
+
 /**
  * THE CHECK BEFORE THE ANSWER LEAVES. The shape, the closed sets, and the one
  * check only this service can make cheaply: the excerpt (and the guidance) is
  * in the page text it was given. Spacing does not count (the page text is
  * flattened HTML); every other character does.
+ *
+ * And, because a true excerpt can sit next to a wrong answer (barracuda, #40):
+ * a fixed dose's every number is a number of its excerpt, and the excerpt holds
+ * no thousands group and no unit a person has to interpret (gallon, gram,
+ * capful); a test-dependent answer names each parameter to measure in its
+ * excerpt or guidance.
  */
 export function guardDosingAnswer(modelText: string, pageText: string): GuardedDosing {
   const raw = jsonOf(modelText);
@@ -123,7 +170,8 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
   const dose = str(raw.dose);
   const guidance = str(raw.guidance);
   const excerpt = str(raw.excerpt);
-  const reason = str(raw.reason) ?? "";
+  // the model's own words, steered by the page: short, and shown as text only
+  const reason = (str(raw.reason) ?? "").slice(0, MAX_REASON);
   const tests = Array.isArray(raw.tests) ? raw.tests.map((t) => String(t).trim().toUpperCase()) : [];
   if (tests.some((t) => !(TEST_CODES as readonly string[]).includes(t)))
     return { ok: false, refusal: "UNKNOWN_TEST_CODE" };
@@ -135,8 +183,23 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
 
   if (mode === "FIXED" && (dose === null || excerpt === null))
     return { ok: false, refusal: "FIXED_WITHOUT_DOSE_OR_EXCERPT" };
+  if (mode === "FIXED" && dose !== null && excerpt !== null) {
+    // THE DOSE'S NUMBERS COME FROM THE EXCERPT (barracuda, #40): a true excerpt next to
+    // a wrong number is the case the excerpt check alone lets through
+    const inExcerpt = new Set(numbersOf(excerpt));
+    if (!numbersOf(dose).every((n) => inExcerpt.has(n)))
+      return { ok: false, refusal: "DOSE_NUMBER_NOT_IN_EXCERPT" };
+    if (THOUSANDS.test(excerpt)) return { ok: false, refusal: "THOUSANDS_GROUP" };
+    if (OTHER_UNIT.test(fold(excerpt))) return { ok: false, refusal: "OTHER_UNIT" };
+  }
   if (mode === "TEST_DEPENDENT" && (guidance === null || excerpt === null || tests.length === 0))
     return { ok: false, refusal: "TEST_DEPENDENT_WITHOUT_GUIDANCE" };
+  if (mode === "TEST_DEPENDENT") {
+    // every parameter to measure is named in the text it rests on (barracuda, #40)
+    const said = fold(`${excerpt ?? ""} ${guidance ?? ""}`);
+    if (tests.some((t) => !TEST_NAMES[t as TestCode].test(said)))
+      return { ok: false, refusal: "TEST_CODE_NOT_IN_TEXT" };
+  }
   return {
     ok: true,
     answer: {
