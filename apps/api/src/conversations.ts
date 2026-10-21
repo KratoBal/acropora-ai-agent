@@ -1,31 +1,42 @@
 import { pool } from "./db.js";
 
 export async function createConversation(
-  clientKey: string
+  clientKey: string,
+  subject: string
 ): Promise<string> {
   const result = await pool.query<{ id: string }>(
     `
-      INSERT INTO conversations (client_key)
-      VALUES ($1)
+      INSERT INTO conversations (client_key, subject)
+      VALUES ($1, $2)
       RETURNING id
     `,
-    [clientKey]
+    [clientKey, subject]
   );
 
   return result.rows[0].id;
 }
 
+/**
+ * Whether this caller may continue this conversation FOR THIS SUBJECT.
+ *
+ * Both have to match: the client that started it, and who it is about. A
+ * conversation of one customer is not continued with another customer's
+ * header or anonymously, and the reverse. A row with no subject (written
+ * before the column existed) matches nobody, because `NULL = $3` is never
+ * true.
+ */
 export async function conversationBelongsToClient(
   conversationId: string,
-  clientKey: string
+  clientKey: string,
+  subject: string
 ): Promise<boolean> {
   const result = await pool.query(
     `
       SELECT 1
       FROM conversations
-      WHERE id = $1 AND client_key = $2
+      WHERE id = $1 AND client_key = $2 AND subject = $3
     `,
-    [conversationId, clientKey]
+    [conversationId, clientKey, subject]
   );
 
   return result.rowCount === 1;
