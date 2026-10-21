@@ -135,8 +135,9 @@ const TEST_NAMES: Record<TestCode, RegExp> = {
   PH: /\bph\b/,
   KH: /\bd?kh\b|alkalinit|karbonat|carbonate|lugossag/,
   GH: /\bgh\b|gesamtharte|general hardness|osszkemenyseg/,
-  KALCIUM: /kalcium|kalzium|calcium|\bca\b/,
-  MAGNEZIUM: /magnezium|magnesium|\bmg\b/,
+  // no "ca" or "mg": "ca." is "about" and "mg/l" is a unit (barracuda, #40)
+  KALCIUM: /kalcium|kalzium|calcium/,
+  MAGNEZIUM: /magnezium|magnesium/,
   NITRAT: /nitrat|\bno3\b/,
   FOSZFAT: /foszfat|phosphat|\bpo4\b/,
   AMMONIA: /ammoni/,
@@ -147,6 +148,37 @@ const TEST_NAMES: Record<TestCode, RegExp> = {
   REZ: /\brez\b|copper|kupfer|\bcu\b/,
   VEZETOKEPESSEG: /vezetokepesseg|conductiv|leitfahigkeit/
 };
+
+/** The OS's dose form: `1 drop/100 L/day`, `2 ml/100 L, 2-3/week`. */
+const DOSE_FORM =
+  /^(\d+(?:\.\d+)?) (ml|drop)\/(\d+(?:\.\d+)?) L(?:\/(day|week)|, \d+(?:-\d+)?\/(day|week))$/;
+
+/** A number as a page writes it: the decimal point may be a comma. */
+const asWritten = (n: string) => n.replace(".", "[.,]");
+
+const PERIOD_WORDS: Record<"day" | "week", RegExp> = {
+  day: /daily|a day|per day|every day|each day|taglich|pro tag|am tag|naponta|naponkent|\bnapi\b|minden nap|\/\s*(?:day|tag|nap)\b/,
+  week: /weekly|a week|per week|every week|each week|wochentlich|pro woche|je woche|hetente|hetenkent|\bheti\b|minden heten|\/\s*(?:week|woche|het)\b/
+};
+
+/**
+ * THE NUMBERS IN THEIR ROLES (barracuda, #40): the amount stands with its unit
+ * word, the water volume with a litre word, and the excerpt says the dose's
+ * period. Presence alone let "1 ml per 100 l daily" pass as 100 ml per 1 L, and
+ * a weekly excerpt pass as a daily dose. `null`: the roles hold.
+ */
+function doseRoleProblem(dose: string, excerpt: string): string | null {
+  const m = DOSE_FORM.exec(dose);
+  if (!m) return "DOSE_FORM";
+  const [, amount, unit, volume, plainPeriod, freqPeriod] = m;
+  const text = fold(excerpt);
+  const unitWords = unit === "drop" ? "(?:drops?|csepp\\w*|tropfen)" : "(?:ml|milliliter\\w*|millilitre\\w*)";
+  if (!new RegExp(`(?<![\\d.,])${asWritten(amount!)}\\s*${unitWords}`).test(text)) return "AMOUNT_ROLE";
+  if (!new RegExp(`(?<![\\d.,])${asWritten(volume!)}\\s*(?:l|ltr|liter\\w*|litre\\w*)(?![a-z])`).test(text))
+    return "VOLUME_ROLE";
+  if (!PERIOD_WORDS[(plainPeriod ?? freqPeriod) as "day" | "week"].test(text)) return "PERIOD_ROLE";
+  return null;
+}
 
 /**
  * THE CHECK BEFORE THE ANSWER LEAVES. The shape, the closed sets, and the one
@@ -191,6 +223,8 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
       return { ok: false, refusal: "DOSE_NUMBER_NOT_IN_EXCERPT" };
     if (THOUSANDS.test(excerpt)) return { ok: false, refusal: "THOUSANDS_GROUP" };
     if (OTHER_UNIT.test(fold(excerpt))) return { ok: false, refusal: "OTHER_UNIT" };
+    const role = doseRoleProblem(dose, excerpt);
+    if (role) return { ok: false, refusal: role };
   }
   if (mode === "TEST_DEPENDENT" && (guidance === null || excerpt === null || tests.length === 0))
     return { ok: false, refusal: "TEST_DEPENDENT_WITHOUT_GUIDANCE" };

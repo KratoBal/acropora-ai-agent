@@ -120,6 +120,34 @@ describe("a modell válaszának őre", () => {
     assert.deepEqual(tested(["KALCIUM", "MAGNEZIUM"]), { ok: false, refusal: "TEST_CODE_NOT_IN_TEXT" });
   });
 
+  // barracuda, #40, the follow-up: the numbers' presence is not their role
+  it("a számok a szerepükben: mennyiség az egységével, térfogat literrel, és a kivonat időszaka", () => {
+    const page = ["Dose 1 ml per 100 l daily.", "Dose 5 ml per 100 l weekly.", "Napi 2 csepp 50 literre."].join("\n");
+    const fixed = (dose: string, excerpt: string) =>
+      guardDosingAnswer(answer({ mode: "FIXED", dose, excerpt }), page);
+    assert.deepEqual(fixed("100 ml/1 L/day", "Dose 1 ml per 100 l daily."), { ok: false, refusal: "AMOUNT_ROLE" });
+    assert.deepEqual(fixed("5 ml/100 L/day", "Dose 5 ml per 100 l weekly."), { ok: false, refusal: "PERIOD_ROLE" });
+    assert.deepEqual(fixed("1 drop/100 L/day", "Dose 1 ml per 100 l daily."), { ok: false, refusal: "AMOUNT_ROLE" });
+    // every number is in the excerpt ("2"), but 2 L is not the volume it states
+    assert.deepEqual(fixed("2 drop/2 L/day", "Napi 2 csepp 50 literre."), { ok: false, refusal: "VOLUME_ROLE" });
+    assert.deepEqual(fixed("1 ml per 100 L daily", "Dose 1 ml per 100 l daily."), { ok: false, refusal: "DOSE_FORM" });
+    // controls: the same excerpts with the dose they state
+    assert.equal(fixed("1 ml/100 L/day", "Dose 1 ml per 100 l daily.").ok, true);
+    assert.equal(fixed("5 ml/100 L/week", "Dose 5 ml per 100 l weekly.").ok, true);
+    assert.equal(fixed("2 drop/50 L/day", "Napi 2 csepp 50 literre.").ok, true);
+  });
+
+  it("a mg/l és a ca. nem nevez meg paramétert", () => {
+    const page = "Kitalált. Adjon ca. 5 mg/l mennyiséget a mérés szerint.";
+    const excerpt = "Adjon ca. 5 mg/l mennyiséget a mérés szerint.";
+    for (const code of ["MAGNEZIUM", "KALCIUM"])
+      assert.deepEqual(
+        guardDosingAnswer(answer({ mode: "TEST_DEPENDENT", tests: [code], guidance: excerpt, excerpt }), page),
+        { ok: false, refusal: "TEST_CODE_NOT_IN_TEXT" },
+        code
+      );
+  });
+
   it("az indoklás hossza korlátos", () => {
     const r = guardDosingAnswer(answer({ reason: "x".repeat(1000) }), PAGE);
     assert.equal(r.ok && r.answer.reason.length, 300);
