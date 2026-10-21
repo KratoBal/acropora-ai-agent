@@ -75,6 +75,22 @@ export const SCHEMA_SQL = `
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS total_tokens INTEGER;
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS outcome TEXT;
 
+    /*
+     * WHO the conversation is about, fixed when it is created.
+     *
+     * The customer used to be read per request and stored nowhere, so a
+     * conversation started for one customer could be continued with another
+     * customer's header - or with none - and the history sent to the model
+     * (and back to the caller) carried the first customer's answers into the
+     * second one's chat. 'anonymous' or 'customer:<id>', see
+     * conversationSubject().
+     *
+     * NULL is a row written before this column existed. It is not read as
+     * anonymous: nothing recorded who those were about, so they are not
+     * continued by anyone.
+     */
+    ALTER TABLE conversations ADD COLUMN IF NOT EXISTS subject TEXT;
+
     /**
      * What somebody thought of one answer.
      *

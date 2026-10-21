@@ -73,6 +73,18 @@ export interface ResolvedCustomer {
 
 export type CustomerContextSuccess = AnonymousChat | ResolvedCustomer;
 
+/**
+ * Who a conversation is about, as the value stored on it.
+ *
+ * The customer id is the one the OS answered with, not the raw header: the
+ * OS is the side that says which customer this is.
+ */
+export function conversationSubject(resolved: CustomerContextSuccess): string {
+  return resolved.mode === "customer"
+    ? `customer:${resolved.context.customerId}`
+    : "anonymous";
+}
+
 export type CustomerContextResult =
   | CustomerContextSuccess
   | CustomerContextFailure;

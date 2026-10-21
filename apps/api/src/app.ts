@@ -43,8 +43,10 @@ import {
 import {
   customerChatFields,
   customerChatInstructions,
+  conversationSubject,
   customerContextErrorBody,
   resolveCustomerContext,
+  type CustomerContextResult,
   type CustomerContextSuccess
 } from "./customer-context.js";
 
@@ -134,10 +136,11 @@ export function readUsage(response: unknown): MessageUsage | undefined {
  * was written, exported and asserted, and the route never called it.
  */
 export interface ConversationStore {
-  createConversation(clientKey: string): Promise<string>;
+  createConversation(clientKey: string, subject: string): Promise<string>;
   conversationBelongsToClient(
     conversationId: string,
-    clientKey: string
+    clientKey: string,
+    subject: string
   ): Promise<boolean>;
   saveMessage(input: {
     conversationId: string;
@@ -241,6 +244,15 @@ export interface AppDependencies {
    * should trust.
    */
   databaseCheck?: () => Promise<void>;
+  /**
+   * The customer lookup against the Acropora OS.
+   *
+   * Substitutable so a test can drive a CUSTOMER chat through the route: with
+   * the real lookup and no OS configured, every request with a customer
+   * header stops at 502, and the conversation-ownership check behind it
+   * could not be reached by any test.
+   */
+  resolveCustomer?: (rawCustomerId: unknown) => Promise<CustomerContextResult>;
 }
 
 /**
@@ -260,6 +272,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const conversations =
     dependencies.conversations ?? databaseConversationStore;
   const ratings = dependencies.ratings ?? databaseRatingStore;
+  const resolveCustomer =
+    dependencies.resolveCustomer ??
+    ((rawCustomerId: unknown) => resolveCustomerContext(rawCustomerId));
   const databaseCheck =
     dependencies.databaseCheck ??
     (async () => {
@@ -440,7 +455,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
      * it here also keeps the database clean: a request that ends in 404 does not
      * leave a conversation and a stored message behind.
      */
-    const resolvedCustomer = await resolveCustomerContext(
+    const resolvedCustomer = await resolveCustomer(
       request.headers["x-acropora-user-id"]
     );
 
@@ -459,6 +474,13 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
+    /*
+     * Who this conversation is about. A conversation is continued only for the
+     * same subject it was started for (card a3e0327f): otherwise a second
+     * customer's chat - or an anonymous one - would get the first customer's
+     * history, both in what the model is handed and in what comes back.
+     */
+    const subject = conversationSubject(resolvedCustomer);
 
     let conversationId = request.body?.conversationId;
 
@@ -471,7 +493,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
       const belongsToClient = await conversations.conversationBelongsToClient(
         conversationId,
-        clientKey
+        clientKey,
+        subject
       );
 
       if (!belongsToClient) {
@@ -480,7 +503,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
         });
       }
     } else {
-      conversationId = await conversations.createConversation(clientKey);
+      conversationId = await conversations.createConversation(
+        clientKey,
+        subject
+      );
     }
 
     const activeConversationId = conversationId;
