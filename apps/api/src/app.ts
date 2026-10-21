@@ -20,6 +20,12 @@ import {
   productContextInstructions,
   productContextSummary
 } from "./product-context.js";
+import {
+  DOSING_EXTRACTION_INSTRUCTIONS,
+  dosingExtractionInput,
+  guardDosingAnswer,
+  parseDosingRequest
+} from "./dosing-extraction.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
 import {
@@ -741,6 +747,91 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a measurement recommendation"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * The manufacturer's dosing from one product page (Acropora OS card 85c38ab1,
+   * Product Knowledge). The OS server calls it with the shared token: it sends
+   * the page's visible text and the product's name, and gets the dosing state
+   * with a verbatim excerpt. The excerpt is checked against the page text here
+   * (`guardDosingAnswer`) and again in the OS; nothing is stored here. An answer
+   * the guard refuses is a 200 with `refusal`: the OS sends the product to a person.
+   */
+  app.post("/v1/dosing-extractions", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseDosingRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: DOSING_EXTRACTION_INSTRUCTIONS,
+        input: [
+          {
+            role: "user",
+            content: dosingExtractionInput(parsed.request)
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardDosingAnswer(
+        response.output_text ?? "",
+        parsed.request.pageText
+      );
+
+      if (!guarded.ok) {
+        request.log.warn(
+          { refusal: guarded.refusal },
+          "the dosing answer was refused by the guard"
+        );
+        return { refusal: guarded.refusal, model };
+      }
+
+      return { ...guarded.answer, model };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a dosing extraction"
       );
 
       return reply.code(failure.status).send(failure.body);
