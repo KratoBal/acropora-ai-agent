@@ -829,10 +829,15 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
       if (!guarded.ok) {
         request.log.warn(
-          { refusal: guarded.refusal },
+          { refusal: guarded.refusal, detail: guarded.detail },
           "the dosing answer was refused by the guard"
         );
-        return { refusal: guarded.refusal, model };
+        // the detail is counts and a character code, never page text
+        return {
+          refusal: guarded.refusal,
+          ...(guarded.detail ? { refusalDetail: guarded.detail } : {}),
+          model
+        };
       }
 
       return { ...guarded.answer, model };

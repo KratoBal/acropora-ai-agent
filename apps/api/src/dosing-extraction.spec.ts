@@ -45,7 +45,20 @@ describe("a modell válaszának őre", () => {
       answer({ mode: "FIXED", dose: "2 drop/100 L/day", excerpt: "Adagolás: napi 2 csepp 100 liter vízre." }),
       PAGE
     );
-    assert.deepEqual(r, { ok: false, refusal: "EXCERPT_NOT_IN_PAGE" });
+    // where it leaves the page, without its text: "Adagolás: napi " matches, "2" does not
+    assert.deepEqual(r, { ok: false, refusal: "EXCERPT_NOT_IN_PAGE", detail: "excerpt 15/39 U+0032" });
+  });
+
+  // acrobot 35040: the first test round's refusal could not tell a model's edit
+  // from our page text; an undecoded entity shows as the code of the character
+  it("a kivonat-műszer megmutatja, hol tér el, szöveg nélkül", () => {
+    const r = guardDosingAnswer(
+      answer({ excerpt: "Dose 1 ml per 100 l daily (it\u2019s simple)." }),
+      "Dose 1 ml per 100 l daily (it&rsquo;s simple)."
+    );
+    assert.deepEqual(r, { ok: false, refusal: "EXCERPT_NOT_IN_PAGE", detail: "excerpt 29/40 U+2019" });
+    // the detail is a field name, two counts and a code, nothing of the page
+    assert.match((r as { detail: string }).detail, /^(?:excerpt|guidance) \d+\/\d+ (?:U\+[0-9A-F]{4,6}|-)$/);
   });
 
   it("tesztfüggő: az útmutató is a lapról jön, a mérendő kódok rendezve, egyszer", () => {
@@ -58,7 +71,8 @@ describe("a modell válaszának őre", () => {
     assert.deepEqual(r.ok && [r.answer.tests, r.answer.dose], [["KALCIUM", "KH"], null]);
     assert.deepEqual(
       guardDosingAnswer(answer({ mode: "TEST_DEPENDENT", tests: ["KH"], guidance: "Mérjen naponta.", excerpt: guidance }), TEST_PAGE),
-      { ok: false, refusal: "EXCERPT_NOT_IN_PAGE" }
+      // the guidance is named, and not even its first character is on the page
+      { ok: false, refusal: "EXCERPT_NOT_IN_PAGE", detail: "guidance 0/15 U+004D" }
     );
   });
 
@@ -223,6 +237,9 @@ describe("POST /v1/dosing-extractions", () => {
 
     modelText = answer({ mode: "FIXED", dose: "5 ml/100 L/day", excerpt: "napi 5 ml 100 liter vízre." });
     const refused = await call(body);
-    assert.deepEqual([refused.statusCode, refused.json().refusal], [200, "EXCERPT_NOT_IN_PAGE"]);
+    assert.deepEqual(
+      [refused.statusCode, refused.json().refusal, refused.json().refusalDetail],
+      [200, "EXCERPT_NOT_IN_PAGE", "excerpt 5/26 U+0035"]
+    );
   });
 });
