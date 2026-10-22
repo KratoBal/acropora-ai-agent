@@ -85,6 +85,16 @@ const OTHER_UNIT =
  */
 const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]))`);
 
+/**
+ * THE MARK OF A DOSE SENTENCE IS THE UNIT'S WORD, NOT THE NUMBER (barracuda,
+ * #43 v3): "egy csepp", "három cseppet", "pár ml-t" carry no digit. A unit
+ * word next to a volume or a period makes the sentence a dose statement, and
+ * one without a digit amount can never match. "adag" only as a count
+ * ("adagot"), not "adagolás"; "dose" is a verb too, so it needs a number.
+ */
+const UNIT_WORD =
+  /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa\w*|tablet\w*|kapszul\w*)\b/;
+
 /** The pack's reach or content, not a dose (the OS reader's REACH words). */
 const REACH =
   /\b(?:bottles?|flasche|flakon\w*|uveg\w*|treats?|enough|sufficient|reicht|ausreichend|elegendo|eleg|kiszereles\w*|tartalom|inhalt|contents?)\b/;
@@ -110,8 +120,9 @@ export function guardAnswerDoses(
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
     // AN OUTGOING GUARD READS WIDE (barracuda, #43): what it does not recognise
-    // leaves. Any amount is a dose statement (a pack's reach and a pack
-    // adjective aside), and it passes only as a FULL match below.
+    // leaves. Any amount, and any unit word next to a volume or a period, is a
+    // dose statement (a pack's reach without a period aside), and it passes
+    // only as a FULL, digit match below.
     if (OTHER_UNIT.test(s) && (volumes.length > 0 || periods.length > 0))
       return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
     if (
@@ -122,7 +133,10 @@ export function guardAnswerDoses(
       return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
     // a pack's reach stands without a period; with one ("elég naponta 3 csepp")
     // the sentence is a dose and needs the full match (barracuda, #43)
-    if (amounts.length === 0 || (REACH.test(s) && periods.length === 0)) continue;
+    const dose =
+      amounts.length > 0 ||
+      (UNIT_WORD.test(s) && (volumes.length > 0 || periods.length > 0));
+    if (!dose || (REACH.test(s) && periods.length === 0)) continue;
     statements++;
     if (facts.length === 0) return { ok: false, reason: "NO_FIXED_DOSE", sentence: raw.trim() };
     const matches =

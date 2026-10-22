@@ -71,7 +71,12 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       "Hetente 2 ml-rel adagolja.",
       "Elég naponta 3 csepp az Ön akváriumába.",
       "Adjon 3-at naponta.",
-      "Naponta 3 adagot adjon."
+      "Naponta 3 adagot adjon.",
+      // the unit word marks the dose, not the digit (barracuda, #43 v3)
+      "Naponta egy csepp 100 literenként.",
+      "Naponta három cseppet adjon.",
+      "Hetente pár ml-t adjon.",
+      "Naponta fél kupakot adjon."
     ])
       assert.equal(guardAnswerDoses(answer, catalogue).ok, false, answer);
     // controls: the full dose, a pack's reach, a pack adjective
@@ -84,7 +89,9 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       // a period word next to a number WITH a unit is no unit-less dose
       "Hetente mérje a KH-t, a cél 8 dKH.",
       // a multi-digit one: no backtracking to "42" + "0"
-      "Hetente mérje a kalciumot, a cél 420 mg/l."
+      "Hetente mérje a kalciumot, a cél 420 mg/l.",
+      // "adagolás" is no unit word
+      "Az adagolást a mért KH alapján végezze, hetente mérje."
     ])
       assert.equal(guardAnswerDoses(answer, catalogue).ok, true, answer);
   });
