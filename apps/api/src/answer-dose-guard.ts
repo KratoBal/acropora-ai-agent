@@ -95,9 +95,13 @@ const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a
 const UNIT_WORD =
   /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa\w*|tablet\w*|kapszul\w*)\b/;
 
-/** The pack's reach or content, not a dose (the OS reader's REACH words). */
+/**
+ * The pack's reach or content, not a dose: a PACK NOUN only. "elég", "enough",
+ * "reicht" are measure words a dose sentence uses too ("3 csepp elég";
+ * barracuda, #43 v4), so they let nothing through.
+ */
 const REACH =
-  /\b(?:bottles?|flasche|flakon\w*|uveg\w*|treats?|enough|sufficient|reicht|ausreichend|elegendo|eleg|kiszereles\w*|tartalom|inhalt|contents?)\b/;
+  /\b(?:bottles?|flasche|flakon\w*|uveg\w*|kiszereles\w*|tartalom|inhalt|contents?)\b/;
 
 /** The answer's sentences; a decimal point is no end. */
 function sentences(text: string): string[] {

@@ -76,7 +76,12 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       "Naponta egy csepp 100 literenként.",
       "Naponta három cseppet adjon.",
       "Hetente pár ml-t adjon.",
-      "Naponta fél kupakot adjon."
+      "Naponta fél kupakot adjon.",
+      // a measure word is no pack noun (barracuda, #43 v4)
+      "Az Ön 300 literes akváriumába 3 csepp elég.",
+      "3 drops are enough for your 300 l tank.",
+      // the safe side: a pack's reach without the pack noun
+      "500 ml 10 000 literhez elegendő."
     ])
       assert.equal(guardAnswerDoses(answer, catalogue).ok, false, answer);
     // controls: the full dose, a pack's reach, a pack adjective
