@@ -13,8 +13,10 @@ import type { ProductSearchOutcome } from "./product-search.js";
  * WIDE, because it is an outgoing guard (barracuda, #43): every sentence with an
  * amount is a dose statement, and it passes only with its amount, unit, volume
  * AND period all in it, matching. A sentence about the pack ("az 500 ml-es
- * flakon 10 000 literhez elegendő") is not a dose; an interpretable unit
- * (capful, spoon, gram) with a volume or a period never leaves.
+ * flakon 10 000 literhez elegendő", with no period) is not a dose; an
+ * interpretable unit (capful, spoon, gram, "adag") or a number with no unit,
+ * next to a volume or a period, never leaves. Every exception is a way out, so
+ * each is one a dose sentence cannot meet.
  */
 
 export const DOSE_GUARD_FALLBACK =
@@ -60,8 +62,10 @@ export function fixedDosesOf(outcome: ProductSearchOutcome): Dose[] {
 }
 
 const NUM = "(?<![\\d.,])(\\d+(?:[.,]\\d+)?)";
+// only the adjective suffix is no amount ("500 ml-es flakon"): a case ending
+// ("5 ml-t", "2 ml-rel") is the most common Hungarian dose (barracuda, #43)
 const AMOUNT = new RegExp(
-  `${NUM}\\s*(ml|milliliter\\w*|millilitre\\w*|drops?|csepp\\w*|tropfen)(?![a-z])(?!-[a-z])`,
+  `${NUM}\\s*(ml|milliliter\\w*|millilitre\\w*|drops?|csepp\\w*|tropfen)(?![a-z])(?!-(?:e|o|a)s\\b)`,
   "g"
 );
 // a gallon counts as a volume, and never matches a fact: the OS doses are in litres
@@ -73,7 +77,13 @@ const PERIOD: Record<Dose["period"], RegExp> = {
 
 /** A unit a person has to interpret, next to a number: never a dose that may leave. */
 const OTHER_UNIT =
-  /\d\s*(?:capful|caps?\b|scoops?|spoons?|teaspoons?|tablespoons?|tsp\b|g\b|gramm?\w*|grams?\b|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel)/;
+  /\d\s*(?:capful|caps?\b|scoops?|spoons?|teaspoons?|tablespoons?|tsp\b|g\b|gramm?\w*|grams?\b|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag\w*|doses?\b|portions?\b|pumps?\b|pumpa\w*|tablet\w*|kapszul\w*)/;
+
+/**
+ * A number with no unit: bare, or with an accusative ending ("adjon 3-at
+ * naponta"). Next to a period word it is a dose the guard cannot check.
+ */
+const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]))`);
 
 /** The pack's reach or content, not a dose (the OS reader's REACH words). */
 const REACH =
@@ -104,7 +114,15 @@ export function guardAnswerDoses(
     // adjective aside), and it passes only as a FULL match below.
     if (OTHER_UNIT.test(s) && (volumes.length > 0 || periods.length > 0))
       return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
-    if (amounts.length === 0 || REACH.test(s)) continue;
+    if (
+      periods.length > 0 &&
+      amounts.length === 0 &&
+      BARE_COUNT.test(s.replace(VOLUME, " "))
+    )
+      return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
+    // a pack's reach stands without a period; with one ("elég naponta 3 csepp")
+    // the sentence is a dose and needs the full match (barracuda, #43)
+    if (amounts.length === 0 || (REACH.test(s) && periods.length === 0)) continue;
     statements++;
     if (facts.length === 0) return { ok: false, reason: "NO_FIXED_DOSE", sentence: raw.trim() };
     const matches =

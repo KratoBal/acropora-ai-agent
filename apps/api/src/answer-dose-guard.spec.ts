@@ -65,7 +65,13 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       "Az Ön 300 literes akváriumába 3 csepp kell.",
       "Naponta 3 cseppet adjon.",
       "Adagolja naponta. Az Ön akváriumába 3 csepp kell.",
-      "Naponta 1 kupak 100 literre."
+      "Naponta 1 kupak 100 literre.",
+      // the exceptions are no way out (barracuda, #43 v2)
+      "Naponta 5 ml-t adjon 100 literenként.",
+      "Hetente 2 ml-rel adagolja.",
+      "Elég naponta 3 csepp az Ön akváriumába.",
+      "Adjon 3-at naponta.",
+      "Naponta 3 adagot adjon."
     ])
       assert.equal(guardAnswerDoses(answer, catalogue).ok, false, answer);
     // controls: the full dose, a pack's reach, a pack adjective
@@ -74,7 +80,11 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       "Az 500 ml-es flakon 10 000 literhez elegendő.",
       // the amount stands alone here: only the reach word skips it
       "Egy 500 ml flakon 10 000 literhez elegendő.",
-      "Az 500 ml-es változat jó választás nagyobb akváriumhoz."
+      "Az 500 ml-es változat jó választás nagyobb akváriumhoz.",
+      // a period word next to a number WITH a unit is no unit-less dose
+      "Hetente mérje a KH-t, a cél 8 dKH.",
+      // a multi-digit one: no backtracking to "42" + "0"
+      "Hetente mérje a kalciumot, a cél 420 mg/l."
     ])
       assert.equal(guardAnswerDoses(answer, catalogue).ok, true, answer);
   });
