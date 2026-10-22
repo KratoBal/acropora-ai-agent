@@ -59,6 +59,26 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       );
   });
 
+  // barracuda, #43: an outgoing guard reads wide; what it does not recognise leaves
+  it("a hiányos adag-mondat sem megy ki: térfogat, időszak vagy az egység nélkül", () => {
+    for (const answer of [
+      "Az Ön 300 literes akváriumába 3 csepp kell.",
+      "Naponta 3 cseppet adjon.",
+      "Adagolja naponta. Az Ön akváriumába 3 csepp kell.",
+      "Naponta 1 kupak 100 literre."
+    ])
+      assert.equal(guardAnswerDoses(answer, catalogue).ok, false, answer);
+    // controls: the full dose, a pack's reach, a pack adjective
+    for (const answer of [
+      "Naponta 1 csepp 100 literenként.",
+      "Az 500 ml-es flakon 10 000 literhez elegendő.",
+      // the amount stands alone here: only the reach word skips it
+      "Egy 500 ml flakon 10 000 literhez elegendő.",
+      "Az 500 ml-es változat jó választás nagyobb akváriumhoz."
+    ])
+      assert.equal(guardAnswerDoses(answer, catalogue).ok, true, answer);
+  });
+
   it("katalógus-adag nélkül nincs adag a válaszban", () => {
     const answer = "Naponta 1 csepp 100 literenként.";
     assert.equal((guardAnswerDoses(answer, { ok: true, result: { hits: [] } }) as { reason?: string }).reason, "NO_FIXED_DOSE");

@@ -10,8 +10,11 @@ import type { ProductSearchOutcome } from "./product-search.js";
  * catalogue gave none. The answer is then replaced by a sentence that sends the
  * customer to the label or a colleague; the reason is logged, not shown.
  *
- * A sentence without a period word (a pack's reach: "500 ml 10 000 literhez
- * elegendő") is not a dose statement, the same rule as the OS's own reader.
+ * WIDE, because it is an outgoing guard (barracuda, #43): every sentence with an
+ * amount is a dose statement, and it passes only with its amount, unit, volume
+ * AND period all in it, matching. A sentence about the pack ("az 500 ml-es
+ * flakon 10 000 literhez elegendő") is not a dose; an interpretable unit
+ * (capful, spoon, gram) with a volume or a period never leaves.
  */
 
 export const DOSE_GUARD_FALLBACK =
@@ -58,7 +61,7 @@ export function fixedDosesOf(outcome: ProductSearchOutcome): Dose[] {
 
 const NUM = "(?<![\\d.,])(\\d+(?:[.,]\\d+)?)";
 const AMOUNT = new RegExp(
-  `${NUM}\\s*(ml|milliliter\\w*|millilitre\\w*|drops?|csepp\\w*|tropfen)(?![a-z])`,
+  `${NUM}\\s*(ml|milliliter\\w*|millilitre\\w*|drops?|csepp\\w*|tropfen)(?![a-z])(?!-[a-z])`,
   "g"
 );
 // a gallon counts as a volume, and never matches a fact: the OS doses are in litres
@@ -67,6 +70,14 @@ const PERIOD: Record<Dose["period"], RegExp> = {
   day: /\b(?:daily|a day|per day|every day|taglich|pro tag|naponta|naponkent|napi|minden nap)\b|\/\s*(?:day|nap|tag)\b/,
   week: /\b(?:weekly|a week|per week|every week|wochentlich|pro woche|hetente|hetenkent|heti|minden heten)\b|\/\s*(?:week|het|woche)\b/
 };
+
+/** A unit a person has to interpret, next to a number: never a dose that may leave. */
+const OTHER_UNIT =
+  /\d\s*(?:capful|caps?\b|scoops?|spoons?|teaspoons?|tablespoons?|tsp\b|g\b|gramm?\w*|grams?\b|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel)/;
+
+/** The pack's reach or content, not a dose (the OS reader's REACH words). */
+const REACH =
+  /\b(?:bottles?|flasche|flakon\w*|uveg\w*|treats?|enough|sufficient|reicht|ausreichend|elegendo|eleg|kiszereles\w*|tartalom|inhalt|contents?)\b/;
 
 /** The answer's sentences; a decimal point is no end. */
 function sentences(text: string): string[] {
@@ -88,7 +99,12 @@ export function guardAnswerDoses(
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
-    if (amounts.length === 0 || volumes.length === 0 || periods.length === 0) continue;
+    // AN OUTGOING GUARD READS WIDE (barracuda, #43): what it does not recognise
+    // leaves. Any amount is a dose statement (a pack's reach and a pack
+    // adjective aside), and it passes only as a FULL match below.
+    if (OTHER_UNIT.test(s) && (volumes.length > 0 || periods.length > 0))
+      return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
+    if (amounts.length === 0 || REACH.test(s)) continue;
     statements++;
     if (facts.length === 0) return { ok: false, reason: "NO_FIXED_DOSE", sentence: raw.trim() };
     const matches =
