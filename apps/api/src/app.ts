@@ -28,6 +28,7 @@ import {
 } from "./dosing-extraction.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
+import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
 import {
   guardRecommendationText,
   MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
@@ -604,10 +605,22 @@ export function buildApp(dependencies: AppDependencies = {}) {
         store: false
       });
 
+      // NO DOSE LEAVES THAT THE MANUFACTURER DID NOT GIVE (Acropora OS card
+      // 85c38ab1): every dose statement must be a FIXED dose of a hit; else the
+      // customer gets the label-or-colleague sentence. The reason is logged,
+      // the model's sentence is not (it may quote the customer).
+      const doseGuard = guardAnswerDoses(response.output_text ?? "", productSearch);
+      const answerText = doseGuard.ok ? response.output_text : DOSE_GUARD_FALLBACK;
+      if (!doseGuard.ok)
+        request.log.warn(
+          { doseGuard: doseGuard.reason },
+          "the answer stated a dose the catalogue does not hold; replaced"
+        );
+
       const answerMessageId = await conversations.saveMessage({
         conversationId: activeConversationId,
         role: "assistant",
-        content: response.output_text,
+        content: answerText,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         usage: readUsage(response)
       });
@@ -624,7 +637,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
          * question is sent before the first is judged.
          */
         messageId: answerMessageId,
-        answer: response.output_text,
+        answer: answerText,
+        /** Why the answer was replaced, if it was: the judging surface reads it. */
+        doseGuard: doseGuard.ok ? null : doseGuard.reason,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         /**
          * What this answer actually had in front of it.
