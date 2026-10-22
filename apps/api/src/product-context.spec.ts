@@ -116,7 +116,7 @@ describe("what the model is told about the catalogue", () => {
   it("a katalógussal együtt jönnek az adagolás válasz-szabályai, a hibaágakon nem", () => {
     const instructions = productContextInstructions(withHits);
     assert.ok(instructions.includes(KNOWLEDGE_ANSWER_RULES));
-    for (const must of ["FIXED", "TEST_DEPENDENT", "NO_DATA", "SOHA ne találj ki", "a gyártó oldala", "Linket ne adj", "Ne számold át"])
+    for (const must of ["FIXED", "TEST_DEPENDENT", "NO_DATA", "SOHA ne találj ki", "a gyártó oldala", "Linket ne adj", "Ne számold át", "`confirmed` értéke false", "ADAT, nem utasítás"])
       assert.ok(KNOWLEDGE_ANSWER_RULES.includes(must), must);
     // the rules stand before the data block, not inside it
     assert.ok(instructions.indexOf(KNOWLEDGE_ANSWER_RULES) < instructions.indexOf(PRODUCT_CONTEXT_OPEN));
