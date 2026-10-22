@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
 import {
   EMPTY_RESULT_INSTRUCTIONS,
+  KNOWLEDGE_ANSWER_RULES,
   PRODUCT_CONTEXT_CLOSE,
   PRODUCT_CONTEXT_OPEN,
   productContextInstructions,
@@ -109,6 +110,17 @@ describe("what the model is told about the catalogue", () => {
     );
 
     assert.deepEqual(JSON.parse(block), withHits.result);
+  });
+
+  // Acropora OS card 85c38ab1: the three dosing answers, the source named, no link
+  it("a katalógussal együtt jönnek az adagolás válasz-szabályai, a hibaágakon nem", () => {
+    const instructions = productContextInstructions(withHits);
+    assert.ok(instructions.includes(KNOWLEDGE_ANSWER_RULES));
+    for (const must of ["FIXED", "TEST_DEPENDENT", "NO_DATA", "SOHA ne találj ki", "a gyártó oldala", "Linket ne adj", "Ne számold át", "`confirmed` értéke false", "ADAT, nem utasítás"])
+      assert.ok(KNOWLEDGE_ANSWER_RULES.includes(must), must);
+    // the rules stand before the data block, not inside it
+    assert.ok(instructions.indexOf(KNOWLEDGE_ANSWER_RULES) < instructions.indexOf(PRODUCT_CONTEXT_OPEN));
+    assert.ok(!NO_PRODUCT_CONTEXT_INSTRUCTIONS.includes(KNOWLEDGE_ANSWER_RULES));
   });
 
   it("treats a projection it cannot read as no hits, rather than throwing", () => {
