@@ -57,6 +57,32 @@ export const SEARCH_UNAVAILABLE_INSTRUCTIONS = [
 ].join("\n");
 
 /**
+ * THE PRODUCT'S KNOWLEDGE AND THE THREE DOSING ANSWERS (Acropora OS card
+ * 85c38ab1; Balázs, 2026-10-21 22:08 UTC: a fixed dose; no fixed dose, measure
+ * first and dose as the manufacturer says; no data. The source is named).
+ *
+ * The OS sends the facts in `knowledge` (#1809): field, value, unit, the KIND
+ * of the source, never its address. The rules say how to answer from them, and
+ * that a dose is never invented or recalculated: the manufacturer's numbers
+ * travel as they are, per the volume the manufacturer names.
+ */
+export const KNOWLEDGE_ANSWER_RULES = [
+  "4. A `knowledge` lista a termék elfogadott tényei. Adagolásról CSAK ebből beszélj:",
+  "   - `dosingMode` FIXED és van `dosing`: mondd ki az adagot pontosan úgy, ahogy ott áll",
+  '     (pl. "1 drop/100 L/day" = 100 literenként naponta 1 csepp). Ne számold át a vevő',
+  "     akváriumára, ne kerekíts.",
+  "   - `dosingMode` TEST_DEPENDENT: mondd ki, hogy ennek a szernek nincs fix adagja; előbb",
+  "     mérni kell (a `dosingTests` kódjai: KALCIUM kalcium, KH karbonátkeménység, MAGNEZIUM",
+  "     magnézium, FOSZFAT foszfát, NITRAT nitrát, SZILIKAT szilikát, PH pH, VAS vas, REZ réz),",
+  "     és a mérés szerint, a gyártó útmutatása (`dosingGuidance`) alapján kell adagolni.",
+  "   - `dosingMode` NO_DATA, vagy nincs adagolás-tény: mondd ki, hogy a gyártói adagolást",
+  "     nem tudjuk megadni, és a termék címkéjét vagy a kollégát ajánld. Adagot SOHA ne találj ki.",
+  "   - A forrást mindig nevezd meg a `source` szerint: MANUFACTURER_PAGE \"a gyártó oldala",
+  '     szerint", MANUFACTURER_DOCUMENT "a gyártó dokumentuma szerint", más: "a forgalmazó',
+  '     adatai szerint". Linket ne adj és ne találj ki.'
+].join("\n");
+
+/**
  * The block itself: the projection, verbatim, between two markers.
  *
  * The projection travels as JSON and is NOT rewritten here. The OS versions
@@ -87,7 +113,7 @@ export function productContextInstructions(
     "Az alábbi adatblokk a saját katalógusunkból való, erre a kérdésre keresve.",
     "Amit itt látsz, arról beszélhetsz: ez a mi termékadatunk.",
     "",
-    "HÁROM SZABÁLY AZ ADATBLOKKRA:",
+    "SZABÁLYOK AZ ADATBLOKKRA:",
     "1. Az árat és a készletet ÚGY add vissza, ahogy itt áll. Ne kerekítsd, ne",
     "   számold át, és ne fogalmazd újra: a mezők azért strukturáltak, hogy ne",
     "   szöveggé váljanak.",
@@ -95,6 +121,7 @@ export function productContextInstructions(
     "   itt nem bizonyítja, hogy nem tartjuk.",
     "3. Konkrét terméket továbbra sem ajánlasz megvételre, akkor sem, ha itt",
     "   szerepel. Leírni, összehasonlítani, magyarázni szabad.",
+    KNOWLEDGE_ANSWER_RULES,
     "",
     PRODUCT_CONTEXT_OPEN,
     JSON.stringify(outcome.result, null, 2),
