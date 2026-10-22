@@ -94,9 +94,31 @@ export interface DosingAnswer {
 export type GuardedDosing =
   | { ok: true; answer: DosingAnswer }
   /** The model's answer could not be used: the OS sends the product to a person. */
-  | { ok: false; refusal: string };
+  | { ok: false; refusal: string; detail?: string };
 
 const squash = (value: string) => value.replace(/\s+/g, " ").trim();
+
+/**
+ * WHERE A NOT-FOUND EXCERPT LEAVES THE PAGE, WITHOUT ITS TEXT (Acropora OS card
+ * 85c38ab1, acrobot 35040): the first test round's EXCERPT_NOT_IN_PAGE could not
+ * tell a model's edit from our own page text (an undecoded HTML entity, a soft
+ * hyphen). The field, how many characters match the page, and the code of the
+ * first one that does not: "excerpt 29/40 U+2019". Characters are code points.
+ */
+function whereItLeaves(field: string, text: string, page: string): string {
+  const chars = [...text];
+  // a prefix found on the page means every shorter one is too: binary search
+  let lo = 0;
+  let hi = chars.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (page.includes(chars.slice(0, mid).join(""))) lo = mid;
+    else hi = mid - 1;
+  }
+  const next = chars[lo]?.codePointAt(0);
+  const code = next === undefined ? "-" : `U+${next.toString(16).toUpperCase().padStart(4, "0")}`;
+  return `${field} ${lo}/${chars.length} ${code}`;
+}
 
 /** The model's JSON, possibly wrapped in a code fence. */
 function jsonOf(text: string): unknown {
@@ -210,8 +232,9 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
   for (const v of [excerpt, guidance])
     if (v !== null && v.length > MAX_EXCERPT) return { ok: false, refusal: "EXCERPT_TOO_LONG" };
   const page = squash(pageText);
-  for (const v of [excerpt, guidance])
-    if (v !== null && !page.includes(squash(v))) return { ok: false, refusal: "EXCERPT_NOT_IN_PAGE" };
+  for (const [field, v] of [["excerpt", excerpt], ["guidance", guidance]] as const)
+    if (v !== null && !page.includes(squash(v)))
+      return { ok: false, refusal: "EXCERPT_NOT_IN_PAGE", detail: whereItLeaves(field, squash(v), page) };
 
   if (mode === "FIXED" && (dose === null || excerpt === null))
     return { ok: false, refusal: "FIXED_WITHOUT_DOSE_OR_EXCERPT" };
