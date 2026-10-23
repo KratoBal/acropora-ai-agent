@@ -26,6 +26,13 @@ import {
   guardDosingAnswer,
   parseDosingRequest
 } from "./dosing-extraction.js";
+import {
+  CLAIM_EXTRACTION_PROMPT_VERSION,
+  claimExtractionInput,
+  claimExtractionInstructions,
+  guardClaims,
+  parseClaimRequest
+} from "./claim-extraction.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
 import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
@@ -852,6 +859,101 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a dosing extraction"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * Candidate claims from one scientific text, field by field, every value on
+   * a verbatim anchor (Acropora OS research knowledge base, S3). The OS server
+   * calls it with the shared token: it sends the text (an open-access full
+   * text it downloaded), the subject and the vocabulary keys it accepts. The
+   * passage and every anchor are checked against the text here
+   * (`guardClaims`) and again in the OS; nothing is stored here. A model
+   * answer the guard cannot read is a 200 with `refusal`.
+   */
+  app.post("/v1/claim-extractions", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseClaimRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const extractedBy = `${model} ${CLAIM_EXTRACTION_PROMPT_VERSION}`;
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: claimExtractionInstructions(parsed.request),
+        input: [
+          {
+            role: "user",
+            content: claimExtractionInput(parsed.request)
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardClaims(response.output_text ?? "", parsed.request);
+
+      if (!guarded.ok) {
+        request.log.warn(
+          { refusal: guarded.refusal },
+          "the claim extraction answer was refused by the guard"
+        );
+        return { refusal: guarded.refusal, extractedBy };
+      }
+
+      // counts only in the log: the claims carry text of the source
+      request.log.info(
+        {
+          claims: guarded.claims.length,
+          refusedClaims: guarded.refusedClaims.length,
+          fields: guarded.claims.reduce((n, c) => n + c.fields.length, 0),
+          refusedFields: guarded.claims.reduce((n, c) => n + c.refusedFields.length, 0),
+          questions: guarded.claims.reduce((n, c) => n + c.questions.length, 0)
+        },
+        "claim extraction guarded"
+      );
+      return { claims: guarded.claims, refusedClaims: guarded.refusedClaims, extractedBy };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a claim extraction"
       );
 
       return reply.code(failure.status).send(failure.body);
