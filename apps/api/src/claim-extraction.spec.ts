@@ -112,6 +112,37 @@ describe("the claim guard", () => {
     assert.ok(sizes.ok && sizes.claims[0]?.refusedFields[0]?.refusal === "UNIT_NOT_IN_ANCHOR");
   });
 
+  it("the number stands WITH its unit: 30 days is not 30 µM (barracuda, ai#47)", () => {
+    const text = "After 30 days at 0.5 µM phosphate, and at 0.5–2 µM, and 1.5 ± 0.2 µM, growth fell.";
+    const req = { ...REQUEST, sourceText: text };
+    const q = (quantity: Record<string, unknown>) =>
+      guardClaims(claims({ passage: { text, locator: "x" }, fields: { quantity: { unit: "µmol/l", ...quantity } } }), req);
+    const days = q({ min: null, max: 30, anchor: "After 30 days at 0.5 µM phosphate" });
+    assert.ok(days.ok);
+    assert.deepEqual(days.claims[0]?.refusedFields, [{ field: "quantity", refusal: "NUMBER_NOT_AT_UNIT" }]);
+    for (const [min, max, anchor] of [
+      [0.5, 0.5, "After 30 days at 0.5 µM phosphate"],
+      [0.5, 2, "at 0.5–2 µM"],
+      [1.5, 1.5, "1.5 ± 0.2 µM"]
+    ] as [number, number, string][]) {
+      const ok = q({ min, max, anchor });
+      assert.ok(ok.ok);
+      assert.equal(ok.claims[0]?.fields[0]?.field, "quantity", anchor);
+    }
+    // the error is not a value: 0.2 does not stand at the unit as a concentration of its own
+    const err = q({ min: 0.2, max: 0.2, anchor: "1.5 ± 0.2 µM" });
+    assert.ok(err.ok);
+    assert.equal(err.claims[0]?.refusedFields[0]?.refusal, "NUMBER_NOT_AT_UNIT");
+  });
+
+  it("an unknown field's name is the model's word: printable and short", () => {
+    const r = one({ ["<script>colour" + "x".repeat(60)]: { value: "BROWN", anchor: "Calcification" } });
+    assert.ok(r.ok);
+    const name = r.claims[0]?.refusedFields[0]?.field ?? "";
+    assert.doesNotMatch(name, /[<>]/);
+    assert.ok(name.length <= 32);
+  });
+
   it("a mass unit names its basis in the anchor, and PO4-P is phosphorus", () => {
     const anchor = "0.3 mg/L phosphate (PO4-P)";
     const asP = one({ quantity: { min: 0.3, max: 0.3, unit: "mg/l", basis: "P", anchor } });
