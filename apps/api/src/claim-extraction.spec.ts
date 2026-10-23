@@ -135,6 +135,20 @@ describe("the claim guard", () => {
     assert.equal(err.claims[0]?.refusedFields[0]?.refusal, "NUMBER_NOT_AT_UNIT");
   });
 
+  it("a bare 'and' is not a range: in 'pH 8.1 and 0.5 µM' the 8.1 is the pH (barracuda, ai#48)", () => {
+    const text = "At pH 8.1 and 0.5 µM phosphate, and between 0.5 and 2 µM, growth fell.";
+    const req = { ...REQUEST, sourceText: text };
+    const q = (quantity: Record<string, unknown>) =>
+      guardClaims(claims({ passage: { text, locator: "x" }, fields: { quantity: { unit: "µmol/l", ...quantity } } }), req);
+    const ph = q({ min: null, max: 8.1, anchor: "At pH 8.1 and 0.5 µM phosphate" });
+    assert.ok(ph.ok);
+    assert.deepEqual(ph.claims[0]?.refusedFields, [{ field: "quantity", refusal: "NUMBER_NOT_AT_UNIT" }]);
+    const conc = q({ min: 0.5, max: 0.5, anchor: "At pH 8.1 and 0.5 µM phosphate" });
+    assert.ok(conc.ok && conc.claims[0]?.fields[0]?.field === "quantity");
+    const between = q({ min: 0.5, max: 2, anchor: "between 0.5 and 2 µM" });
+    assert.ok(between.ok && between.claims[0]?.fields[0]?.field === "quantity");
+  });
+
   it("an unknown field's name is the model's word: printable and short", () => {
     const r = one({ ["<script>colour" + "x".repeat(60)]: { value: "BROWN", anchor: "Calcification" } });
     assert.ok(r.ok);

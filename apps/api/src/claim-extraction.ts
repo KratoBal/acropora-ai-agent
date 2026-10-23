@@ -205,7 +205,12 @@ const UNIT_TOKENS: Record<Unit, UnitToken[]> = {
 
 const NUMBER = "(\\d+(?:[.,]\\d+)?)";
 const ERROR = "(?:\\s*(?:±|\\+\\/-)\\s*\\d+(?:[.,]\\d+)?)?";
-const RANGE = "(?:\\s*(?:-|–|—|to|and)\\s*";
+/**
+ * A range: "0.5-2", "0.5 to 2", and "between 0.5 and 2". A bare "and" is not
+ * a range (barracuda, ai#48): in "pH 8.1 and 0.5 µM" the 8.1 is the pH.
+ */
+const RANGE = "(?:\\s*(?:-|–|—|to)\\s*";
+const BETWEEN = `(?<![A-Za-z])[Bb]etween\\s+${NUMBER}${ERROR}\\s+and\\s+${NUMBER}${ERROR}`;
 
 function unitWritten(unit: Unit, cased: string, folded: string): boolean {
   return UNIT_TOKENS[unit].some((t) =>
@@ -217,9 +222,12 @@ function unitWritten(unit: Unit, cased: string, folded: string): boolean {
 export function numbersAtUnit(unit: Unit, cased: string, folded: string): Set<number> {
   const found = new Set<number>();
   for (const t of UNIT_TOKENS[unit]) {
-    const re = new RegExp(`(?<![\\d.,])${NUMBER}${ERROR}${RANGE}${NUMBER}${ERROR})?\\s*(?:${t.pattern})`, "g");
+    const re = new RegExp(
+      `(?:${BETWEEN}|(?<![\\d.,])${NUMBER}${ERROR}${RANGE}${NUMBER}${ERROR})?)\\s*(?:${t.pattern})`,
+      "g"
+    );
     for (const m of (t.cased ? cased : folded).matchAll(re))
-      for (const n of [m[1], m[2]]) if (n !== undefined) found.add(Number(n.replace(",", ".")));
+      for (const n of m.slice(1)) if (n !== undefined) found.add(Number(n.replace(",", ".")));
   }
   return found;
 }
