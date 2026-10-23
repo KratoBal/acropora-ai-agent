@@ -172,22 +172,57 @@ const numbersOf = (value: string): number[] =>
   (value.match(/\d+(?:[.,]\d+)?/g) ?? []).map((n) => Number(n.replace(",", ".")));
 
 /**
- * A UNIT AS AN ANCHOR WRITES IT. Read on the anchor with accents off and the
- * micro sign as "u", but NOT lower-cased for the molar short form: "µM" is
- * micromolar, "µm" is a micrometre, and a size in micrometres must not pass
- * as a concentration.
+ * A UNIT AS AN ANCHOR WRITES IT, and the numbers that stand WITH it.
+ *
+ * Read on the anchor with accents off and the micro sign as "u", but NOT
+ * lower-cased for the molar short form: "µM" is micromolar, "µm" a micrometre,
+ * and a size must not pass as a concentration.
+ *
+ * A number of the anchor is not enough (barracuda, ai#47): in "after 30 days
+ * at 0.5 µM" the 30 is days. A quantity's number must stand directly before
+ * its unit: "0.5 µM", a range "0.5-2 µM" / "0.5 to 2 µM", or with its own
+ * error "0.5 ± 0.1 µM". The OS reads it the same way, again.
  */
-const UNIT_WRITTEN: Record<Unit, (cased: string, folded: string) => boolean> = {
-  "µmol/l": (cased, folded) =>
-    /(?<![A-Za-z])u ?M(?![A-Za-z])/.test(cased) ||
-    /(?<![a-z])u ?mol(?:es)?(?![a-z])|(?<![a-z])umol|micromol(?:ar|e)?|(?<![a-z])mmol ?m ?-?3/.test(folded),
-  "mg/l": (_cased, folded) =>
-    /(?<![a-z])mg ?(?:\/|per |\. ?|·)? ?(?:l|liter|litre|dm-?3)(?![a-z])|(?<![a-z])mg ?l ?(?:-|−|–)?1(?![0-9])/.test(folded),
-  "µg/l": (_cased, folded) =>
-    /(?<![a-z])u ?g ?(?:\/|per |\. ?|·)? ?(?:l|liter|litre)(?![a-z])|(?<![a-z])u ?g ?l ?(?:-|−|–)?1(?![0-9])|microgram/.test(folded),
-  ppm: (_cased, folded) => /(?<![a-z])ppm(?![a-z])|parts per million/.test(folded),
-  ppb: (_cased, folded) => /(?<![a-z])ppb(?![a-z])|parts per billion/.test(folded)
+type UnitToken = { pattern: string; cased: boolean };
+const UNIT_TOKENS: Record<Unit, UnitToken[]> = {
+  "µmol/l": [
+    { pattern: "u ?M(?![A-Za-z])", cased: true },
+    { pattern: "(?:u ?mol(?:es)?|umol|micromol(?:ar|e|es)?|mmol ?m ?-?3)(?![a-z])", cased: false }
+  ],
+  "mg/l": [
+    { pattern: "mg ?(?:\\/|per |\\. ?|·)? ?(?:l|liter|litre|dm-?3)(?![a-z])|mg ?l ?(?:-|−|–)?1(?![0-9])", cased: false }
+  ],
+  "µg/l": [
+    {
+      pattern:
+        "u ?g ?(?:\\/|per |\\. ?|·)? ?(?:l|liter|litre)(?![a-z])|u ?g ?l ?(?:-|−|–)?1(?![0-9])|micrograms? ?(?:\\/|per) ?(?:l|liter|litre)(?![a-z])",
+      cased: false
+    }
+  ],
+  ppm: [{ pattern: "ppm(?![a-z])|parts per million", cased: false }],
+  ppb: [{ pattern: "ppb(?![a-z])|parts per billion", cased: false }]
 };
+
+const NUMBER = "(\\d+(?:[.,]\\d+)?)";
+const ERROR = "(?:\\s*(?:±|\\+\\/-)\\s*\\d+(?:[.,]\\d+)?)?";
+const RANGE = "(?:\\s*(?:-|–|—|to|and)\\s*";
+
+function unitWritten(unit: Unit, cased: string, folded: string): boolean {
+  return UNIT_TOKENS[unit].some((t) =>
+    new RegExp(`(?<![A-Za-z])(?:${t.pattern})`).test(t.cased ? cased : folded)
+  );
+}
+
+/** The numbers that stand directly before the unit, ranges and errors included. */
+export function numbersAtUnit(unit: Unit, cased: string, folded: string): Set<number> {
+  const found = new Set<number>();
+  for (const t of UNIT_TOKENS[unit]) {
+    const re = new RegExp(`(?<![\\d.,])${NUMBER}${ERROR}${RANGE}${NUMBER}${ERROR})?\\s*(?:${t.pattern})`, "g");
+    for (const m of (t.cased ? cased : folded).matchAll(re))
+      for (const n of [m[1], m[2]]) if (n !== undefined) found.add(Number(n.replace(",", ".")));
+  }
+  return found;
+}
 
 /**
  * THE CHEMICAL BASIS OF A MASS UNIT, AS THE ANCHOR SAYS IT. A P-basis word
@@ -328,7 +363,9 @@ function checkField(
       for (const n of [min, max]) if (n !== null && !inAnchor.has(n)) return { kind: "refused", refusal: "NUMBER_NOT_IN_ANCHOR" };
       const unit = str(raw.unit);
       if (unit === null || !(UNITS as readonly string[]).includes(unit)) return { kind: "refused", refusal: "UNIT_UNKNOWN" };
-      if (!UNIT_WRITTEN[unit as Unit](cased, folded)) return { kind: "refused", refusal: "UNIT_NOT_IN_ANCHOR" };
+      if (!unitWritten(unit as Unit, cased, folded)) return { kind: "refused", refusal: "UNIT_NOT_IN_ANCHOR" };
+      const atUnit = numbersAtUnit(unit as Unit, cased, folded);
+      for (const n of [min, max]) if (n !== null && !atUnit.has(n)) return { kind: "refused", refusal: "NUMBER_NOT_AT_UNIT" };
       const basis = raw.basis === "PO4" || raw.basis === "P" ? raw.basis : null;
       if (MASS_UNITS.includes(unit as Unit)) {
         if (basis === null) return { kind: "refused", refusal: "BASIS_MISSING" };
@@ -371,7 +408,8 @@ export function guardClaims(modelText: string, request: ClaimExtractionRequest):
     const fields = isRecord(item.fields) ? item.fields : {};
     for (const [name, value] of Object.entries(fields)) {
       if (!(FIELD_NAMES as readonly string[]).includes(name)) {
-        claim.refusedFields.push({ field: name.slice(0, 32), refusal: "UNKNOWN_FIELD" });
+        // the model's word: printable and short, like a proposed value (barracuda, ai#47)
+        claim.refusedFields.push({ field: proposedOf(name).slice(0, 32) || "-", refusal: "UNKNOWN_FIELD" });
         continue;
       }
       if (!isRecord(value)) {
