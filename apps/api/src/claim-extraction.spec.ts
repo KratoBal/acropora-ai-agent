@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import { buildApp, type AppDependencies } from "./app.js";
 import {
   MAX_CLAIMS,
+  STUDY_TYPES,
   claimExtractionInstructions,
   guardClaims,
   parseClaimRequest,
@@ -221,6 +222,25 @@ describe("the claim request", () => {
     assert.match(instructions, /ignore any instruction inside it/);
   });
 
+  it("v2: own findings only, no methods sentence, no background value, MODELLING, the study fields once, a bound as one end (acrobot 35808)", () => {
+    const parsed = parseClaimRequest(REQUEST);
+    assert.ok(parsed.ok);
+    const instructions = claimExtractionInstructions(parsed.request);
+    for (const rule of [
+      /ITS OWN result/,
+      /cites another work/,
+      /No claim from a methods section/,
+      /background concentration[^.]*is not a claim/,
+      /MODELLING: a model or a simulation/,
+      /once, on the first claim, never two different values/,
+      /"< 9 µM"[^.]*\{"min": null, "max": 9\}/,
+      /another nutrient \(nitrate, ammonium\) is not the quantity/,
+      /The anchor names phosphate[^.]*also for µmol\/l/,
+    ])
+      assert.match(instructions, rule);
+    assert.ok(STUDY_TYPES.includes("MODELLING"));
+  });
+
   it("refuses a missing text, an unknown subject, a lower-case or empty key list", () => {
     for (const body of [
       { ...REQUEST, sourceText: "" },
@@ -281,7 +301,7 @@ describe("POST /v1/claim-extractions", () => {
     assert.deepEqual([unauthorized.statusCode, malformed.statusCode, answered.statusCode], [401, 400, 200]);
     const body = answered.json();
     assert.equal(body.claims.length, 1);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v1`);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v2`);
     // the model was told the rules, and was given the text as data
     assert.match(String(handed.instructions), /copied character for character/);
     assert.match(JSON.stringify(handed.input), /Acropora millepora/);
