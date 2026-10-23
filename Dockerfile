@@ -49,4 +49,13 @@ ENV ACROPORA_AI_BUILT_AT=${ACROPORA_AI_BUILT_AT}
 
 EXPOSE 3000
 
+# Coolify showed this container as "Running (no healthcheck)": without one, a process that is up but
+# cannot answer (the database gone, the event loop stuck) looks the same as a healthy one, and a new
+# deployment is switched to before it has answered once. The check asks the service's own GET /health,
+# which also runs the database check (app.ts), on PORT inside the container. The image is slim (no
+# curl, no wget), so it is Node 22's fetch, the same form as the Acropora OS API's image.
+# `healthcheck.spec.ts` runs this exact command against a local server (200, 500, nothing listening).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+
 CMD ["npm", "run", "start"]
