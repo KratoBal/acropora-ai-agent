@@ -241,6 +241,18 @@ describe("the claim request", () => {
     assert.ok(STUDY_TYPES.includes("MODELLING"));
   });
 
+  it("v3: nitrogen alone is out, phosphate with nitrogen is in; an unlisted effect is a question, not the nearest key (acrobot 35941)", () => {
+    const parsed = parseClaimRequest(REQUEST);
+    assert.ok(parsed.ok);
+    const instructions = claimExtractionInstructions(parsed.request);
+    for (const rule of [
+      /nitrogen alone \(nitrate, ammonium, DIN\) is not about the subject/,
+      /names the subject TOGETHER with nitrogen is about the subject: an N:P ratio, phosphorus limitation under high nitrate/,
+      /never mapped to the nearest listed one/,
+    ])
+      assert.match(instructions, rule);
+  });
+
   it("refuses a missing text, an unknown subject, a lower-case or empty key list", () => {
     for (const body of [
       { ...REQUEST, sourceText: "" },
@@ -301,7 +313,7 @@ describe("POST /v1/claim-extractions", () => {
     assert.deepEqual([unauthorized.statusCode, malformed.statusCode, answered.statusCode], [401, 400, 200]);
     const body = answered.json();
     assert.equal(body.claims.length, 1);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v2`);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v3`);
     // the model was told the rules, and was given the text as data
     assert.match(String(handed.instructions), /copied character for character/);
     assert.match(JSON.stringify(handed.input), /Acropora millepora/);

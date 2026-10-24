@@ -29,7 +29,7 @@
  * itself (`keepOwnFindings`, `oneSidedBound`); here they cut what the model
  * proposes, there they decide what is stored.
  */
-export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction/v2";
+export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction/v3";
 /**
  * One call reads a section or a few, not a whole paper: the OS splits a paper
  * by its sections, so a call stays inside the provider timeout (40 s by
@@ -130,12 +130,13 @@ export function claimExtractionInstructions(request: ClaimExtractionRequest): st
     "Only findings this text reports as ITS OWN result. A sentence that cites another work (an author with a year, \"et al.\", a reference number like [12]) reports someone else's result: leave it out, also in the Discussion.",
     "No claim from a methods section: it says how the study was done, not what it found. A field (species, sample size, method) may still be anchored there.",
     "A finding states what the subject changed and in which direction: give its \"effect\" and \"direction\". A background concentration, an inflow or a mean value with no effect is not a claim; it may be another claim's \"conditions\".",
+    "A finding about nitrogen alone (nitrate, ammonium, DIN) is not about the subject: leave it out. A finding that names the subject TOGETHER with nitrogen is about the subject: an N:P ratio, phosphorus limitation under high nitrate, or a combined or interacting effect of the two.",
     `"passage.text": the sentence(s) of the text the finding rests on, copied character for character (no edits, no ellipsis, at most ${MAX_PASSAGE} characters). "passage.locator": the section it is in (e.g. "Results", "Table 2", "Methods"), at most ${MAX_LOCATOR} characters.`,
     'Every field is {"value": ..., "anchor": string}: "anchor" is the shortest stretch of the text that states the value, copied character for character (at most 400 characters). A field you cannot anchor in the text: leave it out. Never use knowledge from outside the text.',
     "The fields (all optional):",
     `- "species": the organism, one of: ${request.vocabulary.taxa.join(", ")}. If the text names an organism not on this list, give its name as written in "value" anyway: it becomes a question for the editor.`,
     `- "environment": one of: ${request.vocabulary.environments.join(", ")} (FIELD = a natural reef; LAB = laboratory tanks; MESOCOSM = large outdoor or flow-through tanks; HOME_AQUARIUM, PUBLIC_AQUARIUM). Not on the list: give it as written, it becomes a question.`,
-    `- "effect": what the subject affected, one of: ${request.vocabulary.effects.join(", ")}. Not on the list: give it as written, it becomes a question.`,
+    `- "effect": what the subject affected, one of: ${request.vocabulary.effects.join(", ")}. Choose a listed effect only when the sentence names that very effect; an effect the list does not hold (for example an internal nutrient reserve) is never mapped to the nearest listed one: give it as written, it becomes a question.`,
     `- "direction": ${DIRECTIONS.join(" | ")} (NONE: the text says there was no effect).`,
     `- "quantity": {"min": number | null, "max": number | null, "unit": ${UNITS.map((u) => `"${u}"`).join(" | ")}, "basis": "PO4" | "P" | null, "anchor"}: the subject's concentration the finding is about. Copy the numbers as written, never convert units, never compute. µM is "µmol/l". For a mass unit (mg/l, µg/l, ppm, ppb) "basis" says whether the text gives it as phosphate (PO4) or as phosphorus (P); the anchor must contain the number, the unit and the word that says which. A bound is one end: "< 9 µM" or "below 9 µM" is {"min": null, "max": 9}, "> 2 µM" or "at least 2 µM" is {"min": 2, "max": null}, and the anchor includes the comparator. A number of another nutrient (nitrate, ammonium) is not the quantity: put it in "conditions". The anchor names phosphate (or phosphorus, PO4, SRP) with the number, also for µmol/l: the OS converts only a value its anchor calls phosphate.`,
     `- "studyType": ${STUDY_TYPES.join(" | ")} (MODELLING: a model or a simulation computes the outcome; nothing is observed). It describes the whole study: give it, and "measurementMethod", once, on the first claim, never two different values.`,
