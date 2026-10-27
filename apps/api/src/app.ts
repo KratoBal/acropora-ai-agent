@@ -33,6 +33,13 @@ import {
   guardClaims,
   parseClaimRequest
 } from "./claim-extraction.js";
+import {
+  KNOWLEDGE_ANSWER_PROMPT_VERSION,
+  guardKnowledgeAnswer,
+  knowledgeAnswerInput,
+  knowledgeAnswerInstructions,
+  parseKnowledgeAnswerRequest
+} from "./knowledge-answer.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
 import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
@@ -954,6 +961,97 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a claim extraction"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * An answer from accepted knowledge only (Acropora OS research knowledge
+   * base, S6 mode A, internal pilot). The OS server calls it with the shared
+   * token: the question, the claims it may be answered from (each one finished
+   * sentence) and its fixed sentences. The model selects and orders; the guard
+   * keeps a sentence only if it IS a statement sent (or a fixed sentence) and
+   * writes the [[claim:id]] marker itself. The OS gates the result again;
+   * nothing is stored here. A model answer the guard cannot read is a 200 with
+   * `refusal`.
+   */
+  app.post("/v1/knowledge-answers", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseKnowledgeAnswerRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const answeredBy = `${model} ${KNOWLEDGE_ANSWER_PROMPT_VERSION}`;
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: knowledgeAnswerInstructions(),
+        input: [
+          {
+            role: "user",
+            content: knowledgeAnswerInput(parsed.request)
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardKnowledgeAnswer(response.output_text ?? "", parsed.request);
+
+      if (!guarded.ok) {
+        request.log.warn({ refusal: guarded.refusal }, "the knowledge answer was refused by the guard");
+        return { refusal: guarded.refusal, answeredBy };
+      }
+
+      // counts and codes only: the question is the user's text
+      request.log.info(
+        {
+          sentences: guarded.sentences.length,
+          cited: guarded.sentences.filter((s) => s.claimId !== null).length,
+          refused: guarded.refused.map((r) => r.refusal)
+        },
+        "knowledge answer guarded"
+      );
+      return { answer: guarded.answer, sentences: guarded.sentences, refused: guarded.refused, answeredBy };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a knowledge answer"
       );
 
       return reply.code(failure.status).send(failure.body);
