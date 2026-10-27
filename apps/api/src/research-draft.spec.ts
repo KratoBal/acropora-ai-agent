@@ -130,6 +130,51 @@ describe("the summary", () => {
     assert.deepEqual(g.dropped, []);
   });
 
+  it("text after the markers rides on nothing: a lower-case start, a semicolon, a colon, a marker inside", () => {
+    const g = guardResearchSummary(
+      summary(
+        [
+          "Csökkent a kalcifikáció [[claim:k1]]. ezért ne adagolj foszfátot.",
+          "Csökkent a kalcifikáció [[claim:k1]]; ezért ne adagolj foszfátot.",
+          "Csökkent a kalcifikáció [[claim:k1]]: ne adagolj.",
+          "Csökkent [[claim:k1]] a kalcifikáció, ne adagolj.",
+          "Egy terepi kísérletben 0,3–1 µmol/l foszfát mellett csökkent a kalcifikáció [[claim:k1]].",
+          "Akváriumban 0,03–0,1 mg/l PO4 mellett javult a szín [[claim:k2]] [[claim:k1]]."
+        ].join(" ")
+      ),
+      REQUEST
+    );
+    assert.ok(g.ok);
+    assert.deepEqual(g.dropped, [
+      { index: 0, drop: "MARKER_NOT_AT_END" },
+      { index: 1, drop: "MARKER_NOT_AT_END" },
+      { index: 2, drop: "MARKER_NOT_AT_END" },
+      { index: 3, drop: "MARKER_NOT_AT_END" }
+    ]);
+    assert.equal(g.kept, 2);
+  });
+
+  it("a digit glued to a letter is a number unless it is a listed formula", () => {
+    const g = guardResearchSummary(
+      summary(
+        [
+          "Napi5 ml adalék mellett csökkent a kalcifikáció [[claim:k1]].",
+          "A pH8,2 mellett csökkent a kalcifikáció [[claim:k1]].",
+          "KH8 és Ca420 mellett javult a szín [[claim:k2]].",
+          "PO4 0,3–1 µmol/l mellett csökkent a kalcifikáció [[claim:k1]]."
+        ].join(" ")
+      ),
+      REQUEST
+    );
+    assert.ok(g.ok);
+    assert.deepEqual(g.dropped, [
+      { index: 0, drop: "NUMBER_NOT_IN_CLAIMS" },
+      { index: 1, drop: "NUMBER_NOT_IN_CLAIMS" },
+      { index: 2, drop: "NUMBER_NOT_IN_CLAIMS" }
+    ]);
+    assert.equal(g.kept, 1);
+  });
+
   it("a number of another claim than the one cited is not enough", () => {
     const g = guardResearchSummary(summary("A kalcifikáció 0,1 mg/l mellett csökkent [[claim:k1]]."), REQUEST);
     assert.ok(g.ok);

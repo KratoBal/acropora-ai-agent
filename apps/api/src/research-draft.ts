@@ -17,9 +17,12 @@
  *   2. SUMMARY: a Hungarian summary written ONLY from the candidate claims the
  *      OS already extracted and checked (fields and a verbatim passage each,
  *      through the guarded claim extraction). Every sentence of the summary
- *      carries `[[claim:<id>]]` markers of claims sent; a sentence without a
- *      marker, with an unknown marker, or with a number that none of its
- *      cited claims holds is dropped with its reason.
+ *      ends with `[[claim:<id>]]` markers of claims sent, followed by its
+ *      closing mark only; a sentence without a marker, with a marker anywhere
+ *      else, with an unknown marker, or with a number that none of its cited
+ *      claims holds is dropped with its reason. What the check does NOT see:
+ *      a unit (a number of the claim with another unit passes), a number in
+ *      words; the editor's manual take-over is the check for those.
  *
  * Nothing is stored here.
  */
@@ -152,17 +155,31 @@ export function researchSummaryInput(request: SummaryRequest): string {
   return JSON.stringify(request);
 }
 
-export type SummaryDrop = "UNMARKED" | "UNKNOWN_MARKER" | "NUMBER_NOT_IN_CLAIMS";
+export type SummaryDrop = "UNMARKED" | "MARKER_NOT_AT_END" | "UNKNOWN_MARKER" | "NUMBER_NOT_IN_CLAIMS";
 
 export type GuardedSummary =
   | { ok: true; summary: string; kept: number; dropped: { index: number; drop: SummaryDrop }[] }
   | { ok: false; refusal: "NOT_JSON" | "NO_SUMMARY" | "TOO_LONG" };
 
 const MARKER = /\[\[claim:([A-Za-z0-9_-]{1,64})\]\]/gu;
-/** Numbers as written: "0,3", "0.3", "1–3" gives 1 and 3; one glued to a letter ("PO4") is a name, not a number. */
-const NUMBER = /(?<![\p{L}\d.,])\d+(?:[.,]\d+)?/gu;
+/**
+ * The markers stand at the sentence's end, before its closing mark only: text
+ * after them would ride on a cited sentence ("... [[claim:k1]]. ezért ne
+ * adagolj", a lower-case start does not split; barracuda on #53).
+ */
+const MARKERS_AT_END =
+  /^([\s\S]*?)((?:\s*\[\[claim:[A-Za-z0-9_-]{1,64}\]\])+)\s*(?:[.!?…]+["”»)]?)?$/u;
+/**
+ * Chemical formulas are names, not numbers. ONLY these: any other digit glued
+ * to a letter is a number and is checked ("napi5 ml", "pH8,2", "KH8", "Ca420";
+ * barracuda on #53).
+ */
+const FORMULA =
+  /(?<![\p{L}\d])(?:CaCO3|HCO3|PO4|NO3|NO2|NH3|NH4|CO2|CO3|SO4|SiO2|H2O)(?:3-|³⁻|2-|-)?(?![\p{L}\d])/gu;
+/** Numbers as written: "0,3", "0.3", "1–3" gives 1 and 3. */
+const NUMBER = /(?<![\d.,])\d+(?:[.,]\d+)?/gu;
 const numberValues = (text: string) =>
-  [...text.replace(MARKER, " ").matchAll(NUMBER)].map((m) => Number(m[0].replace(",", ".")));
+  [...text.replace(MARKER, " ").replace(FORMULA, " ").matchAll(NUMBER)].map((m) => Number(m[0].replace(",", ".")));
 
 /** Sentences: an end mark followed by a space and a capital, a digit or a quote. */
 function sentencesOf(text: string): string[] {
@@ -183,8 +200,10 @@ export function guardResearchSummary(modelText: string, request: SummaryRequest)
   const kept: string[] = [];
   const dropped: { index: number; drop: SummaryDrop }[] = [];
   sentencesOf(parsed.summary).forEach((sentence, index) => {
-    const ids = [...sentence.matchAll(MARKER)].map((m) => m[1]!);
-    if (ids.length === 0 || /\[\[|\]\]/.test(sentence.replace(MARKER, ""))) return dropped.push({ index, drop: "UNMARKED" });
+    if (!sentence.match(MARKER)) return dropped.push({ index, drop: "UNMARKED" });
+    const end = MARKERS_AT_END.exec(sentence);
+    if (!end || /\[\[|\]\]/.test(end[1]!)) return dropped.push({ index, drop: "MARKER_NOT_AT_END" });
+    const ids = [...end[2]!.matchAll(MARKER)].map((m) => m[1]!);
     if (ids.some((id) => !byId.has(id))) return dropped.push({ index, drop: "UNKNOWN_MARKER" });
     const allowed = new Set(
       ids.flatMap((id) => {
