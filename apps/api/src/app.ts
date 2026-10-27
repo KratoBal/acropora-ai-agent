@@ -40,6 +40,17 @@ import {
   knowledgeAnswerInstructions,
   parseKnowledgeAnswerRequest
 } from "./knowledge-answer.js";
+import {
+  RESEARCH_QUERIES_PROMPT_VERSION,
+  RESEARCH_SUMMARY_PROMPT_VERSION,
+  guardResearchQueries,
+  guardResearchSummary,
+  parseResearchQuestion,
+  parseSummaryRequest,
+  researchQueriesInstructions,
+  researchSummaryInput,
+  researchSummaryInstructions
+} from "./research-draft.js";
 import { searchProducts } from "./product-search.js";
 import { safeErrorSummary } from "./redact.js";
 import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
@@ -1052,6 +1063,168 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a knowledge answer"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * Mode B, step 1 (Acropora OS research knowledge base, S6, editor only):
+   * the editor's Hungarian question as at most three English search
+   * expressions. The guard keeps only the search syntax; the OS sends them to
+   * the literature APIs. Nothing is stored here.
+   */
+  app.post("/v1/research-queries", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseResearchQuestion(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const writtenBy = `${model} ${RESEARCH_QUERIES_PROMPT_VERSION}`;
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: researchQueriesInstructions(),
+        input: [
+          {
+            role: "user",
+            content: JSON.stringify({ question: parsed.question })
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardResearchQueries(response.output_text ?? "");
+
+      if (!guarded.ok) {
+        request.log.warn({ refusal: guarded.refusal }, "the research queries was refused by the guard");
+        return { refusal: guarded.refusal, writtenBy };
+      }
+
+      // counts and codes only: the question is the editor's text
+      request.log.info({ queries: guarded.queries.length, refused: guarded.refused.map((r) => r.refusal) }, "the research queries guarded");
+      return { queries: guarded.queries, refused: guarded.refused, writtenBy };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for the research queries"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * Mode B, step 4 (S6, editor only): a Hungarian summary written ONLY from
+   * the candidate claims the OS extracted and checked. Every sentence must
+   * carry markers of claims sent, and every number in it must be a number of
+   * the claims it cites; the rest is dropped with its reason. The OS stores
+   * the result as a research DRAFT, marked as model text. Nothing is stored
+   * here.
+   */
+  app.post("/v1/research-summaries", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseSummaryRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const writtenBy = `${model} ${RESEARCH_SUMMARY_PROMPT_VERSION}`;
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: researchSummaryInstructions(),
+        input: [
+          {
+            role: "user",
+            content: researchSummaryInput(parsed.request)
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardResearchSummary(response.output_text ?? "", parsed.request);
+
+      if (!guarded.ok) {
+        request.log.warn({ refusal: guarded.refusal }, "the research summary was refused by the guard");
+        return { refusal: guarded.refusal, writtenBy };
+      }
+
+      // counts and codes only: the question is the editor's text
+      request.log.info({ kept: guarded.kept, dropped: guarded.dropped.map((d) => d.drop) }, "the research summary guarded");
+      return { summary: guarded.summary, kept: guarded.kept, dropped: guarded.dropped, writtenBy };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a research summary"
       );
 
       return reply.code(failure.status).send(failure.body);
