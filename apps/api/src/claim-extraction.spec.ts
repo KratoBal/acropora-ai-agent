@@ -74,7 +74,17 @@ describe("the claim guard", () => {
     const r = one({}, { ...PASSAGE, text: PASSAGE.text.replace("decreased", "decreases") });
     assert.ok(r.ok);
     assert.deepEqual(r.claims, []);
-    assert.deepEqual(r.refusedClaims, [{ refusal: "PASSAGE_NOT_IN_TEXT", detail: "passage 22/87 U+0073" }]);
+    // "decreases" for "decreased": the passage goes on with s, the source with d
+    assert.deepEqual(r.refusedClaims, [{ refusal: "PASSAGE_NOT_IN_TEXT", detail: "passage 22/87 U+0073 src U+0064" }]);
+  });
+
+  it("a PDF's line-end hyphen shows as the source's hyphen where the passage goes on with a letter", () => {
+    // the text as a PDF's text layer gives it: "phos-" at a line end, squashed to "phos- phate"
+    const broken = { ...REQUEST, sourceText: TEXT.replace("2 µM phosphate compared", "2 µM phos-\nphate compared") };
+    const r = guardClaims(claims({ passage: PASSAGE, fields: {} }), broken);
+    assert.ok(r.ok);
+    // the model writes "phosphate" on: it goes on with "p", the source with the hyphen
+    assert.deepEqual(r.refusedClaims, [{ refusal: "PASSAGE_NOT_IN_TEXT", detail: "passage 44/87 U+0070 src U+002D" }]);
   });
 
   it("an anchor with one changed letter drops that field only", () => {
