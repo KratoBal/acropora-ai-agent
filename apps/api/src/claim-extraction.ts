@@ -156,7 +156,20 @@ const squash = (value: string) => value.replace(/\s+/g, " ").trim();
 const fold = (value: string) =>
   value.normalize("NFKD").replace(/\p{M}/gu, "").replace(/[µμ]/g, "u").toLowerCase();
 
-/** Where a not-found text leaves the source: a field, two counts and a code, never the text. */
+const codePoint = (char: string | undefined) => {
+  const n = char?.codePointAt(0);
+  return n === undefined ? "-" : `U+${n.toString(16).toUpperCase().padStart(4, "0")}`;
+};
+
+/**
+ * Where a not-found text leaves the source: a field, two counts and two code
+ * points, never the text. "passage 22/87 U+0073 src U+0064": the first 22 of
+ * 87 characters stand in the source; the 23rd is U+0073, and the source has
+ * U+0064 there (after the matched part's FIRST occurrence; "-" when nothing
+ * matched or the source ends). The second code point tells a reworded passage
+ * from a text the reader broke, a PDF's line-end hyphen (research-kepes-
+ * kiolvasas, acrobot 37488).
+ */
 function whereItLeaves(field: string, text: string, source: string): string {
   const chars = [...text];
   let lo = 0;
@@ -166,9 +179,10 @@ function whereItLeaves(field: string, text: string, source: string): string {
     if (source.includes(chars.slice(0, mid).join(""))) lo = mid;
     else hi = mid - 1;
   }
-  const next = chars[lo]?.codePointAt(0);
-  const code = next === undefined ? "-" : `U+${next.toString(16).toUpperCase().padStart(4, "0")}`;
-  return `${field} ${lo}/${chars.length} ${code}`;
+  const prefix = chars.slice(0, lo).join("");
+  const at = lo === 0 ? -1 : source.indexOf(prefix);
+  const there = at < 0 ? undefined : [...source.slice(at + prefix.length, at + prefix.length + 2)][0];
+  return `${field} ${lo}/${chars.length} ${codePoint(chars[lo])} src ${codePoint(there)}`;
 }
 
 function jsonOf(text: string): unknown {
