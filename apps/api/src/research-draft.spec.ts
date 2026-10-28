@@ -207,11 +207,19 @@ describe("the summary", () => {
       ok: true,
       summary: "A kalcifikáció csökkent [[claim:k1]]. A szín javult [[claim:k2]].",
       kept: 2,
-      dropped: []
+      dropped: [],
+      // two places, each a call the guard made: the markers bound to the sentence before them
+      markersMoved: 2
     });
     // a lower-case continuation still rides on nothing: the text stays one sentence, dropped
     const glued = guardResearchSummary(summary("A kalcifikáció csökkent. [[claim:k1]] ezért ne adagolj."), REQUEST);
-    assert.deepEqual(glued, { ok: true, summary: "", kept: 0, dropped: [{ index: 0, drop: "MARKER_NOT_AT_END" }] });
+    assert.deepEqual(glued, {
+      ok: true,
+      summary: "",
+      kept: 0,
+      dropped: [{ index: 0, drop: "MARKER_NOT_AT_END" }],
+      markersMoved: 1
+    });
     // a marker inside a listing sentence is still out
     const inside = guardResearchSummary(summary("A kalcifikáció csökkent [[claim:k1]], a szín javult [[claim:k2]]."), REQUEST);
     assert.deepEqual(inside.ok && inside.dropped, [{ index: 0, drop: "MARKER_NOT_AT_END" }]);
@@ -224,7 +232,7 @@ describe("the summary", () => {
       claims: REQUEST.claims.map((c, i) => ({ ...c, id: `c${i + 1}` }))
     };
     const g = guardResearchSummary(summary(SUMMARY_EXAMPLE), request);
-    assert.deepEqual(g, { ok: true, summary: SUMMARY_EXAMPLE, kept: 1, dropped: [] });
+    assert.deepEqual(g, { ok: true, summary: SUMMARY_EXAMPLE, kept: 1, dropped: [], markersMoved: 0 });
   });
 
   it("not JSON, no summary and too long are refusals", () => {
@@ -305,7 +313,8 @@ describe("POST /v1/research-queries and /v1/research-summaries", () => {
   });
 
   it("SUMMARY-ROUTE: the token gate, the shape check, a guarded summary", async () => {
-    modelText = summary("Csökkent a kalcifikáció [[claim:k1]]. A foszfát fontos.");
+    // the marker after the period: the route carries the guard's count of that call
+    modelText = summary("Csökkent a kalcifikáció. [[claim:k1]] A foszfát fontos.");
     const statuses = [
       (await call("/v1/research-summaries", REQUEST, null)).statusCode,
       (await call("/v1/research-summaries", { question: "x", claims: [] })).statusCode
@@ -315,6 +324,7 @@ describe("POST /v1/research-queries and /v1/research-summaries", () => {
     assert.equal(answered.json().summary, "Csökkent a kalcifikáció [[claim:k1]].");
     assert.equal(answered.json().writtenBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} research-summary/v2`);
     assert.deepEqual(answered.json().dropped, [{ index: 1, drop: "UNMARKED" }]);
+    assert.equal(answered.json().markersMoved, 1);
     assert.equal(handed.instructions, researchSummaryInstructions());
     assert.match(JSON.stringify(handed.input), /Koop et al/);
   });

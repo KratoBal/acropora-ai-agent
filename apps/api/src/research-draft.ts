@@ -180,7 +180,19 @@ export function researchSummaryInput(request: SummaryRequest): string {
 export type SummaryDrop = "UNMARKED" | "MARKER_NOT_AT_END" | "UNKNOWN_MARKER" | "NUMBER_NOT_IN_CLAIMS";
 
 export type GuardedSummary =
-  | { ok: true; summary: string; kept: number; dropped: { index: number; drop: SummaryDrop }[] }
+  | {
+      ok: true;
+      summary: string;
+      kept: number;
+      dropped: { index: number; drop: SummaryDrop }[];
+      /**
+       * Places where markers written after a closing mark were moved before it. Each binds the
+       * markers to the sentence BEFORE them; if the model meant the next one, that one is dropped
+       * unmarked and this one cites a claim it may not rest on (barracuda on #55). The count says
+       * how often the guard made that call.
+       */
+      markersMoved: number;
+    }
   | { ok: false; refusal: "NOT_JSON" | "NO_SUMMARY" | "TOO_LONG" };
 
 const MARKER = /\[\[claim:([A-Za-z0-9_-]{1,64})\]\]/gu;
@@ -210,13 +222,18 @@ const numberValues = (text: string) =>
  * still needs a capital, a digit or a quote, so "... [[claim:k1]]. ezért ne adagolj" stays one
  * sentence and is dropped, as before (barracuda on #53; the spec holds both).
  */
-export function markersAfterTheEnd(text: string): string {
-  return text.replace(/([.!?…])((?:\s*\[\[claim:[A-Za-z0-9_-]{1,64}\]\])+)/gu, "$2$1");
+export function markersAfterTheEnd(text: string): { text: string; moved: number } {
+  let moved = 0;
+  const out = text.replace(/([.!?…])((?:\s*\[\[claim:[A-Za-z0-9_-]{1,64}\]\])+)/gu, (_, end: string, markers: string) => {
+    moved += 1;
+    return `${markers}${end}`;
+  });
+  return { text: out, moved };
 }
 
 /** Sentences: an end mark followed by a space and a capital, a digit or a quote. */
 function sentencesOf(text: string): string[] {
-  return markersAfterTheEnd(text)
+  return text
     .split(/\n+/u)
     .flatMap((line) => line.split(/(?<=[.!?…])\s+(?=["„«(]?[\p{Lu}\d])/u))
     .map(norm)
@@ -232,7 +249,8 @@ export function guardResearchSummary(modelText: string, request: SummaryRequest)
   const byId = new Map(request.claims.map((c) => [c.id, c]));
   const kept: string[] = [];
   const dropped: { index: number; drop: SummaryDrop }[] = [];
-  sentencesOf(parsed.summary).forEach((sentence, index) => {
+  const placed = markersAfterTheEnd(parsed.summary);
+  sentencesOf(placed.text).forEach((sentence, index) => {
     if (!sentence.match(MARKER)) return dropped.push({ index, drop: "UNMARKED" });
     const end = MARKERS_AT_END.exec(sentence);
     if (!end || /\[\[|\]\]/.test(end[1]!)) return dropped.push({ index, drop: "MARKER_NOT_AT_END" });
@@ -247,5 +265,5 @@ export function guardResearchSummary(modelText: string, request: SummaryRequest)
     if (numberValues(sentence).some((n) => !allowed.has(n))) return dropped.push({ index, drop: "NUMBER_NOT_IN_CLAIMS" });
     kept.push(sentence);
   });
-  return { ok: true, summary: kept.join(" "), kept: kept.length, dropped };
+  return { ok: true, summary: kept.join(" "), kept: kept.length, dropped, markersMoved: placed.moved };
 }
