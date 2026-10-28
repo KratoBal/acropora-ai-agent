@@ -185,13 +185,43 @@ function whereItLeaves(field: string, text: string, source: string): string {
   return `${field} ${lo}/${chars.length} ${codePoint(chars[lo])} src ${codePoint(there)}`;
 }
 
+const jsonBody = (text: string) => text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+
 function jsonOf(text: string): unknown {
-  const body = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   try {
-    return JSON.parse(body);
+    return JSON.parse(jsonBody(text));
   } catch {
     return undefined;
   }
+}
+
+/**
+ * WHY AN ANSWER IS NOT A JSON OBJECT, never its text: a word, two counts and
+ * a code point, the same shape as `whereItLeaves`. "parse 18234/18240 U+0022":
+ * the parser stopped at character 18234 of 18240, on U+0022. "truncated
+ * 31877/31877 -": the provider cut the answer (its `max_output_tokens`), so
+ * the end is not the model's. A cut answer, prose around the object and a
+ * bad character inside it are three different fixes (research-kepes-
+ * kiolvasas, acrobot 37559). The parser's own message is read for its
+ * position only: it quotes the answer.
+ */
+export function notJsonDetail(text: string, incomplete: string | null = null): string {
+  const body = jsonBody(text);
+  const length = [...body].length;
+  if (incomplete !== null) {
+    const word = incomplete === "max_output_tokens" ? "truncated" : incomplete === "content_filter" ? "filtered" : "incomplete";
+    return `${word} ${length}/${length} -`;
+  }
+  let at: number;
+  try {
+    JSON.parse(body);
+    at = 0; // valid JSON, not an object: the first character says what it is
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    const position = /at position (\d+)/.exec(message);
+    at = position ? Number(position[1]) : /end of JSON input/.test(message) ? body.length : 0;
+  }
+  return `parse ${[...body.slice(0, at)].length}/${length} ${codePoint(body.slice(at, at + 2))}`;
 }
 
 /** The numbers of a text, a decimal comma read as a point. */
@@ -313,7 +343,7 @@ export interface CandidateClaim {
 
 export type GuardedClaims =
   | { ok: true; claims: CandidateClaim[]; refusedClaims: { refusal: string; detail?: string }[] }
-  | { ok: false; refusal: string };
+  | { ok: false; refusal: string; detail?: string };
 
 const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
 /** A model-written word shown to the editor: short, printable, no markup. */
@@ -412,9 +442,13 @@ function checkField(
 }
 
 /** THE CHECK BEFORE THE CLAIMS LEAVE. */
-export function guardClaims(modelText: string, request: ClaimExtractionRequest): GuardedClaims {
+export function guardClaims(
+  modelText: string,
+  request: ClaimExtractionRequest,
+  incomplete: string | null = null
+): GuardedClaims {
   const raw = jsonOf(modelText);
-  if (!isRecord(raw)) return { ok: false, refusal: "NOT_JSON" };
+  if (!isRecord(raw)) return { ok: false, refusal: "NOT_JSON", detail: notJsonDetail(modelText, incomplete) };
   if (!Array.isArray(raw.claims)) return { ok: false, refusal: "NO_CLAIM_LIST" };
   const source = squash(request.sourceText);
   const claims: CandidateClaim[] = [];

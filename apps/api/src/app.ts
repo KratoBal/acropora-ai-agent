@@ -939,14 +939,18 @@ export function buildApp(dependencies: AppDependencies = {}) {
         store: false
       });
 
-      const guarded = guardClaims(response.output_text ?? "", parsed.request);
+      // a cut answer is told apart from a broken one: its end is not the model's
+      const incomplete =
+        response.status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null;
+      const guarded = guardClaims(response.output_text ?? "", parsed.request, incomplete);
 
       if (!guarded.ok) {
+        // the detail is counts and a code point, never the answer's text
         request.log.warn(
-          { refusal: guarded.refusal },
+          { refusal: guarded.refusal, detail: guarded.detail },
           "the claim extraction answer was refused by the guard"
         );
-        return { refusal: guarded.refusal, extractedBy };
+        return { refusal: guarded.refusal, detail: guarded.detail, extractedBy };
       }
 
       // counts only in the log: the claims carry text of the source

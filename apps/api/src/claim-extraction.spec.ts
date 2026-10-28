@@ -7,6 +7,7 @@ import {
   STUDY_TYPES,
   claimExtractionInstructions,
   guardClaims,
+  notJsonDetail,
   parseClaimRequest,
   type ClaimExtractionRequest
 } from "./claim-extraction.js";
@@ -210,7 +211,7 @@ describe("the claim guard", () => {
   });
 
   it("an answer that is not the shape is refused whole; too many claims are cut and reported", () => {
-    assert.deepEqual(guardClaims("nem json", REQUEST), { ok: false, refusal: "NOT_JSON" });
+    assert.deepEqual(guardClaims("nem json", REQUEST), { ok: false, refusal: "NOT_JSON", detail: "parse 0/8 U+006E" });
     assert.deepEqual(guardClaims("{}", REQUEST), { ok: false, refusal: "NO_CLAIM_LIST" });
     const many = guardClaims(
       claims(...Array.from({ length: MAX_CLAIMS + 3 }, () => ({ passage: PASSAGE, fields: {} }))),
@@ -219,6 +220,35 @@ describe("the claim guard", () => {
     assert.ok(many.ok);
     assert.equal(many.claims.length, MAX_CLAIMS);
     assert.deepEqual(many.refusedClaims, [{ refusal: "TOO_MANY_CLAIMS", detail: `${MAX_CLAIMS + 3}` }]);
+  });
+});
+
+describe("why an answer is not JSON", () => {
+  // the OS keeps a detail only in this shape (claim-extractor.ts REFUSAL_DETAIL)
+  const OS_SHAPE = /^[A-Za-z]{1,24} \d{1,7}\/\d{1,7} (?:U\+[0-9A-F]{4,6}|-)(?: src (?:U\+[0-9A-F]{4,6}|-))?$/;
+
+  it("names where the parser stopped and the character there, never the text", () => {
+    const cases: [string, string][] = [
+      ['Here it is: {"claims": []}', "parse 0/26 U+0048"], // prose before the object
+      ['{"claims": []} Hope this helps.', "parse 15/31 U+0048"], // prose after it
+      ['{"claims": [{"passage": "a\u0007b"}]}', "parse 26/32 U+0007"], // a raw control character
+      ['{"claims": [{"passage": "a\\qb"}]}', "parse 27/33 U+0071"], // a bad escape
+      ['{"claims": [{"passage": "µ\u00b5 cut', "parse 31/31 -"], // the answer ends in a string
+      ['```json\n{"claims": [],}\n```', "parse 14/15 U+007D"], // the fence is not counted
+      ["[1, 2]", "parse 0/6 U+005B"] // JSON, but not an object
+    ];
+    for (const [answer, detail] of cases) {
+      assert.equal(notJsonDetail(answer), detail, answer);
+      assert.match(detail, OS_SHAPE);
+      assert.ok(!detail.includes("claims") && !detail.includes("Here"));
+    }
+  });
+
+  it("a cut answer says so: its end is not the model's", () => {
+    assert.equal(notJsonDetail('{"claims": [', "max_output_tokens"), "truncated 12/12 -");
+    assert.equal(notJsonDetail('{"claims": [', "content_filter"), "filtered 12/12 -");
+    assert.equal(notJsonDetail("", "something_new"), "incomplete 0/0 -");
+    for (const d of ["truncated 12/12 -", "incomplete 0/0 -"]) assert.match(d, OS_SHAPE);
   });
 });
 
@@ -281,11 +311,14 @@ describe("POST /v1/claim-extractions", () => {
   const saved = { ...process.env };
   let handed: { instructions?: unknown; input?: unknown } = {};
   let modelText = "";
+  let modelCut = false;
   const modelClient = {
     responses: {
       create: async (parameters: { instructions?: unknown; input?: unknown }) => {
         handed = parameters;
-        return { output_text: modelText };
+        return modelCut
+          ? { output_text: modelText, status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }
+          : { output_text: modelText };
       }
     }
   } as unknown as NonNullable<AppDependencies["openai"]>;
@@ -330,6 +363,12 @@ describe("POST /v1/claim-extractions", () => {
 
     modelText = "nem json";
     const refused = await call(REQUEST);
-    assert.deepEqual([refused.statusCode, refused.json().refusal], [200, "NOT_JSON"]);
+    assert.deepEqual([refused.statusCode, refused.json().refusal, refused.json().detail], [200, "NOT_JSON", "parse 0/8 U+006E"]);
+
+    modelText = '{"claims": [{"passage": ';
+    modelCut = true;
+    const cut = await call(REQUEST);
+    modelCut = false;
+    assert.deepEqual([cut.json().refusal, cut.json().detail], ["NOT_JSON", "truncated 23/23 -"]);
   });
 });
