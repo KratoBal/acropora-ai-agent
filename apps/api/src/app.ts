@@ -1212,8 +1212,17 @@ export function buildApp(dependencies: AppDependencies = {}) {
       }
 
       // counts and codes only: the question is the editor's text
-      request.log.info({ kept: guarded.kept, dropped: guarded.dropped.map((d) => d.drop) }, "the research summary guarded");
-      return { summary: guarded.summary, kept: guarded.kept, dropped: guarded.dropped, writtenBy };
+      request.log.info(
+        { kept: guarded.kept, dropped: guarded.dropped.map((d) => d.drop), markersMoved: guarded.markersMoved },
+        "the research summary guarded"
+      );
+      return {
+        summary: guarded.summary,
+        kept: guarded.kept,
+        dropped: guarded.dropped,
+        markersMoved: guarded.markersMoved,
+        writtenBy
+      };
     } catch (error) {
       const failure = aiProviderFailure(error, Date.now() - askedAt);
 
