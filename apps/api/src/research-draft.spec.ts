@@ -10,6 +10,7 @@ import {
   parseSummaryRequest,
   researchQueriesInstructions,
   researchSummaryInstructions,
+  SUMMARY_EXAMPLE,
   type SummaryRequest
 } from "./research-draft.js";
 
@@ -196,6 +197,36 @@ describe("the summary", () => {
     assert.deepEqual(g.dropped, [{ index: 0, drop: "NUMBER_NOT_IN_CLAIMS" }]);
   });
 
+  it("v2: markers written after the period move before it, when a new sentence or the end follows", () => {
+    // the third stage run's likely shape: no split can cut it, so it was ONE dropped sentence
+    const g = guardResearchSummary(
+      summary("A kalcifikáció csökkent. [[claim:k1]] A szín javult. [[claim:k2]]"),
+      REQUEST
+    );
+    assert.deepEqual(g, {
+      ok: true,
+      summary: "A kalcifikáció csökkent [[claim:k1]]. A szín javult [[claim:k2]].",
+      kept: 2,
+      dropped: []
+    });
+    // a lower-case continuation still rides on nothing: the text stays one sentence, dropped
+    const glued = guardResearchSummary(summary("A kalcifikáció csökkent. [[claim:k1]] ezért ne adagolj."), REQUEST);
+    assert.deepEqual(glued, { ok: true, summary: "", kept: 0, dropped: [{ index: 0, drop: "MARKER_NOT_AT_END" }] });
+    // a marker inside a listing sentence is still out
+    const inside = guardResearchSummary(summary("A kalcifikáció csökkent [[claim:k1]], a szín javult [[claim:k2]]."), REQUEST);
+    assert.deepEqual(inside.ok && inside.dropped, [{ index: 0, drop: "MARKER_NOT_AT_END" }]);
+  });
+
+  it("v2: the prompt's one form passes the guard", () => {
+    assert.ok(researchSummaryInstructions().includes(SUMMARY_EXAMPLE));
+    const request: SummaryRequest = {
+      question: REQUEST.question,
+      claims: REQUEST.claims.map((c, i) => ({ ...c, id: `c${i + 1}` }))
+    };
+    const g = guardResearchSummary(summary(SUMMARY_EXAMPLE), request);
+    assert.deepEqual(g, { ok: true, summary: SUMMARY_EXAMPLE, kept: 1, dropped: [] });
+  });
+
   it("not JSON, no summary and too long are refusals", () => {
     assert.deepEqual(guardResearchSummary("nem json", REQUEST), { ok: false, refusal: "NOT_JSON" });
     assert.deepEqual(guardResearchSummary('{"text": "x"}', REQUEST), { ok: false, refusal: "NO_SUMMARY" });
@@ -282,6 +313,7 @@ describe("POST /v1/research-queries and /v1/research-summaries", () => {
     const answered = await call("/v1/research-summaries", REQUEST);
     assert.deepEqual([...statuses, answered.statusCode], [401, 400, 200]);
     assert.equal(answered.json().summary, "Csökkent a kalcifikáció [[claim:k1]].");
+    assert.equal(answered.json().writtenBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} research-summary/v2`);
     assert.deepEqual(answered.json().dropped, [{ index: 1, drop: "UNMARKED" }]);
     assert.equal(handed.instructions, researchSummaryInstructions());
     assert.match(JSON.stringify(handed.input), /Koop et al/);
