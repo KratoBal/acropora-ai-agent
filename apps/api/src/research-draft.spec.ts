@@ -83,6 +83,21 @@ describe("the queries", () => {
     );
   });
 
+  it("v2: the prompt's own examples pass the guard, and it keeps hobby words out of AND", () => {
+    const text = researchQueriesInstructions();
+    // the examples the model is shown must be queries the guard keeps
+    const examples = [
+      "phosphate AND (scleractinian OR coral) AND (calcification OR growth)",
+      '(coral OR "SPS coral")'
+    ];
+    for (const example of examples) assert.ok(text.includes(example), example);
+    const kept = guardResearchQueries(JSON.stringify({ queries: examples }));
+    assert.deepEqual(kept, { ok: true, queries: examples, refused: [] });
+    assert.match(text, /TITLE AND ABSTRACT/);
+    assert.match(text, /Hobby words \(SPS, LPS, reef tank, reef aquarium, aquaria\) are NEVER a required term/);
+    assert.match(text, /Every parenthesis and every double quote is closed/);
+  });
+
   it("not JSON and no list are refusals; an empty list is an answer", () => {
     assert.deepEqual(guardResearchQueries("nem json"), { ok: false, refusal: "NOT_JSON" });
     assert.deepEqual(guardResearchQueries('{"q": []}'), { ok: false, refusal: "NO_QUERIES_LIST" });
@@ -252,7 +267,7 @@ describe("POST /v1/research-queries and /v1/research-summaries", () => {
     const answered = await call("/v1/research-queries", { question: "Mennyi foszfát?" });
     assert.deepEqual([...statuses, answered.statusCode], [401, 400, 200]);
     assert.deepEqual(answered.json().queries, ["phosphate coral calcification"]);
-    assert.equal(answered.json().writtenBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} research-queries/v1`);
+    assert.equal(answered.json().writtenBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} research-queries/v2`);
     assert.equal(handed.instructions, researchQueriesInstructions());
     modelText = "nem json";
     assert.equal((await call("/v1/research-queries", { question: "x" })).json().refusal, "NOT_JSON");
