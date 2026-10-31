@@ -28,6 +28,7 @@ import {
 } from "./dosing-extraction.js";
 import {
   CLAIM_EXTRACTION_PROMPT_VERSION,
+  CLAIMS_AS_JSON,
   claimExtractionInput,
   claimExtractionInstructions,
   guardClaims,
@@ -944,6 +945,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
             content: claimExtractionInput(parsed.request)
           }
         ],
+        // one valid JSON object, enforced by the provider: on stage (2026-10-31)
+        // six answers of four sources were valid JSON up to a second "{"
+        text: CLAIMS_AS_JSON,
         store: false
       });
 
@@ -1050,6 +1054,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
           model,
           instructions: figureClaimInstructions(parsed.request),
           input: figureClaimInput(parsed.request),
+          text: CLAIMS_AS_JSON,
           store: false
         });
 
