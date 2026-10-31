@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { buildApp, type AppDependencies } from "./app.js";
+import { JSON_INPUT_LEAD } from "./claim-extraction.js";
 import {
   FIGURE_BODY_LIMIT,
   MAX_CAPTION,
@@ -112,7 +113,9 @@ describe("figureClaimInstructions", () => {
   it("hands the caption as data and every tile as a high-detail image, in order", () => {
     const [message] = figureClaimInput(REQUEST);
     assert.equal(message!.content.length, 3);
-    assert.deepEqual(JSON.parse((message!.content[0] as { text: string }).text), {
+    const text = (message!.content[0] as { text: string }).text;
+    assert.ok(text.startsWith(`${JSON_INPUT_LEAD} `));
+    assert.deepEqual(JSON.parse(text.slice(JSON_INPUT_LEAD.length + 1)), {
       subject: "PHOSPHATE",
       figure: "Figure 3",
       caption: CAPTION
@@ -292,11 +295,11 @@ describe("guardFigureClaims", () => {
 describe("POST /v1/figure-claim-extractions", () => {
   const API_TOKEN = "test-api-access-token";
   const saved = { ...process.env };
-  let handed: { instructions?: unknown; input?: unknown } = {};
+  let handed: { instructions?: unknown; input?: unknown; text?: unknown } = {};
   let modelText = "";
   const modelClient = {
     responses: {
-      create: async (parameters: { instructions?: unknown; input?: unknown }) => {
+      create: async (parameters: { instructions?: unknown; input?: unknown; text?: unknown }) => {
         handed = parameters;
         return { output_text: modelText };
       }
@@ -345,9 +348,12 @@ describe("POST /v1/figure-claim-extractions", () => {
     const body = answered.json();
     assert.deepEqual(body.claims[0].origin, { part: "IMAGE", tile: 2 });
     assert.equal(body.transcripts.length, 2);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v1`);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v2`);
     assert.match(String(handed.instructions), /ONLY printed text/);
     assert.match(JSON.stringify(handed.input), /"type":"input_image"/);
+    assert.deepEqual(handed.text, { format: { type: "json_object" } });
+    const [message] = handed.input as { content: { type: string; text?: string }[] }[];
+    assert.match(String(message!.content[0]!.text), /^The input, as JSON data/);
 
     modelText = "nem json";
     const refused = await call(url, REQUEST);

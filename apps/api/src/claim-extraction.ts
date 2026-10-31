@@ -28,8 +28,10 @@
  * own fields once, a one-sided bound as one end. The OS holds the same rules
  * itself (`keepOwnFindings`, `oneSidedBound`); here they cut what the model
  * proposes, there they decide what is stored.
+ * v4: the same prompt, asked in the provider's JSON mode (`CLAIMS_AS_JSON`),
+ * so a stored passage tells a run before the mode from one after it.
  */
-export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction/v3";
+export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction/v4";
 /**
  * One call reads a section or a few, not a whole paper: the OS splits a paper
  * by its sections, so a call stays inside the provider timeout (40 s by
@@ -165,8 +167,26 @@ export function claimExtractionInstructions(request: ClaimExtractionRequest): st
   ].join("\n");
 }
 
+/**
+ * THE ANSWER IS ONE JSON OBJECT, ENFORCED BY THE PROVIDER (the Responses API's
+ * JSON mode). Asked only in words, the model sometimes wrote a valid object and
+ * then a second one, or two array elements with no comma: measured on stage
+ * (2026-10-31, research-kepes-ut), six answers of four sources refused as
+ * NOT_JSON, every one "parse N/M U+007B", where the same texts had read well that
+ * morning. A JSON schema would bind the field shapes too, but the fields are an
+ * open, optional set; JSON mode keeps the shape the guard already checks.
+ */
+export const CLAIMS_AS_JSON = { format: { type: "json_object" as const } };
+
+/**
+ * The input names JSON in words: the provider's JSON mode looks for the word in
+ * the input messages, not in the instructions (#60 had it only there, and every
+ * call was refused; measured on stage 2026-10-31). The data stays JSON.
+ */
+export const JSON_INPUT_LEAD = "The input, as JSON data (answer with one JSON object):";
+
 export function claimExtractionInput(request: ClaimExtractionRequest): string {
-  return JSON.stringify({ subject: request.subject, sourceText: request.sourceText });
+  return `${JSON_INPUT_LEAD} ${JSON.stringify({ subject: request.subject, sourceText: request.sourceText })}`;
 }
 
 const squash = (value: string) => value.replace(/\s+/g, " ").trim();
@@ -231,15 +251,19 @@ export function notJsonDetail(text: string, incomplete: string | null = null): s
     return `${word} ${length}/${length} -`;
   }
   let at: number;
+  let lastParseMessage = "";
   try {
     JSON.parse(body);
     at = 0; // valid JSON, not an object: the first character says what it is
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
+    lastParseMessage = message;
     const position = /at position (\d+)/.exec(message);
     at = position ? Number(position[1]) : /end of JSON input/.test(message) ? body.length : 0;
   }
-  return `parse ${[...body.slice(0, at)].length}/${length} ${codePoint(body.slice(at, at + 2))}`;
+  // "trailing": a whole object, then more; "parse": broken inside (a missing comma)
+  const word = /after JSON/.test(lastParseMessage) ? "trailing" : "parse";
+  return `${word} ${[...body.slice(0, at)].length}/${length} ${codePoint(body.slice(at, at + 2))}`;
 }
 
 /** The numbers of a text, a decimal comma read as a point. */
