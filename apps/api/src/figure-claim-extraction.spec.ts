@@ -8,6 +8,7 @@ import {
   MAX_CAPTION,
   MAX_IMAGES,
   MAX_IMAGE_BYTES,
+  MAX_READING,
   MAX_TRANSCRIPT,
   figureClaimInput,
   figureClaimInstructions,
@@ -21,8 +22,10 @@ import {
  * that does not say whether its passage stands in the caption (checkable) or
  * in a tile's transcript (the model's word); a passage joined across the two;
  * a number that is not printed (read off a curve) getting through as a
- * quantity; an image whose bytes are not what the caller says; the route
- * without its token, its shape check or its own body limit. Invented text and
+ * quantity; a trend read off the marks that is not marked READING, or whose
+ * words ride on a caption or transcript claim (research-diagram-irany); an
+ * image whose bytes are not what the caller says; the route without its
+ * token, its shape check or its own body limit. Invented text and
  * fake image bytes only: the guard reads the magic bytes, the model is a stub.
  */
 const PNG_BYTES = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
@@ -33,6 +36,9 @@ const CAPTION =
   "Figure 3. Calcification of Acropora millepora at three phosphate levels. Calcification decreased at 2 µM phosphate.";
 const TILE_1 = "A\nPO4 (µM)\n0 | 0.5 | 2 |\nCalcification (mg cm-2 d-1)";
 const TILE_2 = "B\nSkeletal density\n2 µM PO4: no change";
+/** The model's own words on tile 1's curve: nothing printed says this. */
+const READING_1 =
+  "Panel A: calcification falls steadily as phosphate rises, and at about 0.5 µM phosphate it is already lower than at 0.";
 
 const REQUEST: FigureClaimRequest = {
   subject: "PHOSPHATE",
@@ -99,9 +105,14 @@ describe("figureClaimInstructions", () => {
     for (const rule of [
       /ONLY printed text: never a value you read off a bar, a point, a line or a colour/,
       /never from where a mark stands on an axis/,
-      /from the caption OR from ONE tile's transcript, never joined across them/,
+      /from the caption OR from ONE tile's transcript OR from ONE tile's reading, never joined across them/,
       /Every field's anchor comes from a part its claim may rest on/,
       /2 tiles in reading order/,
+      // the trend the marks show: in a reading, never in a transcript or a caption claim
+      /"readings": one string per tile/,
+      /written as approximate/,
+      /a caption or transcript claim never from a reading/,
+      /the claim on it rests on the reading/,
       // the text extraction's own rules, the same words
       /Only findings this text reports as ITS OWN result/,
       /the anchor must contain the number, the unit and the word that says which/,
@@ -262,6 +273,92 @@ describe("guardFigureClaims", () => {
     ]);
   });
 
+  it("a trend read off the marks is a READING claim: its direction and approximate value anchor in the reading", () => {
+    const guarded = guardFigureClaims(
+      answer({
+        readings: [READING_1, ""],
+        claims: [
+          {
+            passage: { text: READING_1, locator: "panel A" },
+            fields: {
+              direction: { value: "DECREASE", anchor: "calcification falls steadily as phosphate rises" },
+              quantity: { min: 0.5, max: 0.5, unit: "µmol/l", basis: null, anchor: "about 0.5 µM phosphate" },
+              // the caption and its own tile's transcript: allowed
+              species: { value: "ACROPORA_MILLEPORA", anchor: "Acropora millepora" },
+              effect: { value: "CALCIFICATION", anchor: "Calcification (mg cm-2 d-1)" },
+              // tile 2's printed text: another tile
+              conditions: { value: "Skeletal density", anchor: "Skeletal density" }
+            }
+          }
+        ]
+      }),
+      REQUEST
+    );
+    assert.ok(guarded.ok);
+    const [claim] = guarded.claims;
+    assert.deepEqual(claim!.origin, { part: "READING", tile: 1 });
+    assert.deepEqual(
+      claim!.fields.map((f) => f.field),
+      ["direction", "quantity", "species", "effect"]
+    );
+    assert.deepEqual(claim!.refusedFields, [{ field: "conditions", refusal: "ANCHOR_ACROSS_PARTS" }]);
+    assert.deepEqual(guarded.readings, [READING_1, ""]);
+  });
+
+  it("a caption or transcript claim never takes a reading's words, and a passage across a transcript and a reading is refused", () => {
+    const guarded = guardFigureClaims(
+      answer({
+        readings: [READING_1, ""],
+        claims: [
+          {
+            passage: { text: "Calcification decreased at 2 µM phosphate.", locator: "x" },
+            fields: {
+              direction: { value: "DECREASE", anchor: "Calcification decreased" },
+              // only the reading holds it: a read-off value on a verifiable claim
+              quantity: { min: 0.5, max: 0.5, unit: "µmol/l", basis: null, anchor: "about 0.5 µM phosphate" }
+            }
+          },
+          {
+            passage: { text: "Calcification (mg cm-2 d-1)", locator: "panel A" },
+            fields: { direction: { value: "DECREASE", anchor: "calcification falls steadily as phosphate rises" } }
+          },
+          // tile 2's transcript runs into tile 1's reading in the joined text
+          { passage: { text: "2 µM PO4: no change Panel A: calcification falls", locator: "x" }, fields: {} }
+        ]
+      }),
+      REQUEST
+    );
+    assert.ok(guarded.ok);
+    assert.deepEqual(
+      guarded.claims.map((c) => [c.origin, c.fields.map((f) => f.field), c.refusedFields]),
+      [
+        [{ part: "CAPTION" }, ["direction"], [{ field: "quantity", refusal: "ANCHOR_ACROSS_PARTS" }]],
+        [{ part: "IMAGE", tile: 1 }, [], [{ field: "direction", refusal: "ANCHOR_ACROSS_PARTS" }]]
+      ]
+    );
+    assert.deepEqual(guarded.refusedClaims, [{ refusal: "PASSAGE_ACROSS_PARTS" }]);
+  });
+
+  it("the readings may be left out; the wrong number of them, or one too long, refuses the whole answer", () => {
+    const left = guardFigureClaims(answer({ claims: [] }), REQUEST);
+    assert.ok(left.ok);
+    assert.deepEqual(left.readings, ["", ""]);
+    assert.deepEqual(guardFigureClaims(answer({ readings: [READING_1], claims: [] }), REQUEST), {
+      ok: false,
+      refusal: "NO_READINGS",
+      detail: "readings 1/2 -"
+    });
+    assert.deepEqual(guardFigureClaims(answer({ readings: "x", claims: [] }), REQUEST), {
+      ok: false,
+      refusal: "NO_READINGS",
+      detail: "readings 0/2 -"
+    });
+    assert.deepEqual(guardFigureClaims(answer({ readings: ["", "x".repeat(MAX_READING + 1)], claims: [] }), REQUEST), {
+      ok: false,
+      refusal: "READING_TOO_LONG"
+    });
+  });
+
   it("an invented passage is refused by the text guard, with where it leaves", () => {
     const guarded = guardFigureClaims(
       answer({ claims: [{ passage: { text: "Calcification increased sharply", locator: "x" }, fields: {} }] }),
@@ -331,8 +428,9 @@ describe("POST /v1/figure-claim-extractions", () => {
       payload: JSON.stringify(payload)
     });
 
-  it("FIGURE-ROUTE: the token gate, the shape check, claims with their origin and the transcripts", async () => {
+  it("FIGURE-ROUTE: the token gate, the shape check, claims with their origin, the transcripts and the readings", async () => {
     modelText = answer({
+      readings: [READING_1, ""],
       claims: [
         {
           passage: { text: "2 µM PO4: no change", locator: "panel B" },
@@ -348,7 +446,8 @@ describe("POST /v1/figure-claim-extractions", () => {
     const body = answered.json();
     assert.deepEqual(body.claims[0].origin, { part: "IMAGE", tile: 2 });
     assert.equal(body.transcripts.length, 2);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v2`);
+    assert.deepEqual(body.readings, [READING_1, ""]);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v3`);
     assert.match(String(handed.instructions), /ONLY printed text/);
     assert.match(JSON.stringify(handed.input), /"type":"input_image"/);
     assert.deepEqual(handed.text, { format: { type: "json_object" } });
