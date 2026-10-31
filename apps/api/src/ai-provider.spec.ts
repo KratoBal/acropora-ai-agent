@@ -202,9 +202,33 @@ describe("aiProviderFailure", () => {
     const serialised = JSON.stringify(aiProviderFailure(error, 30));
 
     assert.equal(serialised.includes("sk-live"), false);
-    assert.deepEqual(Object.keys(aiProviderFailure(error, 30).body).sort(), [
-      "error",
-      "waitedMs"
-    ]);
+    assert.deepEqual(aiProviderFailure(error, 30).body, {
+      error: "ai_provider_error",
+      waitedMs: 30,
+      provider: { status: 401 }
+    });
+  });
+
+  it("carries the provider's identifiers, not its message, so a 502 says why (barracuda, ai#63)", () => {
+    const refused = Object.assign(new Error("Response input messages must contain the word 'json' ..."), {
+      status: 400,
+      type: "invalid_request_error",
+      code: "invalid_value",
+      param: "input"
+    });
+    const body = aiProviderFailure(refused, 7).body;
+    assert.deepEqual(body.provider, { status: 400, type: "invalid_request_error", code: "invalid_value", param: "input" });
+    assert.equal(JSON.stringify(body).includes("json"), false, "never the message");
+  });
+
+  it("a code that is not an identifier is dropped, not passed on", () => {
+    const odd = Object.assign(new Error("x"), {
+      status: 400,
+      code: "bad key sk-live-secret-value",
+      param: "input[0].content",
+      type: "x".repeat(65)
+    });
+    assert.deepEqual(aiProviderFailure(odd, 1).body.provider, { status: 400, param: "input[0].content" });
+    assert.equal(aiProviderFailure(new Error("no codes"), 1).body.provider, undefined);
   });
 });
