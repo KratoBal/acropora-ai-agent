@@ -360,7 +360,7 @@ describe("POST /v1/claim-extractions", () => {
     assert.deepEqual([unauthorized.statusCode, malformed.statusCode, answered.statusCode], [401, 400, 200]);
     const body = answered.json();
     assert.equal(body.claims.length, 1);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v3`);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v4`);
     // the model was told the rules, and was given the text as data
     assert.match(String(handed.instructions), /copied character for character/);
     // and the provider enforces one JSON object

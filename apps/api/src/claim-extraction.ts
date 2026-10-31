@@ -28,8 +28,10 @@
  * own fields once, a one-sided bound as one end. The OS holds the same rules
  * itself (`keepOwnFindings`, `oneSidedBound`); here they cut what the model
  * proposes, there they decide what is stored.
+ * v4: the same prompt, asked in the provider's JSON mode (`CLAIMS_AS_JSON`),
+ * so a stored passage tells a run before the mode from one after it.
  */
-export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction/v3";
+export const CLAIM_EXTRACTION_PROMPT_VERSION = "claim-extraction/v4";
 /**
  * One call reads a section or a few, not a whole paper: the OS splits a paper
  * by its sections, so a call stays inside the provider timeout (40 s by

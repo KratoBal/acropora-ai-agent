@@ -345,7 +345,7 @@ describe("POST /v1/figure-claim-extractions", () => {
     const body = answered.json();
     assert.deepEqual(body.claims[0].origin, { part: "IMAGE", tile: 2 });
     assert.equal(body.transcripts.length, 2);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v1`);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v2`);
     assert.match(String(handed.instructions), /ONLY printed text/);
     assert.match(JSON.stringify(handed.input), /"type":"input_image"/);
     assert.deepEqual(handed.text, { format: { type: "json_object" } });

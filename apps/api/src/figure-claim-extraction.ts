@@ -40,7 +40,8 @@ import {
  * Nothing is stored here; the transcripts go back to the OS with the claims,
  * because its own check runs against the same text.
  */
-export const FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION = "figure-claim-extraction/v1";
+/** v2: asked in the provider's JSON mode (`CLAIMS_AS_JSON`); v1 was not. */
+export const FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION = "figure-claim-extraction/v2";
 export const MAX_CAPTION = 4_000;
 export const MAX_FIGURE_LABEL = 64;
 /** The OS cuts a figure or a page into at most four tiles (`image-tiles.ts`). */
