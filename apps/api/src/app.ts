@@ -34,6 +34,14 @@ import {
   parseClaimRequest
 } from "./claim-extraction.js";
 import {
+  FIGURE_BODY_LIMIT,
+  FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION,
+  figureClaimInput,
+  figureClaimInstructions,
+  guardFigureClaims,
+  parseFigureRequest
+} from "./figure-claim-extraction.js";
+import {
   KNOWLEDGE_ANSWER_PROMPT_VERSION,
   guardKnowledgeAnswer,
   knowledgeAnswerInput,
@@ -976,6 +984,104 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a claim extraction"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * Candidate claims from one figure: its caption and its image tiles
+   * (research-kepes-ut). Its own call, not an image on the text extraction:
+   * the model writes the image's printed text out (a transcript per tile), and
+   * every passage and anchor must stand in the caption or a transcript; each
+   * claim says which (`origin`), because only the caption is a text the OS can
+   * check verbatim (`figure-claim-extraction.ts`). The body carries the images,
+   * so it has its own size limit. Nothing is stored here.
+   */
+  app.post("/v1/figure-claim-extractions", { bodyLimit: FIGURE_BODY_LIMIT }, async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseFigureRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const extractedBy = `${model} ${FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION}`;
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: figureClaimInstructions(parsed.request),
+        input: figureClaimInput(parsed.request),
+        store: false
+      });
+
+      const incomplete =
+        response.status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null;
+      const guarded = guardFigureClaims(response.output_text ?? "", parsed.request, incomplete);
+
+      if (!guarded.ok) {
+        // the detail is counts and a code point, never the answer's text
+        request.log.warn(
+          { refusal: guarded.refusal, detail: guarded.detail },
+          "the figure claim extraction answer was refused by the guard"
+        );
+        return { refusal: guarded.refusal, detail: guarded.detail, extractedBy };
+      }
+
+      // counts only in the log: the claims and transcripts carry the source's text
+      request.log.info(
+        {
+          images: parsed.request.images.length,
+          claims: guarded.claims.length,
+          fromImage: guarded.claims.filter((c) => c.origin.part === "IMAGE").length,
+          refusedClaims: guarded.refusedClaims.length,
+          transcriptChars: guarded.transcripts.reduce((n, t) => n + t.length, 0)
+        },
+        "figure claim extraction guarded"
+      );
+      return {
+        claims: guarded.claims,
+        refusedClaims: guarded.refusedClaims,
+        transcripts: guarded.transcripts,
+        extractedBy
+      };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a figure claim extraction"
       );
 
       return reply.code(failure.status).send(failure.body);
