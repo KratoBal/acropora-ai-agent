@@ -171,7 +171,40 @@ export interface AiProviderFailure {
   body: {
     error: "ai_provider_timeout" | "ai_provider_error";
     waitedMs: number;
+    /** The provider's own identifiers for the failure, never its message. */
+    provider?: ProviderErrorCodes;
   };
+}
+
+export interface ProviderErrorCodes {
+  status?: number;
+  type?: string;
+  code?: string;
+  param?: string;
+}
+
+/** An identifier, not text: letters, digits and `_ . [ ]`, at most 64. */
+const IDENTIFIER = /^[A-Za-z0-9_.[\]]{1,64}$/;
+
+/**
+ * THE PROVIDER'S CODES, NOT ITS WORDS (barracuda, ai#63 review). On stage
+ * (2026-10-31) every claim call answered 502 after a request change, and the
+ * reason sat only in this service's log, which the fleet cannot read. The
+ * provider's error carries identifiers beside its message: the HTTP status, a
+ * type, a code and the parameter it refused. Those travel out, each only if it
+ * is an identifier (a code that looks like anything else is dropped); the
+ * message never does, because it may quote a key or the source's text.
+ */
+export function providerErrorCodes(error: unknown): ProviderErrorCodes | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const e = error as Record<string, unknown>;
+  const codes: ProviderErrorCodes = {};
+  if (typeof e.status === "number" && Number.isInteger(e.status)) codes.status = e.status;
+  for (const key of ["type", "code", "param"] as const) {
+    const value = e[key];
+    if (typeof value === "string" && IDENTIFIER.test(value)) codes[key] = value;
+  }
+  return Object.keys(codes).length ? codes : undefined;
 }
 
 /**
@@ -183,9 +216,9 @@ export interface AiProviderFailure {
  * reason: the number is what makes a slow chain visible to whoever is looking
  * at the screen, instead of only to whoever is reading the log.
  *
- * Nothing from the provider's error travels out. The upstream message may
+ * Nothing of the provider's MESSAGE travels out. The upstream message may
  * quote our key back at us; the log gets a redacted summary, the caller gets
- * a code and a duration.
+ * a code, a duration, and the provider's own identifiers (`providerErrorCodes`).
  */
 export function aiProviderFailure(
   error: unknown,
@@ -198,8 +231,9 @@ export function aiProviderFailure(
     };
   }
 
+  const provider = providerErrorCodes(error);
   return {
     status: 502,
-    body: { error: "ai_provider_error", waitedMs }
+    body: { error: "ai_provider_error", waitedMs, ...(provider ? { provider } : {}) }
   };
 }
