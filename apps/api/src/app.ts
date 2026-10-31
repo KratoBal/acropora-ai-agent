@@ -1077,8 +1077,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
             images: parsed.request.images.length,
             claims: guarded.claims.length,
             fromImage: guarded.claims.filter((c) => c.origin.part === "IMAGE").length,
+            fromReading: guarded.claims.filter((c) => c.origin.part === "READING").length,
             refusedClaims: guarded.refusedClaims.length,
-            transcriptChars: guarded.transcripts.reduce((n, t) => n + t.length, 0)
+            transcriptChars: guarded.transcripts.reduce((n, t) => n + t.length, 0),
+            readingChars: guarded.readings.reduce((n, t) => n + t.length, 0)
           },
           "figure claim extraction guarded"
         );
@@ -1086,6 +1088,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
           claims: guarded.claims,
           refusedClaims: guarded.refusedClaims,
           transcripts: guarded.transcripts,
+          readings: guarded.readings,
           extractedBy
         };
       } catch (error) {
