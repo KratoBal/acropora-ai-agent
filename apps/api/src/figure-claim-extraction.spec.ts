@@ -99,7 +99,7 @@ describe("figureClaimInstructions", () => {
       /ONLY printed text: never a value you read off a bar, a point, a line or a colour/,
       /never from where a mark stands on an axis/,
       /from the caption OR from ONE tile's transcript, never joined across them/,
-      /Every field's anchor comes from the same part as its claim's passage/,
+      /Every field's anchor comes from a part its claim may rest on/,
       /2 tiles in reading order/,
       // the text extraction's own rules, the same words
       /Only findings this text reports as ITS OWN result/,
@@ -197,7 +197,7 @@ describe("guardFigureClaims", () => {
     assert.deepEqual(guarded.refusedClaims, [{ refusal: "PASSAGE_ACROSS_PARTS" }, { refusal: "PASSAGE_ACROSS_PARTS" }]);
   });
 
-  it("a field's anchor stands in its passage's part: a CAPTION claim drops a number only a tile holds", () => {
+  it("a CAPTION claim drops a number only a tile holds; an IMAGE claim keeps the caption's words, not another tile's", () => {
     const guarded = guardFigureClaims(
       answer({
         claims: [
@@ -213,8 +213,10 @@ describe("guardFigureClaims", () => {
             passage: { text: "2 µM PO4: no change", locator: "panel B" },
             fields: {
               direction: { value: "NONE", anchor: "no change" },
-              // the caption's words, not tile 2's
-              effect: { value: "CALCIFICATION", anchor: "Calcification of Acropora millepora" }
+              // the caption's words: checkable, so an image claim may rest on them
+              species: { value: "ACROPORA_MILLEPORA", anchor: "Acropora millepora" },
+              // tile 1's words, not tile 2's
+              effect: { value: "CALCIFICATION", anchor: "Calcification (mg cm-2 d-1)" }
             }
           }
         ]
@@ -226,7 +228,7 @@ describe("guardFigureClaims", () => {
       guarded.claims.map((c) => [c.origin, c.fields.map((f) => f.field), c.refusedFields]),
       [
         [{ part: "CAPTION" }, ["direction"], [{ field: "quantity", refusal: "ANCHOR_ACROSS_PARTS" }]],
-        [{ part: "IMAGE", tile: 2 }, ["direction"], [{ field: "effect", refusal: "ANCHOR_ACROSS_PARTS" }]]
+        [{ part: "IMAGE", tile: 2 }, ["direction", "species"], [{ field: "effect", refusal: "ANCHOR_ACROSS_PARTS" }]]
       ]
     );
   });

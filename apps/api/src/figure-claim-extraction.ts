@@ -145,7 +145,7 @@ export function figureClaimInstructions(request: FigureClaimRequest): string {
     `Then the claims, at most ${MAX_CLAIMS}. One claim is one finding: one effect of the subject, in one setting, with its numbers. Below, "the text" means the caption together with your transcripts.`,
     ...claimFindingRules(),
     `"passage.text": the sentence(s) or label(s) the finding rests on, copied character for character from the caption OR from ONE tile's transcript, never joined across them (no edits, no ellipsis, at most ${MAX_PASSAGE} characters). "passage.locator": the panel, if the figure has panels (e.g. "panel B"), at most ${MAX_LOCATOR} characters.`,
-    "Every field's anchor comes from the same part as its claim's passage: a claim whose passage is in the caption takes its anchors from the caption, a claim whose passage is in a tile's transcript takes them from that transcript.",
+    "Every field's anchor comes from a part its claim may rest on: a claim whose passage is in the caption takes its anchors from the caption only; a claim whose passage is in a tile's transcript takes them from that transcript or from the caption, never from another tile.",
     "A quantity's number comes from the caption or from a printed label, never from where a mark stands on an axis. A trend you can only see (a curve that falls) with no printed number is a claim without a quantity, and its direction must be anchored in printed text.",
     ...claimFieldRules(request)
   ].join("\n");
@@ -226,15 +226,19 @@ export function guardFigureClaims(
       refusedClaims.push({ refusal: "PASSAGE_ACROSS_PARTS" });
       continue;
     }
-    // every field's anchor in the SAME part as the passage (barracuda, ai#59): a
-    // CAPTION claim must not carry a number only a tile's transcript holds
-    const part = origin.part === "CAPTION" ? caption : transcripts[origin.tile - 1]!;
-    const fields = claim.fields.filter((f) => part.includes(f.anchor));
-    const questions = claim.questions.filter((q) => part.includes(q.anchor));
+    // every anchor in a part the claim may rest on (barracuda, ai#59): a CAPTION
+    // claim on the caption only, so it never carries a number only a tile's
+    // transcript holds; an IMAGE claim on its own tile or on the caption (the
+    // checkable text: the species is usually named there, and an anchor there
+    // is verified, not less); never on another tile, never across two parts
+    const allowed = (anchor: string) =>
+      caption.includes(anchor) || (origin.part === "IMAGE" && transcripts[origin.tile - 1]!.includes(anchor));
+    const fields = claim.fields.filter((f) => allowed(f.anchor));
+    const questions = claim.questions.filter((q) => allowed(q.anchor));
     const refusedFields = [
       ...claim.refusedFields,
-      ...claim.fields.filter((f) => !part.includes(f.anchor)).map((f) => ({ field: f.field, refusal: "ANCHOR_ACROSS_PARTS" })),
-      ...claim.questions.filter((q) => !part.includes(q.anchor)).map((q) => ({ field: q.field, refusal: "ANCHOR_ACROSS_PARTS" }))
+      ...claim.fields.filter((f) => !allowed(f.anchor)).map((f) => ({ field: f.field, refusal: "ANCHOR_ACROSS_PARTS" })),
+      ...claim.questions.filter((q) => !allowed(q.anchor)).map((q) => ({ field: q.field, refusal: "ANCHOR_ACROSS_PARTS" }))
     ];
     claims.push({ ...claim, fields, questions, refusedFields, origin });
   }
