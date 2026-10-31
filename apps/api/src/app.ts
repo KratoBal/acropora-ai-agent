@@ -997,96 +997,109 @@ export function buildApp(dependencies: AppDependencies = {}) {
    * every passage and anchor must stand in the caption or a transcript; each
    * claim says which (`origin`), because only the caption is a text the OS can
    * check verbatim (`figure-claim-extraction.ts`). The body carries the images,
-   * so it has its own size limit. Nothing is stored here.
+   * so it has its own size limit, and the token is checked BEFORE the body is
+   * read (`onRequest`): otherwise a caller without a token could make this
+   * service read and parse 33 MiB per request (barracuda, ai#59). Nothing is
+   * stored here.
    */
-  app.post("/v1/figure-claim-extractions", { bodyLimit: FIGURE_BODY_LIMIT }, async (request, reply) => {
-    if (!tokenIsValid(request.headers.authorization)) {
-      return reply.code(401).send({
-        error: "unauthorized"
-      });
-    }
-
-    if (!consumeRateLimit(request.ip)) {
-      return reply
-        .code(429)
-        .header("Retry-After", "60")
-        .send({
-          error: "rate limit exceeded"
+  app.post(
+    "/v1/figure-claim-extractions",
+    {
+      bodyLimit: FIGURE_BODY_LIMIT,
+      onRequest: async (request, reply) => {
+        if (!tokenIsValid(request.headers.authorization))
+          return reply.code(401).send({ error: "unauthorized" });
+      }
+    },
+    async (request, reply) => {
+      if (!tokenIsValid(request.headers.authorization)) {
+        return reply.code(401).send({
+          error: "unauthorized"
         });
-    }
-
-    const parsed = parseFigureRequest(request.body);
-
-    if (!parsed.ok) {
-      return reply.code(400).send({
-        error: parsed.error
-      });
-    }
-
-    if (!process.env.OPENAI_API_KEY) {
-      return reply.code(503).send({
-        error: "AI provider is not configured"
-      });
-    }
-
-    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
-    const extractedBy = `${model} ${FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION}`;
-    const askedAt = Date.now();
-
-    try {
-      const response = await openai.responses.create({
-        model,
-        instructions: figureClaimInstructions(parsed.request),
-        input: figureClaimInput(parsed.request),
-        store: false
-      });
-
-      const incomplete =
-        response.status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null;
-      const guarded = guardFigureClaims(response.output_text ?? "", parsed.request, incomplete);
-
-      if (!guarded.ok) {
-        // the detail is counts and a code point, never the answer's text
-        request.log.warn(
-          { refusal: guarded.refusal, detail: guarded.detail },
-          "the figure claim extraction answer was refused by the guard"
-        );
-        return { refusal: guarded.refusal, detail: guarded.detail, extractedBy };
       }
 
-      // counts only in the log: the claims and transcripts carry the source's text
-      request.log.info(
-        {
-          images: parsed.request.images.length,
-          claims: guarded.claims.length,
-          fromImage: guarded.claims.filter((c) => c.origin.part === "IMAGE").length,
-          refusedClaims: guarded.refusedClaims.length,
-          transcriptChars: guarded.transcripts.reduce((n, t) => n + t.length, 0)
-        },
-        "figure claim extraction guarded"
-      );
-      return {
-        claims: guarded.claims,
-        refusedClaims: guarded.refusedClaims,
-        transcripts: guarded.transcripts,
-        extractedBy
-      };
-    } catch (error) {
-      const failure = aiProviderFailure(error, Date.now() - askedAt);
+      if (!consumeRateLimit(request.ip)) {
+        return reply
+          .code(429)
+          .header("Retry-After", "60")
+          .send({
+            error: "rate limit exceeded"
+          });
+      }
 
-      request.log.error(
-        {
-          aiProviderError: safeErrorSummary(error),
-          aiProviderOutcome: failure.body.error,
-          waitedMs: failure.body.waitedMs,
-          timeoutMs: limits.timeoutMs
-        },
-        "OpenAI request failed for a figure claim extraction"
-      );
+      const parsed = parseFigureRequest(request.body);
 
-      return reply.code(failure.status).send(failure.body);
+      if (!parsed.ok) {
+        return reply.code(400).send({
+          error: parsed.error
+        });
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        return reply.code(503).send({
+          error: "AI provider is not configured"
+        });
+      }
+
+      const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+      const extractedBy = `${model} ${FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION}`;
+      const askedAt = Date.now();
+
+      try {
+        const response = await openai.responses.create({
+          model,
+          instructions: figureClaimInstructions(parsed.request),
+          input: figureClaimInput(parsed.request),
+          store: false
+        });
+
+        const incomplete =
+          response.status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null;
+        const guarded = guardFigureClaims(response.output_text ?? "", parsed.request, incomplete);
+
+        if (!guarded.ok) {
+          // the detail is counts and a code point, never the answer's text
+          request.log.warn(
+            { refusal: guarded.refusal, detail: guarded.detail },
+            "the figure claim extraction answer was refused by the guard"
+          );
+          return { refusal: guarded.refusal, detail: guarded.detail, extractedBy };
+        }
+
+        // counts only in the log: the claims and transcripts carry the source's text
+        request.log.info(
+          {
+            images: parsed.request.images.length,
+            claims: guarded.claims.length,
+            fromImage: guarded.claims.filter((c) => c.origin.part === "IMAGE").length,
+            refusedClaims: guarded.refusedClaims.length,
+            transcriptChars: guarded.transcripts.reduce((n, t) => n + t.length, 0)
+          },
+          "figure claim extraction guarded"
+        );
+        return {
+          claims: guarded.claims,
+          refusedClaims: guarded.refusedClaims,
+          transcripts: guarded.transcripts,
+          extractedBy
+        };
+      } catch (error) {
+        const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+        request.log.error(
+          {
+            aiProviderError: safeErrorSummary(error),
+            aiProviderOutcome: failure.body.error,
+            waitedMs: failure.body.waitedMs,
+            timeoutMs: limits.timeoutMs
+          },
+          "OpenAI request failed for a figure claim extraction"
+        );
+
+        return reply.code(failure.status).send(failure.body);
+      }
     }
-  });
+  );
 
   /**
    * An answer from accepted knowledge only (Acropora OS research knowledge

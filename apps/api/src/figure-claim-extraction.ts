@@ -145,6 +145,7 @@ export function figureClaimInstructions(request: FigureClaimRequest): string {
     `Then the claims, at most ${MAX_CLAIMS}. One claim is one finding: one effect of the subject, in one setting, with its numbers. Below, "the text" means the caption together with your transcripts.`,
     ...claimFindingRules(),
     `"passage.text": the sentence(s) or label(s) the finding rests on, copied character for character from the caption OR from ONE tile's transcript, never joined across them (no edits, no ellipsis, at most ${MAX_PASSAGE} characters). "passage.locator": the panel, if the figure has panels (e.g. "panel B"), at most ${MAX_LOCATOR} characters.`,
+    "Every field's anchor comes from the same part as its claim's passage: a claim whose passage is in the caption takes its anchors from the caption, a claim whose passage is in a tile's transcript takes them from that transcript.",
     "A quantity's number comes from the caption or from a printed label, never from where a mark stands on an axis. A trend you can only see (a curve that falls) with no printed number is a claim without a quantity, and its direction must be anchored in printed text.",
     ...claimFieldRules(request)
   ].join("\n");
@@ -225,7 +226,17 @@ export function guardFigureClaims(
       refusedClaims.push({ refusal: "PASSAGE_ACROSS_PARTS" });
       continue;
     }
-    claims.push({ ...claim, origin });
+    // every field's anchor in the SAME part as the passage (barracuda, ai#59): a
+    // CAPTION claim must not carry a number only a tile's transcript holds
+    const part = origin.part === "CAPTION" ? caption : transcripts[origin.tile - 1]!;
+    const fields = claim.fields.filter((f) => part.includes(f.anchor));
+    const questions = claim.questions.filter((q) => part.includes(q.anchor));
+    const refusedFields = [
+      ...claim.refusedFields,
+      ...claim.fields.filter((f) => !part.includes(f.anchor)).map((f) => ({ field: f.field, refusal: "ANCHOR_ACROSS_PARTS" })),
+      ...claim.questions.filter((q) => !part.includes(q.anchor)).map((q) => ({ field: q.field, refusal: "ANCHOR_ACROSS_PARTS" }))
+    ];
+    claims.push({ ...claim, fields, questions, refusedFields, origin });
   }
   return { ok: true, claims, refusedClaims, transcripts };
 }

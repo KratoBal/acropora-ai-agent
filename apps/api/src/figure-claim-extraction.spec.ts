@@ -99,6 +99,7 @@ describe("figureClaimInstructions", () => {
       /ONLY printed text: never a value you read off a bar, a point, a line or a colour/,
       /never from where a mark stands on an axis/,
       /from the caption OR from ONE tile's transcript, never joined across them/,
+      /Every field's anchor comes from the same part as its claim's passage/,
       /2 tiles in reading order/,
       // the text extraction's own rules, the same words
       /Only findings this text reports as ITS OWN result/,
@@ -196,6 +197,66 @@ describe("guardFigureClaims", () => {
     assert.deepEqual(guarded.refusedClaims, [{ refusal: "PASSAGE_ACROSS_PARTS" }, { refusal: "PASSAGE_ACROSS_PARTS" }]);
   });
 
+  it("a field's anchor stands in its passage's part: a CAPTION claim drops a number only a tile holds", () => {
+    const guarded = guardFigureClaims(
+      answer({
+        claims: [
+          {
+            passage: { text: "Calcification decreased at 2 µM phosphate.", locator: "x" },
+            fields: {
+              direction: { value: "DECREASE", anchor: "Calcification decreased" },
+              // "2 µM PO4" stands only in tile 2's transcript
+              quantity: { min: 2, max: 2, unit: "µmol/l", basis: null, anchor: "2 µM PO4" }
+            }
+          },
+          {
+            passage: { text: "2 µM PO4: no change", locator: "panel B" },
+            fields: {
+              direction: { value: "NONE", anchor: "no change" },
+              // the caption's words, not tile 2's
+              effect: { value: "CALCIFICATION", anchor: "Calcification of Acropora millepora" }
+            }
+          }
+        ]
+      }),
+      REQUEST
+    );
+    assert.ok(guarded.ok);
+    assert.deepEqual(
+      guarded.claims.map((c) => [c.origin, c.fields.map((f) => f.field), c.refusedFields]),
+      [
+        [{ part: "CAPTION" }, ["direction"], [{ field: "quantity", refusal: "ANCHOR_ACROSS_PARTS" }]],
+        [{ part: "IMAGE", tile: 2 }, ["direction"], [{ field: "effect", refusal: "ANCHOR_ACROSS_PARTS" }]]
+      ]
+    );
+  });
+
+  it("an anchor across the caption's end and a tile's start is dropped, and so is a question's", () => {
+    const guarded = guardFigureClaims(
+      answer({
+        claims: [
+          {
+            passage: { text: "Calcification decreased at 2 µM phosphate.", locator: "x" },
+            fields: {
+              direction: { value: "DECREASE", anchor: "Calcification decreased" },
+              quantity: { min: 2, max: 2, unit: "µmol/l", basis: null, anchor: "2 µM phosphate. A PO4" },
+              species: { value: "Pocillopora", anchor: "B Skeletal density" }
+            }
+          }
+        ]
+      }),
+      REQUEST
+    );
+    assert.ok(guarded.ok);
+    const [claim] = guarded.claims;
+    assert.deepEqual(claim!.fields.map((f) => f.field), ["direction"]);
+    assert.deepEqual(claim!.questions, []);
+    assert.deepEqual(claim!.refusedFields, [
+      { field: "quantity", refusal: "ANCHOR_ACROSS_PARTS" },
+      { field: "species", refusal: "ANCHOR_ACROSS_PARTS" }
+    ]);
+  });
+
   it("an invented passage is refused by the text guard, with where it leaves", () => {
     const guarded = guardFigureClaims(
       answer({ claims: [{ passage: { text: "Calcification increased sharply", locator: "x" }, fields: {} }] }),
@@ -289,6 +350,24 @@ describe("POST /v1/figure-claim-extractions", () => {
     modelText = "nem json";
     const refused = await call(url, REQUEST);
     assert.deepEqual([refused.statusCode, refused.json().refusal], [200, "NOT_JSON"]);
+  });
+
+  it("the token is checked before the body is read: no token and a broken body is 401, not 400", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/figure-claim-extractions",
+      headers: { "content-type": "application/json" },
+      payload: "{"
+    });
+    assert.equal(response.statusCode, 401);
+    // the same body with the token is the parser's 400: the order above is the hook's
+    const withToken = await app.inject({
+      method: "POST",
+      url: "/v1/figure-claim-extractions",
+      headers: { authorization: `Bearer ${API_TOKEN}`, "content-type": "application/json" },
+      payload: "{"
+    });
+    assert.equal(withToken.statusCode, 400);
   });
 
   it("the route has its own body limit: a 2 MB tile goes through here, and the text route still refuses that size", async () => {
