@@ -184,8 +184,9 @@ export const CLAIMS_AS_JSON = { format: { type: "json_object" as const } };
  * (four sources, two runs); #63, with this lead in the input and nothing else
  * changed, read the same four sources with no 502 and no NOT_JSON (acrobot,
  * run cmvw6tent00lymz07yml84oux). The provider's own message was not read (the
- * stage log is not open to the fleet), so the rule is the one the docs give:
- * the JSON mode wants the word in the input messages. The data stays JSON.
+ * stage log is not open to the fleet): that the JSON mode wants the word in the
+ * input messages is what the one change shows, not a quoted rule. The data
+ * stays JSON.
  */
 export const JSON_INPUT_LEAD = "The input, as JSON data (answer with one JSON object):";
 
