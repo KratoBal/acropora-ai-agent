@@ -230,11 +230,7 @@ describe("why an answer is not JSON", () => {
   it("names where the parser stopped and the character there, never the text", () => {
     const cases: [string, string][] = [
       ['Here it is: {"claims": []}', "parse 0/26 U+0048"], // prose before the object
-      ['{"claims": []} Hope this helps.', "trailing 15/31 U+0048"], // prose after a whole object
-      // the two shapes seen on stage (2026-10-31), both stopping at a "{": a
-      // second object after a whole one, and two elements with no comma
-      ['{"claims": []}\n{"claims": []}', "trailing 15/29 U+007B"],
-      ['{"claims": [{"a": 1}{"b": 2}]}', "parse 20/30 U+007B"],
+      ['{"claims": []} Hope this helps.', "parse 15/31 U+0048"], // prose after it
       ['{"claims": [{"passage": "a\u0007b"}]}', "parse 26/32 U+0007"], // a raw control character
       ['{"claims": [{"passage": "a\\qb"}]}', "parse 27/33 U+0071"], // a bad escape
       ['{"claims": [{"passage": "µ\u00b5 cut', "parse 31/31 -"], // the answer ends in a string
@@ -313,12 +309,12 @@ describe("the claim request", () => {
 describe("POST /v1/claim-extractions", () => {
   const API_TOKEN = "test-api-access-token";
   const saved = { ...process.env };
-  let handed: { instructions?: unknown; input?: unknown; text?: unknown } = {};
+  let handed: { instructions?: unknown; input?: unknown } = {};
   let modelText = "";
   let modelCut = false;
   const modelClient = {
     responses: {
-      create: async (parameters: { instructions?: unknown; input?: unknown; text?: unknown }) => {
+      create: async (parameters: { instructions?: unknown; input?: unknown }) => {
         handed = parameters;
         return modelCut
           ? { output_text: modelText, status: "incomplete", incomplete_details: { reason: "max_output_tokens" } }
@@ -363,8 +359,6 @@ describe("POST /v1/claim-extractions", () => {
     assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} claim-extraction/v3`);
     // the model was told the rules, and was given the text as data
     assert.match(String(handed.instructions), /copied character for character/);
-    // and the provider enforces one JSON object
-    assert.deepEqual(handed.text, { format: { type: "json_object" } });
     assert.match(JSON.stringify(handed.input), /Acropora millepora/);
 
     modelText = "nem json";

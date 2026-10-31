@@ -165,17 +165,6 @@ export function claimExtractionInstructions(request: ClaimExtractionRequest): st
   ].join("\n");
 }
 
-/**
- * THE ANSWER IS ONE JSON OBJECT, ENFORCED BY THE PROVIDER (the Responses API's
- * JSON mode). Asked only in words, the model sometimes wrote a valid object and
- * then a second one, or two array elements with no comma: measured on stage
- * (2026-10-31, research-kepes-ut), six answers of four sources refused as
- * NOT_JSON, every one "parse N/M U+007B", where the same texts had read well that
- * morning. A JSON schema would bind the field shapes too, but the fields are an
- * open, optional set; JSON mode keeps the shape the guard already checks.
- */
-export const CLAIMS_AS_JSON = { format: { type: "json_object" as const } };
-
 export function claimExtractionInput(request: ClaimExtractionRequest): string {
   return JSON.stringify({ subject: request.subject, sourceText: request.sourceText });
 }
@@ -242,19 +231,15 @@ export function notJsonDetail(text: string, incomplete: string | null = null): s
     return `${word} ${length}/${length} -`;
   }
   let at: number;
-  let lastParseMessage = "";
   try {
     JSON.parse(body);
     at = 0; // valid JSON, not an object: the first character says what it is
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    lastParseMessage = message;
     const position = /at position (\d+)/.exec(message);
     at = position ? Number(position[1]) : /end of JSON input/.test(message) ? body.length : 0;
   }
-  // "trailing": a whole object, then more; "parse": broken inside (a missing comma)
-  const word = /after JSON/.test(lastParseMessage) ? "trailing" : "parse";
-  return `${word} ${[...body.slice(0, at)].length}/${length} ${codePoint(body.slice(at, at + 2))}`;
+  return `parse ${[...body.slice(0, at)].length}/${length} ${codePoint(body.slice(at, at + 2))}`;
 }
 
 /** The numbers of a text, a decimal comma read as a point. */
