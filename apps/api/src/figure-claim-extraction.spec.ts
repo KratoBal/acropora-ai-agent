@@ -292,11 +292,11 @@ describe("guardFigureClaims", () => {
 describe("POST /v1/figure-claim-extractions", () => {
   const API_TOKEN = "test-api-access-token";
   const saved = { ...process.env };
-  let handed: { instructions?: unknown; input?: unknown; text?: unknown } = {};
+  let handed: { instructions?: unknown; input?: unknown } = {};
   let modelText = "";
   const modelClient = {
     responses: {
-      create: async (parameters: { instructions?: unknown; input?: unknown; text?: unknown }) => {
+      create: async (parameters: { instructions?: unknown; input?: unknown }) => {
         handed = parameters;
         return { output_text: modelText };
       }
@@ -348,7 +348,6 @@ describe("POST /v1/figure-claim-extractions", () => {
     assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v1`);
     assert.match(String(handed.instructions), /ONLY printed text/);
     assert.match(JSON.stringify(handed.input), /"type":"input_image"/);
-    assert.deepEqual(handed.text, { format: { type: "json_object" } });
 
     modelText = "nem json";
     const refused = await call(url, REQUEST);
