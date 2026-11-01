@@ -113,6 +113,9 @@ describe("figureClaimInstructions", () => {
       /written as approximate/,
       /a caption or transcript claim never from a reading/,
       /the claim on it rests on the reading/,
+      // a literature-summary figure is other works' findings (research-diagram-irany)
+      /A figure that compiles other works' results/,
+      /give "claims": \[\] and an empty reading for every tile/,
       // the text extraction's own rules, the same words
       /Only findings this text reports as ITS OWN result/,
       /the anchor must contain the number, the unit and the word that says which/,
@@ -447,7 +450,7 @@ describe("POST /v1/figure-claim-extractions", () => {
     assert.deepEqual(body.claims[0].origin, { part: "IMAGE", tile: 2 });
     assert.equal(body.transcripts.length, 2);
     assert.deepEqual(body.readings, [READING_1, ""]);
-    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v3`);
+    assert.equal(body.extractedBy, `${process.env.OPENAI_MODEL ?? "gpt-5.1"} figure-claim-extraction/v4`);
     assert.match(String(handed.instructions), /ONLY printed text/);
     assert.match(JSON.stringify(handed.input), /"type":"input_image"/);
     assert.deepEqual(handed.text, { format: { type: "json_object" } });
