@@ -53,10 +53,13 @@ import {
  * the claims, because its own check runs against the same text.
  */
 /**
- * v3: the per-tile readings (a trend and an approximate value read off the
- * marks). v2: asked in the provider's JSON mode (`CLAIMS_AS_JSON`); v1 was not.
+ * v4: no claims and no readings from a figure that compiles other works'
+ * results (a literature summary: stage 2026-10-31, a paper's Fig. 1 of other
+ * studies' responses became the paper's own claims). v3: the per-tile readings
+ * (a trend and an approximate value read off the marks). v2: asked in the
+ * provider's JSON mode (`CLAIMS_AS_JSON`); v1 was not.
  */
-export const FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION = "figure-claim-extraction/v3";
+export const FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION = "figure-claim-extraction/v4";
 export const MAX_CAPTION = 4_000;
 export const MAX_FIGURE_LABEL = 64;
 /** The OS cuts a figure or a page into at most four tiles (`image-tiles.ts`). */
@@ -162,6 +165,7 @@ export function figureClaimInstructions(request: FigureClaimRequest): string {
     `"transcripts": one string per tile, in the tiles' order (${n} in all): the text PRINTED in that tile, copied character for character as printed: axis titles, tick labels, legend entries, panel letters, annotations, table cells (a cell ends with " | ", a row or a label with a line break). At most ${MAX_TRANSCRIPT} characters a tile. ONLY printed text: never a value you read off a bar, a point, a line or a colour, never a description of the image. A number that is not printed is not there.`,
     `"readings": one string per tile, in the tiles' order (${n} in all): what the marks in that tile show about the subject that no printed text states, in your own plain sentences: the direction a curve, a bar series or a point series takes as the subject changes, and a value read off an axis, written as approximate ("about 0.5 µM phosphate") with the axis's printed unit and the panel. At most ${MAX_READING} characters a tile; an empty string when the tile shows nothing about the subject beyond its printed text. Never a value between or beyond the printed ticks you cannot place, never the caption's words retold, never a description of colours or layout.`,
     `Then the claims, at most ${MAX_CLAIMS}. One claim is one finding: one effect of the subject, in one setting, with its numbers. Below, "the text" means the caption together with your transcripts and your readings.`,
+    'A figure that compiles other works\' results (a summary of published studies or of the literature, a review or meta-analysis figure, data "from" or "compiled from" other studies) shows their findings, not this paper\'s own: give "claims": [] and an empty reading for every tile. Its transcripts are still given.',
     ...claimFindingRules(),
     `"passage.text": the sentence(s) or label(s) the finding rests on, copied character for character from the caption OR from ONE tile's transcript OR from ONE tile's reading, never joined across them (no edits, no ellipsis, at most ${MAX_PASSAGE} characters). "passage.locator": the panel, if the figure has panels (e.g. "panel B"), at most ${MAX_LOCATOR} characters.`,
     "Every field's anchor comes from a part its claim may rest on: a claim whose passage is in the caption takes its anchors from the caption only; a claim whose passage is in a tile's transcript takes them from that transcript or from the caption; a claim whose passage is in a tile's reading takes them from that reading, that tile's transcript or the caption. Never from another tile, and a caption or transcript claim never from a reading.",
