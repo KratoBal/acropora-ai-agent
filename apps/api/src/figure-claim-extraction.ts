@@ -245,7 +245,7 @@ export function guardFigureClaims(
   const readingsDropped: { refusal: string; detail?: string }[] = [];
   let read: string[];
   if (strings !== null && strings.length === n) read = strings;
-  else if (strings !== null && n === 1) {
+  else if (strings !== null && strings.length > 0 && n === 1) {
     read = [strings.join(" ")];
     readingsDropped.push({ refusal: "READINGS_JOINED", detail: `readings ${strings.length}/1 -` });
   } else {

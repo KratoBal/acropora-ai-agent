@@ -356,7 +356,8 @@ describe("guardFigureClaims", () => {
     for (const [readings, detail] of [
       [[READING_1], "readings 1/2 -"],
       ["x", "readings 0/2 -"],
-      [[READING_1, "", ""], "readings 3/2 -"]
+      [[READING_1, "", ""], "readings 3/2 -"],
+      [[], "readings 0/2 -"]
     ] as const) {
       const g = guardFigureClaims(answer({ readings, claims: [captionClaim] }), REQUEST);
       assert.ok(g.ok, detail);
@@ -392,6 +393,12 @@ describe("guardFigureClaims", () => {
     assert.ok(g.readings[0]!.includes("Panel B: skeletal density"));
     assert.deepEqual(g.claims.map((c) => c.origin), [{ part: "READING", tile: 1 }]);
     assert.deepEqual(g.refusedClaims, [{ refusal: "READINGS_JOINED", detail: "readings 2/1 -" }]);
+
+    // an empty list joins nothing: it is a missing reading, not a joined one (barracuda on #67)
+    const empty = guardFigureClaims(JSON.stringify({ transcripts: [TILE_1], readings: [], claims: [] }), one);
+    assert.ok(empty.ok);
+    assert.deepEqual(empty.readings, [""]);
+    assert.deepEqual(empty.refusedClaims, [{ refusal: "NO_READINGS", detail: "readings 0/1 -" }]);
   });
 
   it("an invented passage is refused by the text guard, with where it leaves", () => {
