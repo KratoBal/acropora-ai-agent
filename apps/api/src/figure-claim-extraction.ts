@@ -234,11 +234,30 @@ export function guardFigureClaims(
   const transcripts = (given as string[]).map(squash);
   // the readings may be left out (a model that read nothing off the marks), but
   // when given, one per tile like the transcripts
-  const read = raw.readings ?? request.images.map(() => "");
-  if (!Array.isArray(read) || read.length !== request.images.length || !read.every((t) => typeof t === "string"))
-    return { ok: false, refusal: "NO_READINGS", detail: `readings ${Array.isArray(read) ? read.length : 0}/${request.images.length} -` };
-  if (read.some((t) => t.length > MAX_READING)) return { ok: false, refusal: "READING_TOO_LONG" };
-  const readings = (read as string[]).map(squash);
+  // A BAD READING LIST COSTS THE READINGS, NOT THE FIGURE (stage 2026-11-01: two
+  // readings for a one-tile figure refused its transcripts and caption claims
+  // too). One tile: every reading is that tile's, so they are joined. Otherwise
+  // a list of the wrong shape is dropped whole, and a reading too long is
+  // dropped alone; each says so in `readingsDropped`.
+  const n = request.images.length;
+  const givenReadings = raw.readings ?? request.images.map(() => "");
+  const strings = Array.isArray(givenReadings) && givenReadings.every((t) => typeof t === "string") ? (givenReadings as string[]) : null;
+  const readingsDropped: { refusal: string; detail?: string }[] = [];
+  let read: string[];
+  if (strings !== null && strings.length === n) read = strings;
+  else if (strings !== null && n === 1) {
+    read = [strings.join(" ")];
+    readingsDropped.push({ refusal: "READINGS_JOINED", detail: `readings ${strings.length}/1 -` });
+  } else {
+    read = request.images.map(() => "");
+    readingsDropped.push({ refusal: "NO_READINGS", detail: `readings ${strings ? strings.length : 0}/${n} -` });
+  }
+  read = read.map((t) => {
+    if (t.length <= MAX_READING) return t;
+    readingsDropped.push({ refusal: "READING_TOO_LONG" });
+    return "";
+  });
+  const readings = read.map(squash);
   const caption = squash(request.caption);
 
   // the field guard of the text extraction, on caption + transcripts + readings
@@ -250,7 +269,7 @@ export function guardFigureClaims(
   if (!guarded.ok) return guarded;
 
   const claims: FigureClaim[] = [];
-  const refusedClaims = [...guarded.refusedClaims];
+  const refusedClaims = [...readingsDropped, ...guarded.refusedClaims];
   for (const claim of guarded.claims) {
     // a passage stands in ONE part, so it can be checked (caption) or pointed at
     // (tile); printed text first, so a reading that repeats a label is not one

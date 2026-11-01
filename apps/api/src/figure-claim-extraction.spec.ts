@@ -342,24 +342,56 @@ describe("guardFigureClaims", () => {
     assert.deepEqual(guarded.refusedClaims, [{ refusal: "PASSAGE_ACROSS_PARTS" }]);
   });
 
-  it("the readings may be left out; the wrong number of them, or one too long, refuses the whole answer", () => {
+  it("the readings may be left out; a bad list costs the readings, never the transcripts and the caption claims", () => {
     const left = guardFigureClaims(answer({ claims: [] }), REQUEST);
     assert.ok(left.ok);
     assert.deepEqual(left.readings, ["", ""]);
-    assert.deepEqual(guardFigureClaims(answer({ readings: [READING_1], claims: [] }), REQUEST), {
-      ok: false,
-      refusal: "NO_READINGS",
-      detail: "readings 1/2 -"
-    });
-    assert.deepEqual(guardFigureClaims(answer({ readings: "x", claims: [] }), REQUEST), {
-      ok: false,
-      refusal: "NO_READINGS",
-      detail: "readings 0/2 -"
-    });
-    assert.deepEqual(guardFigureClaims(answer({ readings: ["", "x".repeat(MAX_READING + 1)], claims: [] }), REQUEST), {
-      ok: false,
-      refusal: "READING_TOO_LONG"
-    });
+    assert.deepEqual(left.refusedClaims, []);
+
+    // the caption claim survives a reading list of the wrong length, and says why the readings went
+    const captionClaim = {
+      passage: { text: "Calcification decreased at 2 µM phosphate.", locator: "x" },
+      fields: { direction: { value: "DECREASE", anchor: "Calcification decreased" } }
+    };
+    for (const [readings, detail] of [
+      [[READING_1], "readings 1/2 -"],
+      ["x", "readings 0/2 -"],
+      [[READING_1, "", ""], "readings 3/2 -"]
+    ] as const) {
+      const g = guardFigureClaims(answer({ readings, claims: [captionClaim] }), REQUEST);
+      assert.ok(g.ok, detail);
+      assert.deepEqual(g.readings, ["", ""], detail);
+      assert.deepEqual(g.claims.map((c) => c.origin), [{ part: "CAPTION" }], detail);
+      assert.deepEqual(g.refusedClaims, [{ refusal: "NO_READINGS", detail }], detail);
+    }
+
+    // a reading too long goes alone
+    const long = guardFigureClaims(answer({ readings: [READING_1, "x".repeat(MAX_READING + 1)], claims: [] }), REQUEST);
+    assert.ok(long.ok);
+    assert.deepEqual(long.readings, [READING_1, ""]);
+    assert.deepEqual(long.refusedClaims, [{ refusal: "READING_TOO_LONG" }]);
+  });
+
+  it("one tile: every reading is that tile's, so two readings are joined and a claim on either stays", () => {
+    const one: FigureClaimRequest = { ...REQUEST, images: [png()] };
+    const g = guardFigureClaims(
+      JSON.stringify({
+        transcripts: [TILE_1],
+        readings: [READING_1, "Panel B: skeletal density does not change with phosphate."],
+        claims: [
+          {
+            passage: { text: READING_1, locator: "panel A" },
+            fields: { direction: { value: "DECREASE", anchor: "calcification falls steadily as phosphate rises" } }
+          }
+        ]
+      }),
+      one
+    );
+    assert.ok(g.ok);
+    assert.equal(g.readings.length, 1);
+    assert.ok(g.readings[0]!.includes("Panel B: skeletal density"));
+    assert.deepEqual(g.claims.map((c) => c.origin), [{ part: "READING", tile: 1 }]);
+    assert.deepEqual(g.refusedClaims, [{ refusal: "READINGS_JOINED", detail: "readings 2/1 -" }]);
   });
 
   it("an invented passage is refused by the text guard, with where it leaves", () => {
