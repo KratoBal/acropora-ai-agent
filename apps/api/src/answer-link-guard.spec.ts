@@ -208,6 +208,22 @@ describe("matrix 5.2: the three exceptions, each with its own condition", () => 
     }
   });
 
+  // acrobot 46930: the list is matched exactly, except a leading "www." on either side; another subdomain is another host
+  it("a listed host matches with or without www., in both directions, and no other subdomain", () => {
+    const asked = { userMessage: "Küldj linket a gyártó adatlapjához!" };
+    assert.equal(guard("https://www.redseafish.com/x", { ...asked, sources: [manufacturer] }).ok, true);
+    assert.equal(
+      guard("https://nebih.gov.hu/x", { ...asked, sources: [{ ...authority, host: "www.nebih.gov.hu" }] }).ok,
+      true
+    );
+    for (const answer of ["https://docs.redseafish.com/x", "https://www2.redseafish.com/x", "https://wwwredseafish.com/x"])
+      assert.deepEqual(
+        guard(answer, { ...asked, sources: [manufacturer] }).reason,
+        "EXCEPTION_WITHOUT_STORED_SOURCE",
+        answer
+      );
+  });
+
   it("row 15: a listed host with neither K1, K2 nor K3", () => {
     for (const source of [manufacturer, authority]) {
       const result = guard(`https://${source.host}/x`, { userMessage: "Mit etessek?", sources: [source] });
