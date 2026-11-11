@@ -1,4 +1,8 @@
 import type { PrefilterDecision } from "./request-prefilter.js";
+import {
+  OFFTOPIC_SERIES_FIRM_AT,
+  PREFILTER_FIRM_BLOCK_ANSWER
+} from "./request-prefilter-turns.js";
 
 /**
  * THE LOCAL ANSWERS OF THE PRE-FILTER AND ITS SWITCH, IN ONE PLACE (Acropora OS card f5b8f7ba, slice 2).
@@ -31,8 +35,15 @@ export const PREFILTER_ASK_ANSWER =
 /** The model label saved with a local answer: no model ran, and a judging surface must be able to tell. */
 export const PREFILTER_MODEL_LABEL = "local-prefilter";
 
-export function localAnswerFor(decision: Exclude<PrefilterDecision, "pass">): string {
-  return decision === "block" ? PREFILTER_BLOCK_ANSWER : PREFILTER_ASK_ANSWER;
+/** `offTopicSeries` is how many off-topic questions in a row end with this one (slice 3): from the fifth the firmer text is used. */
+export function localAnswerFor(
+  decision: Exclude<PrefilterDecision, "pass">,
+  offTopicSeries = 1
+): string {
+  if (decision === "ask") return PREFILTER_ASK_ANSWER;
+  return offTopicSeries >= OFFTOPIC_SERIES_FIRM_AT
+    ? PREFILTER_FIRM_BLOCK_ANSWER
+    : PREFILTER_BLOCK_ANSWER;
 }
 
 /** The switch: exactly `true` turns the pre-filter on. OFF by default (the first state of every gate of this service). Read per call. */
