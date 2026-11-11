@@ -10,12 +10,14 @@ import {
 import {
   PREFILTER_ASK_ANSWER,
   PREFILTER_BLOCK_ANSWER,
+  COLLEAGUE_OFFER_ENV,
   PREFILTER_ENV,
   PREFILTER_MODEL_LABEL,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
 import {
   COLLEAGUE_OFFER,
+  COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS,
   PREFILTER_FIRM_BLOCK_ANSWER
 } from "./request-prefilter-turns.js";
 
@@ -53,10 +55,12 @@ function fixture(seed: Stored[] = []) {
     getConversationMessages: async () => messages.slice(-20).map(({ role, content }) => ({ role, content }))
   } as unknown as ConversationStore;
   let modelCalls = 0;
+  const instructionsSeen: string[] = [];
   const openai = {
     responses: {
-      create: async () => {
+      create: async (args: { instructions?: string }) => {
         modelCalls += 1;
+        instructionsSeen.push(args.instructions ?? "");
         return { output_text: "A modell válasza." };
       }
     }
@@ -73,7 +77,7 @@ function fixture(seed: Stored[] = []) {
     level: "info",
     child: () => logger
   };
-  return { store, openai, logger, messages, outcomes, lines, modelCalls: () => modelCalls };
+  return { store, openai, logger, messages, outcomes, lines, instructionsSeen, modelCalls: () => modelCalls };
 }
 
 const saved = { ...process.env };
@@ -105,6 +109,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env[PREFILTER_ENV];
+  delete process.env[COLLEAGUE_OFFER_ENV];
 });
 
 async function ask(fx: ReturnType<typeof fixture>, message: string, conversationId?: string) {
@@ -305,6 +310,7 @@ const OFF_TOPIC = "Ki nyerte tegnap a meccset?";
 describe("the colleague offer (rows 19a-19f)", () => {
   beforeEach(() => {
     process.env[PREFILTER_ENV] = "true";
+    process.env[COLLEAGUE_OFFER_ENV] = "true";
   });
 
   it("19a, 19b, 19c, 19d: absent at three turns, there at the fourth, answers go on, never again", async () => {
@@ -347,10 +353,20 @@ describe("the colleague offer (rows 19a-19f)", () => {
     assert.equal(answers.filter((a) => a.includes(COLLEAGUE_OFFER)).length, 1);
   });
 
-  it("the offer is part of the switch: off, the fourth answer is the model's alone", async () => {
+  it("the offer needs BOTH switches: the pre-filter off, or its own switch off (the default), the fourth answer is the model's alone", async () => {
     delete process.env[PREFILTER_ENV];
-    const answers = await turns(fixture(), Array.from({ length: 5 }, () => AQUARIUM));
-    assert.equal(answers.some((a) => a.includes(COLLEAGUE_OFFER)), false);
+    const gateOff = await turns(fixture(), Array.from({ length: 5 }, () => AQUARIUM));
+    assert.equal(gateOff.some((a) => a.includes(COLLEAGUE_OFFER)), false);
+
+    process.env[PREFILTER_ENV] = "true";
+    delete process.env[COLLEAGUE_OFFER_ENV];
+    const offerOff = await turns(fixture(), Array.from({ length: 5 }, () => AQUARIUM));
+    assert.equal(offerOff.some((a) => a.includes(COLLEAGUE_OFFER)), false);
+    for (const value of ["", "false", "TRUE", "1", " true"]) {
+      process.env[COLLEAGUE_OFFER_ENV] = value;
+      const other = await turns(fixture(), Array.from({ length: 5 }, () => AQUARIUM));
+      assert.equal(other.some((a) => a.includes(COLLEAGUE_OFFER)), false, JSON.stringify(value));
+    }
   });
 
   it("19e: the sentence promises no forwarding, callback or immediate contact, asks nothing and holds no contact data", () => {
@@ -411,5 +427,31 @@ describe("the off-topic series (rows 21 and 22)", () => {
       /időjárás|meteorol|weather|google|internet|böngész|keresőmotor|alkalmazás|szolgáltató|honlap|weboldal|térkép/i.test(PREFILTER_FIRM_BLOCK_ANSWER),
       false
     );
+  });
+});
+
+describe("what the model is told about the offer (barracuda's review of #71)", () => {
+  it("with the offer switch on, the model's instructions say what to answer to 'yes, please' and forbid inventing a contact", async () => {
+    process.env[PREFILTER_ENV] = "true";
+    process.env[COLLEAGUE_OFFER_ENV] = "true";
+    const fx = fixture();
+    await turns(fx, [AQUARIUM, AQUARIUM, AQUARIUM, AQUARIUM, "Igen, kérem."]);
+    assert.equal(fx.instructionsSeen.length, 5);
+    for (const seen of fx.instructionsSeen) assert.equal(seen.includes(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS), true);
+  });
+
+  it("with the offer switch off (the default, even with the gate on), the instructions are exactly what they were", async () => {
+    process.env[PREFILTER_ENV] = "true";
+    delete process.env[COLLEAGUE_OFFER_ENV];
+    const fx = fixture();
+    await turns(fx, [AQUARIUM, "Igen, kérem."]);
+    for (const seen of fx.instructionsSeen) assert.equal(seen.includes(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS), false);
+  });
+
+  it("the instruction holds no number, no address and no contact of its own, and promises nothing", () => {
+    assert.equal(/\d|@|http|www/i.test(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS.replace(/'yes, please'/, "")), false);
+    assert.match(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS, /cannot put them in touch/);
+    assert.match(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS, /Do not write any telephone number, e-mail address/);
+    assert.match(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS, /do not promise a callback/);
   });
 });
