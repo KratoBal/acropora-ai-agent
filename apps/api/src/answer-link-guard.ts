@@ -141,6 +141,12 @@ export function normalizeHost(raw: string): string {
   return labels.join(".");
 }
 
+/**
+ * The key a host is compared with the stored source list by (acrobot 46930): EXACT, except a leading `www.`, on both
+ * sides, so an entry "redseafish.com" covers "www.redseafish.com" and back; any other subdomain is another host.
+ */
+export const sourceHostKey = (host: string) => host.replace(/^www\./, "");
+
 const isIPv4 = (host: string) =>
   /^(?:\d{1,3}\.){3}\d{1,3}$/.test(host) && host.split(".").every((part) => Number(part) <= 255);
 
@@ -310,7 +316,7 @@ export function guardAnswerLinks(input: LinkGuardInput): LinkGuardResult {
     }
     const source = link.ip
       ? undefined
-      : input.sources.find((s) => normalizeHost(s.host) === link.host);
+      : input.sources.find((s) => sourceHostKey(normalizeHost(s.host)) === sourceHostKey(link.host));
     if (source && allowedBy(source, asksForLink, authorityTopic, hitBrands)) {
       result.allowedByException++;
       continue;
