@@ -1,10 +1,12 @@
 import type { StoredLinkSource } from "./answer-link-guard.js";
+import { CHAT_SETTINGS_PATH, CHAT_SETTINGS_TOKEN_ENV, chatSettingsConfig, requestChatSettings } from "./chat-settings.js";
 
 /**
  * THE STORED LINK SOURCES, READ FROM THE ACROPORA OS (card 9d060f5c; plan v3 section 6.3, acrobot 46815). The answer
  * link gate lets an external host out only if it is on this list AND one of the three exceptions holds there; the
- * OS keeps the list next to its AI chat settings, and this service reads it on the settings reader endpoint, behind
- * its OWN token (the OS accepts exactly one service-token record there, `ACROPORA_AI_CHAT_SETTINGS_TOKEN_ID`).
+ * OS keeps the list next to its AI chat settings, and this service reads it on the settings reader endpoint through the
+ * same client and token as the retention days (`chat-settings.ts`, `requestChatSettings`; barracuda on #77). Only the
+ * `linkSources` field is read here; the retention reader reads only its three.
  *
  * EVERY FAILURE READS AS AN EMPTY LIST, and that direction is the point: the list only WIDENS what may leave, so a
  * list that could not be read turns the exceptions off and the gate stays at its default. An outage never lets a
@@ -14,10 +16,8 @@ import type { StoredLinkSource } from "./answer-link-guard.js";
  * manufacturer document) is dropped, never guessed into one.
  */
 
-export const LINK_SOURCES_PATH = "/integrations/ai-chat-settings/service";
-
-/** The token for THIS door: one leaked credential must not carry another system (the product search has its own). */
-export const LINK_SOURCES_TOKEN_ENV = "ACROPORA_OS_AI_CHAT_SETTINGS_TOKEN";
+export const LINK_SOURCES_PATH = CHAT_SETTINGS_PATH;
+export const LINK_SOURCES_TOKEN_ENV = CHAT_SETTINGS_TOKEN_ENV;
 
 /** A settings read, not a search: a short wait, as the answer is already in hand when it is needed. */
 export const LINK_SOURCES_TIMEOUT_MS = 3_000;
@@ -65,27 +65,22 @@ export async function readLinkSources(options: LinkSourcesOptions = {}): Promise
   const now = options.now ?? Date.now();
   if (cache && now - cache.at < LINK_SOURCES_CACHE_MS) return cache.read;
 
-  const environment = options.environment ?? process.env;
-  const baseUrl = environment.ACROPORA_OS_BASE_URL?.trim().replace(/\/+$/, "");
-  const token = environment[LINK_SOURCES_TOKEN_ENV]?.trim();
-  if (!baseUrl || !token) return { ok: false, sources: [], reason: "not_configured" };
+  const config = chatSettingsConfig(options.environment ?? process.env);
+  if (!config) return { ok: false, sources: [], reason: "not_configured" };
 
-  let response: Response;
-  try {
-    response = await (options.fetchImpl ?? fetch)(`${baseUrl}${LINK_SOURCES_PATH}`, {
-      method: "GET",
-      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
-      signal: AbortSignal.timeout(options.timeoutMs ?? LINK_SOURCES_TIMEOUT_MS)
-    });
-  } catch {
-    // only that it failed travels: a transport error can carry the request, and the request holds the token
-    return { ok: false, sources: [], reason: "unavailable" };
-  }
-  if (response.status === 401 || response.status === 403)
-    return { ok: false, sources: [], reason: "unauthorized" };
-  if (!response.ok) return { ok: false, sources: [], reason: "unavailable" };
+  const answer = await requestChatSettings({
+    config,
+    fetchImpl: options.fetchImpl,
+    timeoutMs: options.timeoutMs ?? LINK_SOURCES_TIMEOUT_MS
+  });
+  if (!answer.ok)
+    return {
+      ok: false,
+      sources: [],
+      reason: answer.error === "chat_settings_unauthorized" ? "unauthorized" : "unavailable"
+    };
 
-  const body = (await response.json().catch(() => null)) as { linkSources?: unknown } | null;
+  const body = answer.body as { linkSources?: unknown } | null;
   // an OS before the list existed answers without the field: that is an empty list, not a broken answer
   if (!body || typeof body !== "object") return { ok: false, sources: [], reason: "bad_response" };
   if (body.linkSources !== undefined && !Array.isArray(body.linkSources))

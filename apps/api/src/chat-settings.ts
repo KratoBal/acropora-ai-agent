@@ -76,9 +76,16 @@ export interface ChatSettingsOptions {
   timeoutMs?: number;
 }
 
-export async function fetchChatSettings(
-  options: ChatSettingsOptions
-): Promise<ChatSettingsOutcome> {
+export type ChatSettingsBody =
+  | { ok: true; body: unknown }
+  | { ok: false; error: ChatSettingsErrorCode; detail: string };
+
+/**
+ * THE ONE CALL TO THE READER ENDPOINT, shared by the readers of its fields (the retention days here, the stored link sources
+ * in `link-sources.ts`; barracuda on #77): one transport, one token, one set of failure codes. Each reader then checks ONLY the
+ * fields it acts on, so a reader never depends on a field it does not use. A body that is not JSON comes back as `null`.
+ */
+export async function requestChatSettings(options: ChatSettingsOptions): Promise<ChatSettingsBody> {
   const call = options.fetchImpl ?? fetch;
   let response: Response;
   try {
@@ -113,7 +120,15 @@ export async function fetchChatSettings(
       detail: `os status ${response.status}`
     };
 
-  const view = parseChatSettingsView(await response.json().catch(() => null));
+  return { ok: true, body: await response.json().catch(() => null) };
+}
+
+export async function fetchChatSettings(
+  options: ChatSettingsOptions
+): Promise<ChatSettingsOutcome> {
+  const answer = await requestChatSettings(options);
+  if (!answer.ok) return answer;
+  const view = parseChatSettingsView(answer.body);
   if (!view)
     return {
       ok: false,
