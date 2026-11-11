@@ -146,6 +146,60 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB
     assert.equal(await count("messages"), 1, "the new message is saved");
   });
 
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("the job is ALREADY in its DELETE when the customer's check arrives: the check waits for the row lock, then sees no row (false), not a foreign key error", async () => {
+    // The two statements of the job are run by hand inside an open transaction, so the lock is held while the check runs.
+    const conversations = await import("./conversations.js");
+    const fortyDaysAgo = new Date(Date.now() - 40 * 86_400_000);
+    const cutoff = new Date(Date.now() - DAYS * 86_400_000);
+    const c = await conversation(fortyDaysAgo);
+    await message(c, fortyDaysAgo);
+    const job = await db.pool.connect();
+    try {
+      await job.query("BEGIN");
+      await job.query("DELETE FROM messages WHERE created_at < $1", [cutoff]);
+      const deleted = await job.query("DELETE FROM conversations c WHERE c.updated_at < $1 AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id)", [cutoff]);
+      assert.equal(deleted.rowCount, 1, "the job's delete holds the conversation's row lock");
+      let settled = false;
+      const check = conversations.conversationBelongsToClient(c, "k", "anonymous").then((value) => {
+        settled = true;
+        return value;
+      });
+      await sleep(300);
+      assert.equal(settled, false, "the check WAITS for the lock");
+      await job.query("COMMIT");
+      assert.equal(await check, false, "after the delete the conversation is gone: the route answers 'not found', it does not insert");
+    } finally {
+      job.release();
+    }
+  });
+
+  it("the customer's check is ALREADY running when the job reaches the conversation: the job waits, then leaves it (the row is young now)", async () => {
+    const conversations = await import("./conversations.js");
+    const fortyDaysAgo = new Date(Date.now() - 40 * 86_400_000);
+    const c = await conversation(fortyDaysAgo);
+    await message(c, fortyDaysAgo);
+    const check = await db.pool.connect();
+    try {
+      await check.query("BEGIN");
+      await check.query("UPDATE conversations SET updated_at = NOW() WHERE id = $1 AND client_key = 'k' AND subject = 'anonymous' RETURNING 1", [c]);
+      let finished = false;
+      const run = job.runRetentionOnce(db.pool, new Date(), DAYS).then((result) => {
+        finished = true;
+        return result;
+      });
+      await sleep(300);
+      assert.equal(finished, false, "the job WAITS for the conversation's row lock");
+      await check.query("COMMIT");
+      await run;
+      assert.equal(await count("conversations"), 1, "the conversation the customer is continuing stays");
+      await conversations.saveMessage({ conversationId: c, role: "user", content: "új üzenet" });
+    } finally {
+      check.release();
+    }
+  });
+
   it("a conversation that is NOT continued is still deleted when old and empty (the control)", async () => {
     const conversations = await import("./conversations.js");
     const c = await conversation(at(-1000));
