@@ -67,6 +67,12 @@ import {
   localAnswerFor,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
+import {
+  customerTurnCount,
+  offTopicSeries,
+  shouldOfferColleague,
+  withColleagueOffer
+} from "./request-prefilter-turns.js";
 import { safeErrorSummary } from "./redact.js";
 import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
 import {
@@ -607,11 +613,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
       const verdict = classifyRequest(message, earlier);
 
       if (verdict.decision !== "pass") {
+        // The series is a number, never text. It is replayed from the history (no stored counter).
+        const series =
+          verdict.decision === "block" ? offTopicSeries(earlier) : 0;
         request.log.info(
-          { prefilter: verdict },
+          { prefilter: verdict, offTopicSeries: series },
           "the local pre-filter answered; no model call"
         );
-        const localAnswer = localAnswerFor(verdict.decision);
+        const localAnswer = localAnswerFor(verdict.decision, series);
         const localMessageId = await conversations.saveMessage({
           conversationId: activeConversationId,
           role: "assistant",
@@ -702,7 +711,17 @@ export function buildApp(dependencies: AppDependencies = {}) {
       // customer gets the label-or-colleague sentence. The reason is logged,
       // the model's sentence is not (it may quote the customer).
       const doseGuard = guardAnswerDoses(response.output_text ?? "", productSearch);
-      const answerText = doseGuard.ok ? response.output_text : DOSE_GUARD_FALLBACK;
+      const modelAnswer = doseGuard.ok ? response.output_text : DOSE_GUARD_FALLBACK;
+      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind the
+      // same switch as the gate. The count is of the history the route loaded, with the message being answered in it.
+      const offerColleague =
+        prefilterEnabled() && shouldOfferColleague(customerTurnCount(history));
+      if (offerColleague)
+        request.log.info(
+          { colleagueOffer: true },
+          "the colleague offer was appended to the answer"
+        );
+      const answerText = offerColleague ? withColleagueOffer(modelAnswer) : modelAnswer;
       if (!doseGuard.ok)
         request.log.warn(
           { doseGuard: doseGuard.reason },

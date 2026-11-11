@@ -14,6 +14,10 @@ import {
   PREFILTER_MODEL_LABEL,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
+import {
+  COLLEAGUE_OFFER,
+  PREFILTER_FIRM_BLOCK_ANSWER
+} from "./request-prefilter-turns.js";
 
 /*
   THE PRE-FILTER IN THE CHAT ROUTE (slice 2, card f5b8f7ba): the real `/v1/chat` handler, a fake conversation store, a fake model
@@ -45,7 +49,8 @@ function fixture(seed: Stored[] = []) {
     setMessageOutcome: async (id: string, outcome: string) => {
       outcomes.push({ id, outcome });
     },
-    getConversationMessages: async () => messages.map(({ role, content }) => ({ role, content }))
+    // The real store returns the LAST twenty messages in time order (ORDER BY created_at DESC LIMIT 20, reversed).
+    getConversationMessages: async () => messages.slice(-20).map(({ role, content }) => ({ role, content }))
   } as unknown as ConversationStore;
   let modelCalls = 0;
   const openai = {
@@ -280,5 +285,131 @@ describe("the local texts (matrix row 17: what an answer without a model must no
     assert.match(PREFILTER_BLOCK_ANSWER, /nem tudunk segíteni/);
     assert.match(PREFILTER_BLOCK_ANSWER, /akvarisztik/);
     assert.match(PREFILTER_ASK_ANSWER, /\?/);
+  });
+});
+
+/*
+  SLICE 3 THROUGH THE ROUTE: several turns on ONE conversation, the store being the history (rows 18-24 and 31 of the plan, and 19a-19f
+  of its fourth round). `turns` asks the questions one after another and returns each response and what the store holds after it.
+*/
+async function turns(fx: ReturnType<typeof fixture>, questions: string[]) {
+  const answers: string[] = [];
+  for (const [index, question] of questions.entries())
+    answers.push(String((await ask(fx, question, index === 0 ? undefined : CONVERSATION)).body.answer));
+  return answers;
+}
+
+const AQUARIUM = "Milyen világítás kell a korallokhoz az akváriumban?";
+const OFF_TOPIC = "Ki nyerte tegnap a meccset?";
+
+describe("the colleague offer (rows 19a-19f)", () => {
+  beforeEach(() => {
+    process.env[PREFILTER_ENV] = "true";
+  });
+
+  it("19a, 19b, 19c, 19d: absent at three turns, there at the fourth, answers go on, never again", async () => {
+    const fx = fixture();
+    const answers = await turns(fx, Array.from({ length: 12 }, () => AQUARIUM));
+    answers.forEach((answer, index) => {
+      const offered = answer.includes(COLLEAGUE_OFFER);
+      assert.equal(offered, index === 3, `turn ${index + 1}`);
+      assert.equal(answer.startsWith("A modell válasza."), true, `turn ${index + 1} still answers`);
+    });
+    assert.equal(fx.modelCalls(), 12, "no extra model call for the offer");
+  });
+
+  it("19f: exactly one assistant message is saved per customer message (the ground of `once`)", async () => {
+    const fx = fixture();
+    await turns(fx, [AQUARIUM, OFF_TOPIC, "Szia!", AQUARIUM, AQUARIUM]);
+    assert.deepEqual(
+      fx.messages.map((m) => m.role),
+      ["user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant", "user", "assistant"]
+    );
+  });
+
+  it("the offer is saved WITH the answer, so the history shows what the customer saw", async () => {
+    const fx = fixture();
+    await turns(fx, [AQUARIUM, AQUARIUM, AQUARIUM, AQUARIUM]);
+    assert.equal(fx.messages.at(-1)?.content.endsWith(COLLEAGUE_OFFER), true);
+  });
+
+  it("the turns count from the history: assistant rows are no turns (row 23) and the local answers do not shift the count", async () => {
+    // Two aquarium turns, two local ones, then the fourth customer turn: four turns of eight messages.
+    const fx = fixture();
+    const answers = await turns(fx, [AQUARIUM, OFF_TOPIC, "Szia!", AQUARIUM]);
+    assert.equal(answers[3].includes(COLLEAGUE_OFFER), true);
+    assert.equal(answers[2].includes(COLLEAGUE_OFFER), false);
+  });
+
+  it("row 24: a long conversation counts from the twenty-message window and never offers again", async () => {
+    const fx = fixture();
+    const answers = await turns(fx, Array.from({ length: 30 }, () => AQUARIUM));
+    assert.equal(answers.filter((a) => a.includes(COLLEAGUE_OFFER)).length, 1);
+  });
+
+  it("the offer is part of the switch: off, the fourth answer is the model's alone", async () => {
+    delete process.env[PREFILTER_ENV];
+    const answers = await turns(fixture(), Array.from({ length: 5 }, () => AQUARIUM));
+    assert.equal(answers.some((a) => a.includes(COLLEAGUE_OFFER)), false);
+  });
+
+  it("19e: the sentence promises no forwarding, callback or immediate contact, asks nothing and holds no contact data", () => {
+    assert.equal(/\?/.test(COLLEAGUE_OFFER), false, "a question");
+    assert.equal(/\d|@|http|www/i.test(COLLEAGUE_OFFER), false, "a number, an address or a link");
+    assert.equal(/hamarosan|visszah|keres(ünk|ni)|jelentkez|azonnal|továbbít|átad|értesít|ígér/i.test(COLLEAGUE_OFFER), false);
+  });
+});
+
+describe("the off-topic series (rows 21 and 22)", () => {
+  beforeEach(() => {
+    process.env[PREFILTER_ENV] = "true";
+  });
+
+  it("21: the firmer text from the fifth off-topic question in a row, still no model call", async () => {
+    const fx = fixture();
+    const answers = await turns(fx, Array.from({ length: 7 }, () => OFF_TOPIC));
+    answers.forEach((answer, index) =>
+      assert.equal(answer, index < 4 ? PREFILTER_BLOCK_ANSWER : PREFILTER_FIRM_BLOCK_ANSWER, `turn ${index + 1}`)
+    );
+    assert.equal(fx.modelCalls(), 0);
+    assert.equal(fetchCalls, 0);
+  });
+
+  it("22: one aquarium question in between resets it: the next off-topic question gets the friendly text again", async () => {
+    const fx = fixture();
+    const answers = await turns(fx, [OFF_TOPIC, OFF_TOPIC, OFF_TOPIC, OFF_TOPIC, AQUARIUM, OFF_TOPIC]);
+    assert.equal(answers[4], "A modell válasza.");
+    assert.equal(answers[5], PREFILTER_BLOCK_ANSWER);
+  });
+
+  it("an unclear message in the series neither extends nor ends it", async () => {
+    const fx = fixture();
+    const answers = await turns(fx, [OFF_TOPIC, OFF_TOPIC, "Szia!", OFF_TOPIC, OFF_TOPIC, OFF_TOPIC]);
+    // The off-topic questions are the 1st, 2nd, 4th, 5th and 6th message: the series is 1, 2, then 3, 4, 5 (the unclear one is skipped).
+    assert.equal(answers[3], PREFILTER_BLOCK_ANSWER);
+    assert.equal(answers[4], PREFILTER_BLOCK_ANSWER);
+    assert.equal(answers[5], PREFILTER_FIRM_BLOCK_ANSWER);
+  });
+
+  it("31: the series comes from the history, not from a stored field: a fresh conversation starts at one", async () => {
+    const answers = await turns(fixture(), Array.from({ length: 5 }, () => OFF_TOPIC));
+    assert.equal(answers[4], PREFILTER_FIRM_BLOCK_ANSWER);
+    assert.equal(await turns(fixture(), [OFF_TOPIC]).then((a) => a[0]), PREFILTER_BLOCK_ANSWER);
+  });
+
+  it("the log line holds the series as a number and nothing of the text", async () => {
+    const fx = fixture();
+    await turns(fx, [OFF_TOPIC, OFF_TOPIC]);
+    const lines = fx.lines.filter((l) => "prefilter" in (l as object)) as Array<{ offTopicSeries: number }>;
+    assert.deepEqual(lines.map((l) => l.offTopicSeries), [1, 2]);
+  });
+
+  it("the firmer text holds no value, no lookup and no external service, like the others", () => {
+    assert.equal(/\d|°/.test(PREFILTER_FIRM_BLOCK_ANSWER), false);
+    assert.equal(/lekérdez|megnéz|utánanéz|keresek|keresünk/i.test(PREFILTER_FIRM_BLOCK_ANSWER), false);
+    assert.equal(
+      /időjárás|meteorol|weather|google|internet|böngész|keresőmotor|alkalmazás|szolgáltató|honlap|weboldal|térkép/i.test(PREFILTER_FIRM_BLOCK_ANSWER),
+      false
+    );
   });
 });
