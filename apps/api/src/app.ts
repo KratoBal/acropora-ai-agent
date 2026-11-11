@@ -60,6 +60,7 @@ import {
   researchSummaryInput,
   researchSummaryInstructions
 } from "./research-draft.js";
+import { maskContacts, maskContactsEnabled } from "./contact-mask.js";
 import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
@@ -712,6 +713,23 @@ export function buildApp(dependencies: AppDependencies = {}) {
       );
     }
 
+    // WHAT THE MODEL RECEIVES: the current message and the whole history with every e-mail address and Hungarian telephone number
+    // replaced (in memory only; the stored rows are unchanged). Done BEFORE the call, on the history the call uses. Only the
+    // NUMBER of replacements is logged. Exactly `AI_CHAT_MASK_CONTACTS=false` turns it off.
+    const maskingOn = maskContactsEnabled();
+    let maskedContacts = 0;
+    const modelInput = history.map((item) => {
+      if (!maskingOn) return { role: item.role, content: item.content };
+      const result = maskContacts(item.content);
+      maskedContacts += result.masked;
+      return { role: item.role, content: result.text };
+    });
+    if (maskedContacts > 0)
+      request.log.info(
+        { maskedContacts },
+        "contact data was kept out of the model input"
+      );
+
     const askedAt = Date.now();
     const linkRule = linkRuleMode();
     // the stored link sources (card 9d060f5c), read from the OS while the model works; a failed read is an empty list
@@ -727,10 +745,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
           colleagueOfferActive: colleagueOfferEnabled(),
           linkRule
         }),
-        input: history.map((item) => ({
-          role: item.role,
-          content: item.content
-        })),
+        input: modelInput,
         store: false
       });
 
