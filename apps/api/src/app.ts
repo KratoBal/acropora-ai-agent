@@ -81,11 +81,11 @@ import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
 import {
   LINK_GUARD_FALLBACK,
   LINK_RULE_INSTRUCTIONS,
-  STORED_LINK_SOURCES_TODAY,
   guardAnswerLinks,
   linkRuleMode,
   type LinkRuleMode
 } from "./answer-link-guard.js";
+import { readLinkSources, type LinkSourcesRead } from "./link-sources.js";
 import {
   guardRecommendationText,
   MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
@@ -732,6 +732,11 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
     const askedAt = Date.now();
     const linkRule = linkRuleMode();
+    // the stored link sources (card 9d060f5c), read from the OS while the model works; a failed read is an empty list
+    const linkSourcesRead: Promise<LinkSourcesRead> | null =
+      linkRule === "off"
+        ? null
+        : readLinkSources().catch(() => ({ ok: false, sources: [], reason: "unavailable" }) as const);
 
     try {
       const response = await openai.responses.create({
@@ -752,14 +757,25 @@ export function buildApp(dependencies: AppDependencies = {}) {
       // NO EXTERNAL LINK BY DEFAULT (card 9d060f5c), behind AI_LINK_RULE: `off`
       // runs nothing; `log` reports and leaves the answer; `enforce` replaces it.
       // Read on the model's own text, so a dose fallback does not hide a link.
+      const linkSources = linkSourcesRead ? await linkSourcesRead : null;
+      if (linkSources && !linkSources.ok)
+        request.log.warn(
+          { linkSources: linkSources.reason },
+          "the stored link sources could not be read; no exception is active for this answer"
+        );
+      else if (linkSources?.ok && linkSources.dropped > 0)
+        request.log.warn(
+          { linkSources: { dropped: linkSources.dropped } },
+          "stored link sources the gate cannot use were left out"
+        );
       const linkGuard =
-        linkRule === "off"
+        linkSources === null
           ? null
           : guardAnswerLinks({
               answer: response.output_text ?? "",
               userMessage: message,
               outcome: productSearch,
-              sources: STORED_LINK_SOURCES_TODAY
+              sources: linkSources.sources
             });
       const modelAnswer = !doseGuard.ok
         ? DOSE_GUARD_FALLBACK
