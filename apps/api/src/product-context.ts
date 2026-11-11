@@ -164,7 +164,9 @@ export type ProductContextState =
   | "hits"
   | "empty"
   | "unavailable"
-  | "not_configured";
+  | "not_configured"
+  /** The question was answered locally (the pre-filter): no catalogue was asked, and no model ran. */
+  | "not_asked";
 
 export function classifyProductContext(
   outcome: ProductSearchOutcome

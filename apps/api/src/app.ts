@@ -61,6 +61,12 @@ import {
   researchSummaryInstructions
 } from "./research-draft.js";
 import { searchProducts } from "./product-search.js";
+import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
+import {
+  PREFILTER_MODEL_LABEL,
+  localAnswerFor,
+  prefilterEnabled
+} from "./request-prefilter-answers.js";
 import { safeErrorSummary } from "./redact.js";
 import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
 import {
@@ -580,6 +586,58 @@ export function buildApp(dependencies: AppDependencies = {}) {
       activeConversationId,
       20
     );
+
+    /**
+     * THE LOCAL PRE-FILTER (card f5b8f7ba), AFTER THE MESSAGE IS SAVED AND BEFORE ANYTHING COSTS: the key check, the catalogue
+     * search and the model call all come later. Off by default (`AI_CHAT_PREFILTER`, exactly `true`): off, this block is
+     * skipped and the route is what it was.
+     *
+     * A `block` or an `ask` is answered HERE: no model call, no catalogue call, and the local answer is saved as an assistant
+     * message like any other (the next turn's history must hold the question it asked, or the user's reply would arrive to a
+     * conversation that never asked). The gate reads the conversation so far WITHOUT the message it is judging (the last
+     * stored row is that message). The log line carries the category, the decision and the reason: never a fragment of the text.
+     */
+    if (prefilterEnabled()) {
+      const earlier: RecentTurn[] = history
+        .slice(0, -1)
+        .filter(
+          (item): item is { role: "user" | "assistant"; content: string } =>
+            item.role === "user" || item.role === "assistant"
+        );
+      const verdict = classifyRequest(message, earlier);
+
+      if (verdict.decision !== "pass") {
+        request.log.info(
+          { prefilter: verdict },
+          "the local pre-filter answered; no model call"
+        );
+        const localAnswer = localAnswerFor(verdict.decision);
+        const localMessageId = await conversations.saveMessage({
+          conversationId: activeConversationId,
+          role: "assistant",
+          content: localAnswer,
+          model: PREFILTER_MODEL_LABEL
+        });
+
+        await noteOutcome(`prefilter_${verdict.decision}`);
+
+        return {
+          conversationId: activeConversationId,
+          messageId: localMessageId,
+          answer: localAnswer,
+          doseGuard: null,
+          model: PREFILTER_MODEL_LABEL,
+          // Nothing was looked up for this answer, and the surface that judges answers must be able to read that.
+          productContext: {
+            state: "not_asked",
+            hitCount: null,
+            projectionVersion: null,
+            descriptionSources: []
+          },
+          ...customerChatFields(resolvedCustomer)
+        };
+      }
+    }
 
     if (!process.env.OPENAI_API_KEY) {
       await noteOutcome("provider_not_configured");
