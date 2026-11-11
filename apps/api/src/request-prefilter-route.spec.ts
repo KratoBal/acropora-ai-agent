@@ -208,11 +208,17 @@ describe("POST /v1/chat with the pre-filter ON", () => {
     assert.equal((await ask(alone, "Hány fok volt ma?")).body.answer, PREFILTER_ASK_ANSWER);
   });
 
-  it("the gate does not read the message it judges as history (the last stored row is that message)", async () => {
-    // Only the message itself carries the topic: with the message read twice as context, `ask` would turn into a pass.
-    const fx = fixture();
-    const { body } = await ask(fx, "Hány fok volt ma?");
-    assert.equal(body.answer, PREFILTER_ASK_ANSWER);
+  it("the gate reads the FOUR messages before the one it judges: the stored message itself takes no slot", async () => {
+    // The topic stands exactly four messages back. If the stored message under judgement counted as one of the four, the topic
+    // would fall out of the window and the ambiguous question would ask.
+    const talk: Stored[] = [
+      { id: "m1", role: "user", content: "Milyen akváriumot vegyek?" },
+      { id: "m2", role: "assistant", content: "Ez függ a helytől." },
+      { id: "m3", role: "user", content: "Köszönöm." },
+      { id: "m4", role: "assistant", content: "Szívesen." }
+    ];
+    const { body } = await ask(fixture(talk), "Hány fok volt ma?", CONVERSATION);
+    assert.equal(body.answer, "A modell válasza.");
   });
 
   it("a block never reads the history: an exit signal after an aquarium talk is still a block", async () => {
