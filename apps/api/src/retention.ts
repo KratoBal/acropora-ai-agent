@@ -1,3 +1,10 @@
+import {
+  chatSettingsConfig,
+  fetchChatSettings,
+  type ChatSettingsErrorCode
+} from "./chat-settings.js";
+import { loadLastKnown, saveLastKnown } from "./chat-settings-store.js";
+
 /**
  * THE RETENTION OF CHAT MESSAGES (Acropora OS card f5b8f7ba, slice 4b; plan `exchange-out/ai-eloszures-4-szelet-terv-2026-11-11.md`,
  * doc-APPROVE barracuda 2026-11-11 10:24 on the v5 package).
@@ -143,6 +150,50 @@ export async function runRetentionOnce(
   }
 }
 
+export type RetentionDays =
+  | { days: number; origin: "os" | "last_known" | "env"; note?: ChatSettingsErrorCode }
+  | { skip: "switch_off" | "invalid_days" | "settings_unavailable"; note?: ChatSettingsErrorCode };
+
+/**
+ * WHERE THE DAYS COME FROM (plan 2/1, barracuda 1 and acrobot 46747). The switch is the master: not exactly `true`, nothing runs.
+ * With the OS reachable the days are the OS's setting (and each successful read is kept as the LAST KNOWN VALUE). When the OS does
+ * not answer, or answers with something the contract does not allow, the job runs on the last value it read; with none, it SKIPS
+ * and says so. It never falls back to a code default: a default of 180 would delete what a setting of 365 keeps, and the safe side
+ * of a deleting job is the missed run, not the shorter time. When no OS source is configured at all (no token), the days come from
+ * the environment as before.
+ */
+export async function resolveRetentionDays(
+  pool: RetentionPool,
+  env: NodeJS.ProcessEnv = process.env,
+  fetchImpl?: typeof fetch
+): Promise<RetentionDays> {
+  if (env[RETENTION_ENV] !== "true") return { skip: "switch_off" };
+
+  const source = chatSettingsConfig(env);
+  if (!source) {
+    const config = retentionConfig(env);
+    return config.run
+      ? { days: config.days, origin: "env" }
+      : { skip: config.reason };
+  }
+
+  const read = await fetchChatSettings({ config: source, fetchImpl });
+  const client = await pool.connect();
+  try {
+    if (read.ok) {
+      // A failure to KEEP the value does not stop a run that has a fresh one.
+      await saveLastKnown(client, read.view).catch(() => undefined);
+      return { days: read.view.messageRetentionDays, origin: "os" };
+    }
+    const known = await loadLastKnown(client).catch(() => null);
+    return known
+      ? { days: known.messageRetentionDays, origin: "last_known", note: read.error }
+      : { skip: "settings_unavailable", note: read.error };
+  } finally {
+    client.release();
+  }
+}
+
 export interface RetentionLog {
   info(payload: Record<string, unknown>, message: string): void;
   error(payload: Record<string, unknown>, message: string): void;
@@ -153,21 +204,40 @@ export async function retentionPass(
   pool: RetentionPool,
   log: RetentionLog,
   env: NodeJS.ProcessEnv = process.env,
-  now: Date = new Date()
+  now: Date = new Date(),
+  fetchImpl?: typeof fetch
 ): Promise<void> {
-  const config = retentionConfig(env);
-  if (!config.run) {
-    // A switched-off job is silent; a skipped one (a value it does not trust) is named.
-    if (config.reason === "invalid_days")
-      log.error({ retention: "retention_skipped", reason: config.reason }, "retention run skipped");
+  const resolved = await resolveRetentionDays(pool, env, fetchImpl);
+  if ("skip" in resolved) {
+    // A switched-off job is silent; a skipped one (a value it does not trust, or no value at all) is named.
+    if (resolved.skip !== "switch_off")
+      log.error(
+        {
+          retention: "retention_skipped",
+          reason: resolved.skip,
+          ...(resolved.note ? { settings: resolved.note } : {})
+        },
+        "retention run skipped"
+      );
     return;
   }
 
   try {
-    const result = await runRetentionOnce(pool, now, config.days);
+    const result = await runRetentionOnce(pool, now, resolved.days);
     if (result === null)
       log.info({ retention: "retention_skipped", reason: "locked" }, "retention run skipped");
-    else log.info({ retention: { days: config.days, ...result } }, "retention run finished");
+    else
+      log.info(
+        {
+          retention: {
+            days: resolved.days,
+            origin: resolved.origin,
+            ...(resolved.note ? { settings: resolved.note } : {}),
+            ...result
+          }
+        },
+        "retention run finished"
+      );
   } catch (error) {
     // The error object is not handed to the logger: its message can carry a row value. The code is enough to find the cause.
     const code = (error as { code?: unknown } | null)?.code;

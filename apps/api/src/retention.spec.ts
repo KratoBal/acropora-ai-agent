@@ -11,12 +11,14 @@ import {
   RETENTION_DAYS_ENV,
   RETENTION_ENV,
   retentionConfig,
+  resolveRetentionDays,
   retentionPass,
   runRetentionOnce,
   type RetentionClient,
   type RetentionPool
 } from "./retention.js";
 import { SCHEMA_SQL } from "./db.js";
+import { CHAT_SETTINGS_TOKEN_ENV } from "./chat-settings.js";
 
 /*
   THE RETENTION JOB WITHOUT A DATABASE (plan rows S1-S3, S10, S15, K1 of slice 4b): the setting, the order of the statements, the
@@ -55,7 +57,9 @@ interface Call {
   values?: unknown[];
 }
 
-function recordingPool(options: { locked?: boolean; failAt?: string; rowCounts?: Record<string, number> } = {}) {
+function recordingPool(
+  options: { locked?: boolean; failAt?: string; rowCounts?: Record<string, number>; lastKnown?: number | null } = {}
+) {
   const calls: Call[] = [];
   let released = 0;
   const client: RetentionClient = {
@@ -63,6 +67,13 @@ function recordingPool(options: { locked?: boolean; failAt?: string; rowCounts?:
       calls.push({ text, values });
       if (options.failAt && text.includes(options.failAt)) throw Object.assign(new Error("boom: secret-row-value"), { code: "23503" });
       if (text.includes("pg_try_advisory_xact_lock")) return { rows: [{ locked: options.locked ?? true }], rowCount: 1 };
+      if (text.includes("FROM chat_settings_last_known"))
+        return options.lastKnown == null
+          ? { rows: [], rowCount: 0 }
+          : {
+              rows: [{ message_retention_days: options.lastKnown, offer_enabled: false, contact_request_enabled: false }],
+              rowCount: 1
+            };
       const count = Object.entries(options.rowCounts ?? {}).find(([needle]) => text.includes(needle))?.[1] ?? 0;
       return { rows: [], rowCount: count };
     },
@@ -144,11 +155,11 @@ describe("the pass the scheduler runs: only numbers and reason codes are logged"
     };
   }
 
-  it("S3: a finished run logs the day count and three numbers", async () => {
+  it("S3: a finished run logs the day count, where it came from and three numbers", async () => {
     const { log, lines } = recordingLog();
     const { pool } = recordingPool({ rowCounts: { "FROM messages WHERE": 4 } });
     await retentionPass(pool, log, on("90"), NOW);
-    assert.deepEqual(lines.map((l) => l.payload), [{ retention: { days: 90, messages: 4, conversations: 0, ratingsAggregated: 0 } }]);
+    assert.deepEqual(lines.map((l) => l.payload), [{ retention: { days: 90, origin: "env", messages: 4, conversations: 0, ratingsAggregated: 0 } }]);
   });
 
   it("off: silent and nothing is touched; an illegal value: named, and nothing is touched (S10)", async () => {
@@ -188,5 +199,117 @@ describe("the schema of what the job keeps", () => {
       .map((line) => line.trim().split(/\s+/)[0])
       .filter((word) => /^[a-z_]+$/.test(word) && word !== "primary");
     assert.deepEqual(columns, ["month", "axis", "rating", "ratings"]);
+  });
+});
+
+/*
+  WHERE THE DAYS COME FROM (plan 2/1, S10; acrobot 46747): the OS's setting, the last one it read when the OS does not answer, and a
+  SKIP (never a code default) when there is neither.
+*/
+const withOs = (days?: string): NodeJS.ProcessEnv => ({
+  ...on(days),
+  ACROPORA_OS_BASE_URL: "http://os.invalid",
+  [CHAT_SETTINGS_TOKEN_ENV]: "settings-token"
+});
+const osAnswers = (body: unknown, status = 200): typeof fetch => async () => new Response(JSON.stringify(body), { status });
+const osDown: typeof fetch = async () => {
+  throw Object.assign(new Error("down"), { name: "TypeError" });
+};
+const view = (days: number) => ({ offerEnabled: false, contactRequestEnabled: false, messageRetentionDays: days });
+
+describe("resolveRetentionDays", () => {
+  it("the switch is the master: off means off, whatever the OS says", async () => {
+    const { pool, calls } = recordingPool();
+    assert.deepEqual(
+      await resolveRetentionDays(pool, { ...withOs(), [RETENTION_ENV]: "false" }, osAnswers(view(30))),
+      { skip: "switch_off" }
+    );
+    assert.equal(calls.length, 0);
+  });
+
+  it("no OS source configured: the days are the environment's, exactly as in 4b", async () => {
+    const { pool } = recordingPool();
+    assert.deepEqual(await resolveRetentionDays(pool, on("90")), { days: 90, origin: "env" });
+    assert.deepEqual(await resolveRetentionDays(pool, on("1000")), { skip: "invalid_days" });
+  });
+
+  it("the OS answers: its days win over the environment's (even an illegal environment value is ignored), and the value is KEPT as the last known", async () => {
+    const { pool, calls } = recordingPool();
+    const resolved = await resolveRetentionDays(pool, withOs("1000"), osAnswers(view(365)));
+    assert.deepEqual(resolved, { days: 365, origin: "os" });
+    const kept = calls.find((c) => c.text.includes("INSERT INTO chat_settings_last_known"));
+    assert.deepEqual(kept?.values, [365, false, false]);
+  });
+
+  it("S10: the OS does not answer and the last known value was 365: the run goes on 365, NOT on a code default of 180", async () => {
+    for (const fetchImpl of [osDown, osAnswers({}, 500), osAnswers({}, 401), osAnswers({ nonsense: true })]) {
+      const { pool } = recordingPool({ lastKnown: 365 });
+      const resolved = await resolveRetentionDays(pool, withOs(), fetchImpl);
+      assert.equal("days" in resolved && resolved.days, 365);
+      assert.equal("origin" in resolved && resolved.origin, "last_known");
+      assert.ok("note" in resolved && resolved.note?.startsWith("chat_settings_"));
+    }
+  });
+
+  it("S10: the OS does not answer and nothing was ever read: the run is SKIPPED and named", async () => {
+    const { pool } = recordingPool({ lastKnown: null });
+    assert.deepEqual(await resolveRetentionDays(pool, withOs(), osDown), {
+      skip: "settings_unavailable",
+      note: "chat_settings_unavailable"
+    });
+  });
+
+  it("a last-known row the contract does not allow is not repaired: it counts as nothing", async () => {
+    const { pool } = recordingPool({ lastKnown: 3 });
+    assert.equal("skip" in (await resolveRetentionDays(pool, withOs(), osDown)), true);
+  });
+
+  it("an OS value outside 7..365 is a bad response: the last known value is used, the illegal one never", async () => {
+    const { pool } = recordingPool({ lastKnown: 200 });
+    const resolved = await resolveRetentionDays(pool, withOs(), osAnswers(view(3)));
+    assert.equal("days" in resolved && resolved.days, 200);
+  });
+});
+
+describe("the pass with the OS as the source", () => {
+  function logs() {
+    const lines: Array<Record<string, unknown>> = [];
+    return { lines, log: { info: (p: Record<string, unknown>) => lines.push(p), error: (p: Record<string, unknown>) => lines.push(p) } };
+  }
+
+  it("deletes with the OS's days and logs where they came from", async () => {
+    const { pool, calls } = recordingPool({ rowCounts: { "FROM messages WHERE": 2 } });
+    const { log, lines } = logs();
+    await retentionPass(pool, log, withOs(), NOW, osAnswers(view(60)));
+    const cutoff = new Date(NOW.getTime() - 60 * 86_400_000).getTime();
+    const del = calls.find((c) => c.text.includes("DELETE FROM messages"));
+    assert.equal((del?.values?.[0] as Date).getTime(), cutoff);
+    assert.deepEqual(lines, [{ retention: { days: 60, origin: "os", messages: 2, conversations: 0, ratingsAggregated: 0 } }]);
+  });
+
+  it("S10 end to end: the OS is down, the last known value is 365: the cutoff is 365 days back, nothing newer is touched", async () => {
+    const { pool, calls } = recordingPool({ lastKnown: 365 });
+    const { log, lines } = logs();
+    await retentionPass(pool, log, withOs("180"), NOW, osDown);
+    const del = calls.find((c) => c.text.includes("DELETE FROM messages"));
+    assert.equal((del?.values?.[0] as Date).getTime(), NOW.getTime() - 365 * 86_400_000);
+    assert.deepEqual(lines[0], {
+      retention: { days: 365, origin: "last_known", settings: "chat_settings_unavailable", messages: 0, conversations: 0, ratingsAggregated: 0 }
+    });
+  });
+
+  it("S10 end to end: the OS is down and nothing was read: NO statement deletes, and the skip names the OS code", async () => {
+    const { pool, calls } = recordingPool({ lastKnown: null });
+    const { log, lines } = logs();
+    await retentionPass(pool, log, withOs(), NOW, osDown);
+    assert.equal(calls.some((c) => c.text.includes("DELETE")), false);
+    assert.deepEqual(lines, [{ retention: "retention_skipped", reason: "settings_unavailable", settings: "chat_settings_unavailable" }]);
+  });
+
+  it("the log never holds the token", async () => {
+    const { pool } = recordingPool({ lastKnown: null });
+    const { log, lines } = logs();
+    await retentionPass(pool, log, withOs(), NOW, osDown);
+    assert.equal(JSON.stringify(lines).includes("settings-token"), false);
   });
 });
