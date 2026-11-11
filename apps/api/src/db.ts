@@ -144,6 +144,18 @@ export const SCHEMA_SQL = `
       )
     );
 
+    /*
+     * What the retention job keeps of the ratings it deletes with their messages: counts per month, axis and value, and nothing else
+     * (no text, no message or conversation id). Written by the job in the same transaction as the delete (retention.ts).
+     */
+    CREATE TABLE IF NOT EXISTS rating_aggregates (
+      month DATE NOT NULL,
+      axis TEXT NOT NULL,
+      rating TEXT NOT NULL,
+      ratings INTEGER NOT NULL CHECK (ratings > 0),
+      PRIMARY KEY (month, axis, rating)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_conversations_client_key
       ON conversations(client_key);
 
