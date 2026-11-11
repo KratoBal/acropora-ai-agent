@@ -10,8 +10,9 @@ import type { ProductSearchOutcome } from "./product-search.js";
  * address, a bare domain on a real TLD, an IP, a bracketed or spelled-out
  * address - is a violation unless it is our own domain (`acropora.hu` and its
  * subdomains, label-boundary match) or one of three exceptions holds over the
- * STORED source list (empty today, so none is active; acrobot on the card, 736:
- * an exceptional URL only from a stored source, never from the model's memory).
+ * STORED source list (the OS's, read by `link-sources.ts`; an empty or unread
+ * list leaves none active; acrobot on the card, 736: an exceptional URL only
+ * from a stored source, never from the model's memory).
  *
  * Behind `AI_LINK_RULE`: `off` (the default) runs nothing; `log` leaves the
  * answer as it is and reports the violation (reason + host, never the full
@@ -64,7 +65,7 @@ export const OWN_DOMAIN = "acropora.hu";
 
 export type StoredLinkSourceCategory = "MANUFACTURER_DOCUMENT" | "AUTHORITY";
 
-/** One row of the stored source list (plan section 4). Its owner is the OS (a separate PR after #2400). */
+/** One row of the stored source list (plan section 4). Its owner is the OS; `link-sources.ts` reads it. */
 export interface StoredLinkSource {
   host: string;
   category: StoredLinkSourceCategory;
@@ -73,8 +74,6 @@ export interface StoredLinkSource {
   note?: string;
 }
 
-/** The stored list the route uses today: EMPTY, so none of the three exceptions is active. */
-export const STORED_LINK_SOURCES_TODAY: readonly StoredLinkSource[] = [];
 
 const fold = (value: string) =>
   value.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
