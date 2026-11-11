@@ -29,19 +29,19 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB
     await db.pool.query(db.SCHEMA_SQL);
     // The spec TRUNCATES the tables it uses. It refuses to start on a database that already holds anything: the variable must
     // never be pointed at data.
-    for (const table of ["conversations", "messages", "answer_ratings", "rating_aggregates"]) {
+    for (const table of ["conversations", "messages", "answer_ratings", "rating_aggregates", "chat_settings_last_known"]) {
       const held = Number((await db.pool.query(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
       if (held > 0) throw new Error(`refusing to run: ${table} already holds rows, this is not a throwaway database`);
     }
   });
 
   beforeEach(async () => {
-    await db.pool.query("TRUNCATE rating_aggregates, answer_ratings, messages, conversations CASCADE");
+    await db.pool.query("TRUNCATE rating_aggregates, answer_ratings, messages, conversations, chat_settings_last_known CASCADE");
   });
 
   after(async () => {
     if (db) {
-      await db.pool.query("TRUNCATE rating_aggregates, answer_ratings, messages, conversations CASCADE");
+      await db.pool.query("TRUNCATE rating_aggregates, answer_ratings, messages, conversations, chat_settings_last_known CASCADE");
       await db.pool.end();
     }
   });
@@ -210,7 +210,75 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB
     assert.equal(await count("conversations"), 0);
   });
 
-    it("another instance holds the lock: nothing is deleted and the answer is null", async () => {
+    describe("the OS settings as the source (slice 4b follow-up; plan 2/1, S10)", () => {
+    const view = (days: number) => ({ offerEnabled: false, contactRequestEnabled: false, messageRetentionDays: days });
+    const osDown: typeof fetch = async () => {
+      throw Object.assign(new Error("down"), { name: "TypeError" });
+    };
+    const os = (days: number): typeof fetch => async () => new Response(JSON.stringify(view(days)), { status: 200 });
+    const env = { AI_CHAT_RETENTION: "true", ACROPORA_OS_BASE_URL: "http://os.invalid", ACROPORA_OS_AI_CHAT_SETTINGS_TOKEN: "t" };
+    const silent = { info: () => undefined, error: () => undefined };
+    const ageDays = (days: number) => new Date(Date.now() - days * 86_400_000);
+    const lastKnown = async () => (await db.pool.query("SELECT message_retention_days AS d FROM chat_settings_last_known")).rows;
+
+    it("the last-known store holds ONE row, replaced by every successful read, and refuses days outside 7..365", async () => {
+      const store = await import("./chat-settings-store.js");
+      assert.equal(await store.loadLastKnown(db.pool), null);
+      await store.saveLastKnown(db.pool, view(365));
+      await store.saveLastKnown(db.pool, view(90));
+      assert.deepEqual(await lastKnown(), [{ d: 90 }]);
+      const known = await store.loadLastKnown(db.pool);
+      assert.deepEqual(known?.view, view(90));
+      assert.ok(known && Math.abs(Date.now() - known.readAt.getTime()) < 60_000, "readAt is when it was kept");
+      await assert.rejects(store.saveLastKnown(db.pool, view(6)));
+      await assert.rejects(store.saveLastKnown(db.pool, view(366)));
+      assert.deepEqual(await lastKnown(), [{ d: 90 }], "a refused save changes nothing");
+    });
+
+    it("S10 on a real database: the OS answered 365 once, then is down: a 200-day-old message STAYS, a 400-day-old one goes", async () => {
+      const c = await conversation(ageDays(1));
+      const old400 = await message(c, ageDays(400));
+      const old200 = await message(c, ageDays(200));
+      await job.retentionPass(db.pool, silent, env, new Date(), os(365)); // reads 365, keeps it
+      assert.deepEqual(await lastKnown(), [{ d: 365 }]);
+      const result = await job.runRetentionOnce(db.pool, new Date(), 365); // (the 400-day row went in the pass above; nothing left to delete)
+      assert.equal(result?.messages, 0);
+      const left = (await db.pool.query<{ id: string }>("SELECT id FROM messages")).rows.map((r) => r.id);
+      assert.deepEqual(left, [old200]);
+      assert.equal(left.includes(old400), false);
+
+      // The OS is down now: the setting an owner moved to 365 is still what the job honours (a default of 180 would delete old200).
+      await job.retentionPass(db.pool, silent, env, new Date(), osDown);
+      assert.equal(await count("messages"), 1, "the 200-day-old message is still there");
+    });
+
+    it("a last-known value older than 24 hours does not decide: the OS is down, the value was read 25 hours ago: NOTHING is deleted", async () => {
+      const store = await import("./chat-settings-store.js");
+      await store.saveLastKnown(db.pool, view(30));
+      await db.pool.query("UPDATE chat_settings_last_known SET read_at = NOW() - INTERVAL '25 hours'");
+      const c = await conversation(ageDays(1));
+      await message(c, ageDays(400));
+      const lines: Array<Record<string, unknown>> = [];
+      await job.retentionPass(db.pool, { info: (p) => lines.push(p), error: (p) => lines.push(p) }, env, new Date(), osDown);
+      assert.equal(await count("messages"), 1);
+      assert.deepEqual(lines, [{ retention: "retention_skipped", reason: "last_known_stale", settings: "chat_settings_unavailable" }]);
+      // ...and a value read 23 hours ago does decide (the control)
+      await db.pool.query("UPDATE chat_settings_last_known SET read_at = NOW() - INTERVAL '23 hours'");
+      await job.retentionPass(db.pool, silent, env, new Date(), osDown);
+      assert.equal(await count("messages"), 0, "the 400-day-old message goes on the fresh enough 30-day value");
+    });
+
+    it("S10 on a real database: the OS is down and nothing was ever read: NOTHING is deleted", async () => {
+      const c = await conversation(ageDays(1));
+      await message(c, ageDays(400));
+      const lines: Array<Record<string, unknown>> = [];
+      await job.retentionPass(db.pool, { info: (p) => lines.push(p), error: (p) => lines.push(p) }, env, new Date(), osDown);
+      assert.equal(await count("messages"), 1);
+      assert.deepEqual(lines, [{ retention: "retention_skipped", reason: "settings_unavailable", settings: "chat_settings_unavailable" }]);
+    });
+  });
+
+  it("another instance holds the lock: nothing is deleted and the answer is null", async () => {
     const c = await conversation(at(-1000));
     await message(c, at(-1000));
     const holder = await db.pool.connect();
