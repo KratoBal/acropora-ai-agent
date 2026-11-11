@@ -156,6 +156,19 @@ export const SCHEMA_SQL = `
       PRIMARY KEY (month, axis, rating)
     );
 
+    /*
+     * The LAST chat settings this service read successfully from the OS: ONE row. The retention job runs on it when the OS does not
+     * answer, so an outage can never make it delete more than the owner set (a code default of 180 days would delete what a setting
+     * of 365 keeps). Written on every successful read (chat-settings-store.ts); the bounds repeat the OS's.
+     */
+    CREATE TABLE IF NOT EXISTS chat_settings_last_known (
+      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+      message_retention_days INTEGER NOT NULL CHECK (message_retention_days BETWEEN 7 AND 365),
+      offer_enabled BOOLEAN NOT NULL,
+      contact_request_enabled BOOLEAN NOT NULL,
+      read_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_conversations_client_key
       ON conversations(client_key);
 
