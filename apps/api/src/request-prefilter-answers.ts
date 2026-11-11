@@ -51,3 +51,14 @@ export const PREFILTER_ENV = "AI_CHAT_PREFILTER";
 
 export const prefilterEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
   env[PREFILTER_ENV] === "true";
+
+/**
+ * THE COLLEAGUE OFFER HAS ITS OWN SWITCH, OFF BY DEFAULT (acrobot 2026-11-11 10:38, on barracuda's review of #71): a customer who
+ * answers the offer with "Igen, kérem" gets a model answer, and the model does not know how a colleague is reached, so it could
+ * invent an address or a promise. The offer is made again only with the contact request (slices 4c and 4d). It needs BOTH switches:
+ * the pre-filter on AND this one exactly `true`. Read per call.
+ */
+export const COLLEAGUE_OFFER_ENV = "AI_CHAT_COLLEAGUE_OFFER";
+
+export const colleagueOfferEnabled = (env: NodeJS.ProcessEnv = process.env): boolean =>
+  prefilterEnabled(env) && env[COLLEAGUE_OFFER_ENV] === "true";

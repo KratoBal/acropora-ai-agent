@@ -64,10 +64,12 @@ import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
   PREFILTER_MODEL_LABEL,
+  colleagueOfferEnabled,
   localAnswerFor,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
 import {
+  COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS,
   customerTurnCount,
   offTopicSeries,
   shouldOfferColleague,
@@ -75,6 +77,14 @@ import {
 } from "./request-prefilter-turns.js";
 import { safeErrorSummary } from "./redact.js";
 import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
+import {
+  LINK_GUARD_FALLBACK,
+  LINK_RULE_INSTRUCTIONS,
+  STORED_LINK_SOURCES_TODAY,
+  guardAnswerLinks,
+  linkRuleMode,
+  type LinkRuleMode
+} from "./answer-link-guard.js";
 import {
   guardRecommendationText,
   MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
@@ -119,7 +129,8 @@ export { NO_PRODUCT_CONTEXT_INSTRUCTIONS };
 
 export function chatInstructions(
   resolution: CustomerContextSuccess,
-  productContext: string
+  productContext: string,
+  options: { colleagueOfferActive?: boolean; linkRule?: LinkRuleMode } = {}
 ): string {
   return [
     ASSISTANT_INSTRUCTIONS,
@@ -127,8 +138,15 @@ export function chatInstructions(
     // tehat a szemely-blokk mellett all, NEM a termekkontextus agai kozott. Ott
     // egy uzemzavar csendben elvinne a szohasznalatot is.
     GLOSSARY_INSTRUCTIONS,
+    // R1 of the link rule (card 9d060f5c): told under `log` and `enforce`, absent
+    // under `off`, so the default keeps the prompt what it was.
+    ...((options.linkRule ?? "off") === "off" ? [] : [LINK_RULE_INSTRUCTIONS]),
     productContext,
-    customerChatInstructions(resolution)
+    customerChatInstructions(resolution),
+    // Only while the colleague offer is made (see request-prefilter-turns.ts); with the switch off the instructions are unchanged.
+    ...(options.colleagueOfferActive
+      ? [COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS]
+      : [])
   ].join("\n\n");
 }
 
@@ -635,6 +653,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
           messageId: localMessageId,
           answer: localAnswer,
           doseGuard: null,
+          linkGuard: null,
           model: PREFILTER_MODEL_LABEL,
           // Nothing was looked up for this answer, and the surface that judges answers must be able to read that.
           productContext: {
@@ -694,11 +713,15 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const askedAt = Date.now();
+    const linkRule = linkRuleMode();
 
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-        instructions: chatInstructions(resolvedCustomer, productContext),
+        instructions: chatInstructions(resolvedCustomer, productContext, {
+          colleagueOfferActive: colleagueOfferEnabled(),
+          linkRule
+        }),
         input: history.map((item) => ({
           role: item.role,
           content: item.content
@@ -711,11 +734,27 @@ export function buildApp(dependencies: AppDependencies = {}) {
       // customer gets the label-or-colleague sentence. The reason is logged,
       // the model's sentence is not (it may quote the customer).
       const doseGuard = guardAnswerDoses(response.output_text ?? "", productSearch);
-      const modelAnswer = doseGuard.ok ? response.output_text : DOSE_GUARD_FALLBACK;
-      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind the
-      // same switch as the gate. The count is of the history the route loaded, with the message being answered in it.
+      // NO EXTERNAL LINK BY DEFAULT (card 9d060f5c), behind AI_LINK_RULE: `off`
+      // runs nothing; `log` reports and leaves the answer; `enforce` replaces it.
+      // Read on the model's own text, so a dose fallback does not hide a link.
+      const linkGuard =
+        linkRule === "off"
+          ? null
+          : guardAnswerLinks({
+              answer: response.output_text ?? "",
+              userMessage: message,
+              outcome: productSearch,
+              sources: STORED_LINK_SOURCES_TODAY
+            });
+      const modelAnswer = !doseGuard.ok
+        ? DOSE_GUARD_FALLBACK
+        : linkRule === "enforce" && linkGuard && !linkGuard.ok
+          ? LINK_GUARD_FALLBACK
+          : response.output_text;
+      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind its OWN
+      // switch (AI_CHAT_COLLEAGUE_OFFER, off by default) and the gate's. The count is of the history the route loaded, with the message being answered in it.
       const offerColleague =
-        prefilterEnabled() && shouldOfferColleague(customerTurnCount(history));
+        colleagueOfferEnabled() && shouldOfferColleague(customerTurnCount(history));
       if (offerColleague)
         request.log.info(
           { colleagueOffer: true },
@@ -726,6 +765,25 @@ export function buildApp(dependencies: AppDependencies = {}) {
         request.log.warn(
           { doseGuard: doseGuard.reason },
           "the answer stated a dose the catalogue does not hold; replaced"
+        );
+      // The host only, never the URL (it may carry the customer's words).
+      if (linkGuard && !linkGuard.ok)
+        request.log.warn(
+          { linkGuard: { mode: linkRule, reason: linkGuard.reason, hosts: linkGuard.hosts } },
+          linkRule === "enforce"
+            ? "the answer linked outside our domain; replaced"
+            : "the answer linked outside our domain; logged, not replaced"
+        );
+      // Plan 5.4: own links are counted apart, with how many look like a product page.
+      if (linkGuard && linkGuard.ownLinks > 0)
+        request.log.info(
+          {
+            linkGuard: {
+              ownLinks: linkGuard.ownLinks,
+              ownProductPathLinks: linkGuard.ownProductPathLinks
+            }
+          },
+          "the answer linked our own domain"
         );
 
       const answerMessageId = await conversations.saveMessage({
@@ -751,6 +809,17 @@ export function buildApp(dependencies: AppDependencies = {}) {
         answer: answerText,
         /** Why the answer was replaced, if it was: the judging surface reads it. */
         doseGuard: doseGuard.ok ? null : doseGuard.reason,
+        /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
+        linkGuard:
+          linkGuard === null
+            ? null
+            : {
+                mode: linkRule,
+                reason: linkGuard.reason,
+                hosts: linkGuard.hosts,
+                ownLinks: linkGuard.ownLinks,
+                ownProductPathLinks: linkGuard.ownProductPathLinks
+              },
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         /**
          * What this answer actually had in front of it.
