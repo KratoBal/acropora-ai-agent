@@ -64,10 +64,12 @@ import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
   PREFILTER_MODEL_LABEL,
+  colleagueOfferEnabled,
   localAnswerFor,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
 import {
+  COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS,
   customerTurnCount,
   offTopicSeries,
   shouldOfferColleague,
@@ -128,7 +130,7 @@ export { NO_PRODUCT_CONTEXT_INSTRUCTIONS };
 export function chatInstructions(
   resolution: CustomerContextSuccess,
   productContext: string,
-  linkRule: LinkRuleMode = "off"
+  options: { colleagueOfferActive?: boolean; linkRule?: LinkRuleMode } = {}
 ): string {
   return [
     ASSISTANT_INSTRUCTIONS,
@@ -138,9 +140,13 @@ export function chatInstructions(
     GLOSSARY_INSTRUCTIONS,
     // R1 of the link rule (card 9d060f5c): told under `log` and `enforce`, absent
     // under `off`, so the default keeps the prompt what it was.
-    ...(linkRule === "off" ? [] : [LINK_RULE_INSTRUCTIONS]),
+    ...((options.linkRule ?? "off") === "off" ? [] : [LINK_RULE_INSTRUCTIONS]),
     productContext,
-    customerChatInstructions(resolution)
+    customerChatInstructions(resolution),
+    // Only while the colleague offer is made (see request-prefilter-turns.ts); with the switch off the instructions are unchanged.
+    ...(options.colleagueOfferActive
+      ? [COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS]
+      : [])
   ].join("\n\n");
 }
 
@@ -712,7 +718,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-        instructions: chatInstructions(resolvedCustomer, productContext, linkRule),
+        instructions: chatInstructions(resolvedCustomer, productContext, {
+          colleagueOfferActive: colleagueOfferEnabled(),
+          linkRule
+        }),
         input: history.map((item) => ({
           role: item.role,
           content: item.content
@@ -742,10 +751,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
         : linkRule === "enforce" && linkGuard && !linkGuard.ok
           ? LINK_GUARD_FALLBACK
           : response.output_text;
-      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind the
-      // same switch as the gate. The count is of the history the route loaded, with the message being answered in it.
+      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind its OWN
+      // switch (AI_CHAT_COLLEAGUE_OFFER, off by default) and the gate's. The count is of the history the route loaded, with the message being answered in it.
       const offerColleague =
-        prefilterEnabled() && shouldOfferColleague(customerTurnCount(history));
+        colleagueOfferEnabled() && shouldOfferColleague(customerTurnCount(history));
       if (offerColleague)
         request.log.info(
           { colleagueOffer: true },

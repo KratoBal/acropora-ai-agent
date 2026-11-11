@@ -34,6 +34,19 @@ export const COLLEAGUE_OFFER =
   "Ha szeretnéd, egy kollégánk is segíthet a kérdésben.";
 
 /**
+ * WHAT THE MODEL IS TOLD ABOUT THE OFFER (barracuda's review of #71): a customer who answers the offer with "Igen, kérem" gets a
+ * model answer (the topic is in the history), and the model sees its own previous answer with the offer sentence but knows nothing
+ * about how a colleague is reached. Left alone it can invent an e-mail address, a telephone number or a promise. Until the contact
+ * request exists (slice 4c, 4d) the honest answer is that this chat cannot arrange it, so the instruction says that and forbids the
+ * invention. Added to the model's instructions ONLY while the offer is made (the same switch). Whether the model keeps to it is not
+ * measured here: it needs a live call.
+ */
+export const COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS =
+  "If the customer answers the offer of a colleague's help (for example 'yes, please'), say honestly that this chat cannot put " +
+  "them in touch with a colleague or arrange a callback. Do not write any telephone number, e-mail address, opening hours, time " +
+  "or name for reaching a colleague, and do not promise a callback or a reply. Offer to keep answering their question here.";
+
+/**
  * Said to the fifth off-topic question in a row and the ones after it. A PROPOSAL, like the two of the answers module: Balázs's
  * wording replaces it here. Same constraints as the others: no value, no lookup, no external service named, not even as a type.
  */

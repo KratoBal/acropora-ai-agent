@@ -385,7 +385,7 @@ describe("the chat route: the link gate behind AI_LINK_RULE", () => {
       assert.ok((await run("Szia.")).instructions[0]!.includes(LINK_RULE_INSTRUCTIONS), mode);
     }
     const resolution = { ok: true, mode: "anonymous" } as unknown as Parameters<typeof chatInstructions>[0];
-    assert.equal(chatInstructions(resolution, "X"), chatInstructions(resolution, "X", "off"));
+    assert.equal(chatInstructions(resolution, "X"), chatInstructions(resolution, "X", { linkRule: "off" }));
   });
 
   it("row 23: the weather question gets a local answer, no model call, no address", async () => {
