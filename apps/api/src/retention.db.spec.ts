@@ -130,7 +130,33 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB
     assert.deepEqual(await job.runRetentionOnce(db.pool, NOW, DAYS), { messages: 0, conversations: 0, ratingsAggregated: 0 });
   });
 
-  it("another instance holds the lock: nothing is deleted and the answer is null", async () => {
+  it("a conversation that is being CONTINUED is not deleted from under the save (barracuda's race note on #72)", async () => {
+    // Conversation and message are 40 days old and the job keeps 30: exactly what it deletes. The customer's next message arrives
+    // first: the ownership check marks the conversation as in use (updated_at = now), and the job leaves it. Without the mark the
+    // next INSERT fails on the foreign key. This test uses the real clock (the mark is the database's NOW()).
+    const conversations = await import("./conversations.js");
+    const fortyDaysAgo = new Date(Date.now() - 40 * 86_400_000);
+    const c = await conversation(fortyDaysAgo);
+    await message(c, fortyDaysAgo);
+    assert.equal(await conversations.conversationBelongsToClient(c, "k", "anonymous"), true);
+    const result = await job.runRetentionOnce(db.pool, new Date(), DAYS);
+    assert.equal(result?.messages, 1, "the old message goes");
+    assert.equal(await count("conversations"), 1, "the continued conversation stays");
+    await conversations.saveMessage({ conversationId: c, role: "user", content: "új üzenet" });
+    assert.equal(await count("messages"), 1, "the new message is saved");
+  });
+
+  it("a conversation that is NOT continued is still deleted when old and empty (the control)", async () => {
+    const conversations = await import("./conversations.js");
+    const c = await conversation(at(-1000));
+    await message(c, at(-1000));
+    assert.equal(await conversations.conversationBelongsToClient(c, "other", "anonymous"), false);
+    assert.equal(await conversations.conversationBelongsToClient(c, "k", "someone-else"), false);
+    await job.runRetentionOnce(db.pool, NOW, DAYS);
+    assert.equal(await count("conversations"), 0);
+  });
+
+    it("another instance holds the lock: nothing is deleted and the answer is null", async () => {
     const c = await conversation(at(-1000));
     await message(c, at(-1000));
     const holder = await db.pool.connect();

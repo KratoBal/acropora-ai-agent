@@ -23,18 +23,24 @@ export async function createConversation(
  * conversation of one customer is not continued with another customer's
  * header or anonymously, and the reverse. A row with no subject (written
  * before the column existed) matches nobody, because `NULL = $3` is never
- * true.
+ * true. A match also marks the conversation as just used (see below).
  */
 export async function conversationBelongsToClient(
   conversationId: string,
   clientKey: string,
   subject: string
 ): Promise<boolean> {
+  // ONE STATEMENT THAT CHECKS AND MARKS THE CONVERSATION AS IN USE. The chat route calls this before it saves the customer's next
+  // message, and the retention job (retention.ts) deletes a conversation that is old and empty. With a plain SELECT a conversation
+  // whose every message is old could be deleted between this check and the INSERT, and the save would fail on the foreign key
+  // (barracuda's note on #72). Touching `updated_at` here makes the conversation young at the moment it is continued, so the job's
+  // `updated_at < cutoff` no longer matches it. The route is the only caller.
   const result = await pool.query(
     `
-      SELECT 1
-      FROM conversations
+      UPDATE conversations
+      SET updated_at = NOW()
       WHERE id = $1 AND client_key = $2 AND subject = $3
+      RETURNING 1
     `,
     [conversationId, clientKey, subject]
   );
