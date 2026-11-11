@@ -55,3 +55,30 @@ export function maskContacts(text: string): MaskedText {
   const withoutPhone = withoutEmail.replace(PHONE, replace);
   return { text: withoutPhone, masked };
 }
+
+export type ContactChannel = "EMAIL" | "PHONE";
+
+export interface FoundContact {
+  channel: ContactChannel;
+  /** The value exactly as the customer typed it, trimmed. */
+  value: string;
+}
+
+/**
+ * THE CONTACT IN A REPLY TO THE COLLEAGUE OFFER (card f5b8f7ba, slice 4c): the FIRST e-mail address or Hungarian telephone number in
+ * the text, by position, with the same narrow patterns the mask uses (so what the mask would hide is what a request can carry).
+ * ONE request per message: a second contact in the same text is not handed over. Null when there is none. The value is returned,
+ * never logged: the caller may log the channel only.
+ */
+export function findContact(text: string): FoundContact | null {
+  const email = new RegExp(EMAIL.source).exec(text);
+  const phone = new RegExp(PHONE.source).exec(text);
+  const candidates: Array<{ index: number; contact: FoundContact }> = [];
+  if (email)
+    candidates.push({ index: email.index, contact: { channel: "EMAIL", value: email[0].trim() } });
+  if (phone)
+    candidates.push({ index: phone.index, contact: { channel: "PHONE", value: phone[0].trim() } });
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => a.index - b.index);
+  return candidates[0].contact;
+}
