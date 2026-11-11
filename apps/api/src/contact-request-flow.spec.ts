@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 
 import {
+  CONTACT_ASK_KIND,
   CONTACT_FORWARDED_ANSWER,
+  CONTACT_OFFER_KIND,
   CONTACT_NOT_FORWARDED_ANSWER,
   CONTACT_OFFER,
   CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS,
@@ -10,6 +12,8 @@ import {
   contactFlowActive,
   contactRequestEnabledInOs,
   contactRequestSwitch,
+  maskHandedOver,
+  opensContactReply,
   resetContactRequestSettingsCache,
   withContactOffer
 } from "./contact-request-flow.js";
@@ -173,5 +177,21 @@ describe("the customer-facing proposals (4d): constraints, not wording", () => {
     assert.ok(/Do not write any telephone number, e-mail address/.test(CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS));
     assert.ok(/do not promise a callback, a time or a reply/.test(CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS));
     assert.equal(/\d|@|http/.test(CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS), false);
+  });
+});
+
+describe("the flags and the masking of the handed-over value", () => {
+  it("only a contact_offer or a contact_ask row opens the reading of the next message", () => {
+    assert.equal(opensContactReply(CONTACT_OFFER_KIND), true);
+    assert.equal(opensContactReply(CONTACT_ASK_KIND), true);
+    for (const kind of [null, undefined, "", "other", "CONTACT_OFFER", "contact"])
+      assert.equal(opensContactReply(kind), false, String(kind));
+  });
+
+  it("maskHandedOver replaces every occurrence of the value and nothing else", () => {
+    assert.equal(maskHandedOver("a 06 30 123 4567 és 06 30 123 4567", "06 30 123 4567", "[x]"), "a [x] és [x]");
+    assert.equal(maskHandedOver("06301234567 vagy a@b.hu", "06301234567", "[x]"), "[x] vagy a@b.hu");
+    assert.equal(maskHandedOver("semmi", "06301234567", "[x]"), "semmi");
+    assert.equal(maskHandedOver("szöveg", "", "[x]"), "szöveg");
   });
 });

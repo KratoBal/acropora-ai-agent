@@ -63,13 +63,15 @@ describe("the contact flag and the masking update in Postgres", { skip: url ? fa
     await mod.saveMessage({ conversationId: conversation, role: "user", content: "kérdés" });
     await mod.saveMessage({ conversationId: conversation, role: "assistant", content: "válasz és ajánlat", localKind: "contact_offer" });
     await mod.saveMessage({ conversationId: conversation, role: "assistant", content: "másik válasz" });
+    await mod.saveMessage({ conversationId: conversation, role: "assistant", content: "újra kérem", localKind: "contact_ask" });
     const history = await mod.getConversationMessages(conversation, 20);
     assert.deepEqual(
       history.map((row) => [row.role, row.localKind ?? null]),
       [
         ["user", null],
         ["assistant", "contact_offer"],
-        ["assistant", null]
+        ["assistant", null],
+        ["assistant", "contact_ask"]
       ]
     );
   });

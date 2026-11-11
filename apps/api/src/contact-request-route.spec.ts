@@ -8,6 +8,7 @@ import {
   type ConversationStore
 } from "./app.js";
 import {
+  CONTACT_ASK_KIND,
   CONTACT_FORWARDED_ANSWER,
   CONTACT_NOT_FORWARDED_ANSWER,
   CONTACT_OFFER,
@@ -311,6 +312,9 @@ describe("what is NOT a request", () => {
     assert.equal(body.answer, "A modell válasza.");
     assert.ok(fx.instructionsSeen[0]!.includes(CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS));
     assert.ok(!fx.instructionsSeen[0]!.includes(COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS));
+    // the model's answer asks for the contact, so ITS row is flagged: the next message is read as the reply
+    assert.equal(fx.messages.at(-1)?.role, "assistant");
+    assert.equal(fx.messages.at(-1)?.localKind, CONTACT_ASK_KIND);
   });
 
   it("an order number in the reply is no contact", async () => {
@@ -328,6 +332,85 @@ describe("what is NOT a request", () => {
     }]);
     await ask(fx, PHONE);
     assert.equal(contactCalls.length, 0);
+  });
+});
+
+describe("the customer who is asked for the contact again (barracuda on #80): the answer that asks is flagged, for ONE step", () => {
+  const userRowOf = (fx: ReturnType<typeof fixture>, text: string) =>
+    fx.messages.find((row) => row.role === "user" && row.content.includes(text))!;
+
+  it("offer, 'Igen, kérem', the model's answer, then the number: the number is handed over and answered forwarded", async () => {
+    const fx = fixture(seedAfterOffer());
+    const first = await ask(fx, "Igen, kérem");
+    assert.equal(first.body.answer, "A modell válasza.");
+    assert.equal(contactCalls.length, 0);
+    const second = await ask(fx, `a számom: ${PHONE}`);
+    assert.equal(contactCalls.length, 1);
+    assert.equal(contactCalls[0]?.body.value, PHONE);
+    assert.equal(second.body.answer, CONTACT_FORWARDED_ANSWER);
+    assert.equal(userRowOf(fx, "a számom").content, `a számom: ${CONTACT_PLACEHOLDER}`);
+    // the answer to a message that followed a `contact_ask` row never carries a flag (a forwarded answer is unflagged)
+    assert.equal(fx.messages.at(-1)?.localKind ?? null, null);
+    assert.equal(fx.modelCalls(), 1);
+  });
+
+  it("offer, the number, an OS failure, the number again: handed over the second time (the not-forwarded answer is flagged: a retry is allowed)", async () => {
+    const fx = fixture(seedAfterOffer());
+    os.contact = () => new Response("{}", { status: 500 });
+    const failed = await ask(fx, `a számom: ${PHONE}`);
+    assert.equal(failed.body.answer, CONTACT_NOT_FORWARDED_ANSWER);
+    assert.equal(fx.messages.at(-1)?.localKind, CONTACT_ASK_KIND);
+    assert.equal(contactCalls.length, 1);
+    os.contact = receipt;
+    const again = await ask(fx, `újra a számom: ${PHONE}`);
+    assert.equal(contactCalls.length, 2);
+    assert.equal(again.body.answer, CONTACT_FORWARDED_ANSWER);
+    // each attempt is its own message and its own key
+    assert.notEqual(contactCalls[0]?.body.requestKey, contactCalls[1]?.body.requestKey);
+    // the first (failed) message keeps its raw number, the delivered one is masked
+    assert.equal(userRowOf(fx, "a számom:").content, `a számom: ${PHONE}`);
+    assert.equal(userRowOf(fx, "újra a számom").content, `újra a számom: ${CONTACT_PLACEHOLDER}`);
+  });
+
+  it("the flag runs out after ONE step: a model answer after a `contact_ask` row is unflagged, and a number after it is no request", async () => {
+    const fx = fixture(seedAfterOffer());
+    await ask(fx, "Igen, kérem");
+    assert.equal(fx.messages.at(-1)?.localKind, CONTACT_ASK_KIND);
+    await ask(fx, "Mi a bio-pellet a koralljaimnak?");
+    assert.equal(fx.messages.at(-1)?.role, "assistant");
+    assert.equal(fx.messages.at(-1)?.localKind ?? null, null);
+    // (this is the customer's fourth turn, so the fresh offer is appended to the answer: the model answered, nothing was handed over)
+    await ask(fx, `a koralljaim miatt a számom ${PHONE}`);
+    assert.equal(contactCalls.length, 0);
+    assert.equal(fx.modelCalls(), 3);
+    // and the raw number stays in the stored row (it was no request)
+    assert.ok(userRowOf(fx, "a koralljaim miatt").content.includes(PHONE));
+  });
+
+  it("only a flagged offer or ask row opens the reading: an unflagged assistant row between is enough to close it", async () => {
+    const fx = fixture([...seedAfterOffer(), { id: "00000000-0000-4000-8000-0000000000c0", role: "user", content: "Mi a bio-pellet?" }, {
+      id: "00000000-0000-4000-8000-0000000000c1",
+      role: "assistant",
+      content: "Egy táplálék.",
+    }]);
+    await ask(fx, `a koralljaim miatt: ${PHONE}`);
+    assert.equal(contactCalls.length, 0);
+  });
+
+  it("a second contact in the same message is NOT masked (it was not handed over): only the delivered value is replaced", async () => {
+    const fx = fixture(seedAfterOffer());
+    await ask(fx, `${PHONE} vagy vasarlo@example.hu`);
+    assert.equal(contactCalls.length, 1);
+    assert.equal(contactCalls[0]?.body.channel, "PHONE");
+    const row = userRowOf(fx, "vagy");
+    assert.equal(row.content, `${CONTACT_PLACEHOLDER} vagy vasarlo@example.hu`);
+  });
+
+  it("the delivered value is masked wherever it repeats in the message", async () => {
+    const fx = fixture(seedAfterOffer());
+    await ask(fx, `${PHONE}, tehát ${PHONE}`);
+    const row = userRowOf(fx, "tehát");
+    assert.equal(row.content, `${CONTACT_PLACEHOLDER}, tehát ${CONTACT_PLACEHOLDER}`);
   });
 });
 

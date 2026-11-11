@@ -76,8 +76,8 @@ export async function saveMessage(input: {
   content: string;
   model?: string;
   usage?: MessageUsage;
-  /** 'contact_offer' on the answer that carries the offer with the contact request (see db.ts), else absent. */
-  localKind?: "contact_offer";
+  /** 'contact_offer' on the answer that carries the offer with the contact request, 'contact_ask' on an answer that asks for the contact again (see db.ts), else absent. */
+  localKind?: "contact_offer" | "contact_ask";
 }): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `

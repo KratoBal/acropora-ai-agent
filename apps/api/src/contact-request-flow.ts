@@ -36,6 +36,31 @@ export const CONTACT_REQUEST_MODEL_LABEL = "local-contact-request";
 export const CONTACT_OFFER_KIND = "contact_offer";
 
 /**
+ * The flag of an answer that ASKS the customer for the contact again, so that their NEXT message is read as the reply (barracuda on
+ * #80): the model's answer to an "Igen, kérem" that came without a contact (the instruction tells the model to ask for it in the
+ * next message), and the local "not forwarded, try again" answer. Without it the customer is asked for a contact that nothing reads.
+ * THE FLAG RUNS OUT AFTER ONE STEP: it is set only on an answer to a message that followed a `contact_offer` row, never on an answer
+ * to one that followed a `contact_ask` row (the not-forwarded answer excepted: a failed hand-over may be retried), so a later turn is
+ * never a request reader by accident.
+ */
+export const CONTACT_ASK_KIND = "contact_ask";
+
+export type ContactLocalKind = typeof CONTACT_OFFER_KIND | typeof CONTACT_ASK_KIND;
+
+/** The previous assistant row opens the reading of the next customer message as a contact reply. */
+export const opensContactReply = (localKind: string | null | undefined): boolean =>
+  localKind === CONTACT_OFFER_KIND || localKind === CONTACT_ASK_KIND;
+
+/**
+ * The stored customer message with ONLY the handed-over value replaced (every occurrence of it). A second contact in the same message
+ * is not handed over (one request per message), so it is NOT masked here: "a contact never disappears without a delivery" holds, and
+ * the retention covers the one left in the row (the model's input is masked regardless).
+ */
+export function maskHandedOver(message: string, value: string, placeholder: string): string {
+  return value === "" ? message : message.split(value).join(placeholder);
+}
+
+/**
  * 4d, PROPOSAL: the offer becomes a request for a contact. It says what happens (the request is forwarded to a colleague, who may
  * use the contact), and nothing it cannot keep: no time, no person, no "immediately". Replaces the offer sentence only while the
  * contact request is on.

@@ -16,9 +16,12 @@ import {
   CONTACT_FORWARDED_ANSWER,
   CONTACT_NOT_FORWARDED_ANSWER,
   CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS,
+  CONTACT_ASK_KIND,
   CONTACT_OFFER_KIND,
   CONTACT_REQUEST_MODEL_LABEL,
   contactFlowActive,
+  maskHandedOver,
+  opensContactReply,
   withContactOffer
 } from "./contact-request-flow.js";
 import {
@@ -72,7 +75,7 @@ import {
   researchSummaryInput,
   researchSummaryInstructions
 } from "./research-draft.js";
-import { maskContacts, maskContactsEnabled } from "./contact-mask.js";
+import { CONTACT_PLACEHOLDER, maskContacts, maskContactsEnabled } from "./contact-mask.js";
 import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
@@ -241,7 +244,7 @@ export interface ConversationStore {
     content: string;
     model?: string;
     usage?: MessageUsage;
-    localKind?: "contact_offer";
+    localKind?: "contact_offer" | "contact_ask";
   }): Promise<string>;
   setMessageOutcome(messageId: string, outcome: string): Promise<void>;
   /** The stored customer message with its contact replaced, after the OS recorded the request (slice 4c). */
@@ -650,7 +653,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
     const foundContact =
       contactFlow &&
       previousRow?.role === "assistant" &&
-      previousRow.localKind === CONTACT_OFFER_KIND
+      opensContactReply(previousRow.localKind)
         ? findContact(message)
         : null;
     const handOverConfig = foundContact ? contactRequestConfig() : null;
@@ -683,7 +686,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         try {
           await conversations.maskUserMessage(
             questionMessageId,
-            maskContacts(message).text
+            maskHandedOver(message, foundContact.value, CONTACT_PLACEHOLDER)
           );
         } catch (error) {
           // The request is recorded; the raw value stays in this service's row until the retention removes it. ONLY the error's name and
@@ -706,7 +709,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
         conversationId: activeConversationId,
         role: "assistant",
         content: contactAnswer,
-        model: CONTACT_REQUEST_MODEL_LABEL
+        model: CONTACT_REQUEST_MODEL_LABEL,
+        // a failed hand-over may be retried: the customer's next message with the contact is read as the reply again
+        ...(receipt.ok ? {} : { localKind: CONTACT_ASK_KIND })
       });
       await noteOutcome(receipt.ok ? "contact_forwarded" : "contact_not_forwarded");
 
@@ -944,7 +949,13 @@ export function buildApp(dependencies: AppDependencies = {}) {
         content: answerText,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         usage: readUsage(response),
-        ...(offerColleague && contactFlow ? { localKind: CONTACT_OFFER_KIND } : {})
+        ...(offerColleague && contactFlow
+          ? { localKind: CONTACT_OFFER_KIND }
+          : contactFlow && previousRow?.role === "assistant" && previousRow.localKind === CONTACT_OFFER_KIND
+            ? // the model's answer to a message that followed the offer without a contact asks for it (the instruction says so): that
+              // answer is flagged for ONE step, so the next message with a contact is read as the reply
+              { localKind: CONTACT_ASK_KIND }
+            : {})
       });
 
       await noteOutcome("answered");
