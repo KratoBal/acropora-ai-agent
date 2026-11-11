@@ -64,10 +64,12 @@ import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
   PREFILTER_MODEL_LABEL,
+  colleagueOfferEnabled,
   localAnswerFor,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
 import {
+  COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS,
   customerTurnCount,
   offTopicSeries,
   shouldOfferColleague,
@@ -119,7 +121,8 @@ export { NO_PRODUCT_CONTEXT_INSTRUCTIONS };
 
 export function chatInstructions(
   resolution: CustomerContextSuccess,
-  productContext: string
+  productContext: string,
+  options: { colleagueOfferActive?: boolean } = {}
 ): string {
   return [
     ASSISTANT_INSTRUCTIONS,
@@ -128,7 +131,11 @@ export function chatInstructions(
     // egy uzemzavar csendben elvinne a szohasznalatot is.
     GLOSSARY_INSTRUCTIONS,
     productContext,
-    customerChatInstructions(resolution)
+    customerChatInstructions(resolution),
+    // Only while the colleague offer is made (see request-prefilter-turns.ts); with the switch off the instructions are unchanged.
+    ...(options.colleagueOfferActive
+      ? [COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS]
+      : [])
   ].join("\n\n");
 }
 
@@ -698,7 +705,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-        instructions: chatInstructions(resolvedCustomer, productContext),
+        instructions: chatInstructions(resolvedCustomer, productContext, {
+          colleagueOfferActive: colleagueOfferEnabled()
+        }),
         input: history.map((item) => ({
           role: item.role,
           content: item.content
@@ -712,10 +721,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
       // the model's sentence is not (it may quote the customer).
       const doseGuard = guardAnswerDoses(response.output_text ?? "", productSearch);
       const modelAnswer = doseGuard.ok ? response.output_text : DOSE_GUARD_FALLBACK;
-      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind the
-      // same switch as the gate. The count is of the history the route loaded, with the message being answered in it.
+      // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind its OWN
+      // switch (AI_CHAT_COLLEAGUE_OFFER, off by default) and the gate's. The count is of the history the route loaded, with the message being answered in it.
       const offerColleague =
-        prefilterEnabled() && shouldOfferColleague(customerTurnCount(history));
+        colleagueOfferEnabled() && shouldOfferColleague(customerTurnCount(history));
       if (offerColleague)
         request.log.info(
           { colleagueOffer: true },
