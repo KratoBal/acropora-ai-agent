@@ -76,6 +76,14 @@ export const SCHEMA_SQL = `
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS outcome TEXT;
 
     /*
+     * WHAT KIND OF LOCAL TEXT an assistant row is, when its text was not only the model's (card f5b8f7ba, slice 4c): 'contact_offer'
+     * marks the answer that carried the colleague offer WITH the request for a contact, so the customer's NEXT message can be read as
+     * the reply to it. A flag on the row, not a search for the sentence in the text (a sentence can be edited, a column cannot be
+     * mistaken for it). NULL is every other row, and every row written before this column.
+     */
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS local_kind TEXT;
+
+    /*
      * WHO the conversation is about, fixed when it is created.
      *
      * The customer used to be read per request and stored nowhere, so a

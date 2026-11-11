@@ -71,6 +71,8 @@ services:
       AI_CHAT_RETENTION: ${AI_CHAT_RETENTION:-}
       AI_CHAT_MESSAGE_RETENTION_DAYS: ${AI_CHAT_MESSAGE_RETENTION_DAYS:-}
       ACROPORA_OS_AI_CHAT_SETTINGS_TOKEN: ${ACROPORA_OS_AI_CHAT_SETTINGS_TOKEN:-}
+      AI_CHAT_CONTACT_REQUEST: ${AI_CHAT_CONTACT_REQUEST:-}
+      ACROPORA_OS_AI_CONTACT_TOKEN: ${ACROPORA_OS_AI_CONTACT_TOKEN:-}
       # Which commit this container was built from. Set by the deploy
       # workflow; empty for anything started another way, and the health
       # endpoint then answers "unknown" rather than guessing.

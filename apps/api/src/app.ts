@@ -5,10 +5,25 @@ import {
   conversationBelongsToClient,
   createConversation,
   getConversationMessages,
+  maskUserMessage,
   saveMessage,
   setMessageOutcome,
   type MessageUsage
 } from "./conversations.js";
+import { findContact } from "./contact-mask.js";
+import { contactRequestConfig, handOverContact } from "./contact-request.js";
+import {
+  CONTACT_FORWARDED_ANSWER,
+  CONTACT_NOT_FORWARDED_ANSWER,
+  CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS,
+  CONTACT_ASK_KIND,
+  CONTACT_OFFER_KIND,
+  CONTACT_REQUEST_MODEL_LABEL,
+  contactFlowActive,
+  maskHandedOver,
+  opensContactReply,
+  withContactOffer
+} from "./contact-request-flow.js";
 import {
   aiProviderFailure,
   aiProviderLimits,
@@ -60,7 +75,7 @@ import {
   researchSummaryInput,
   researchSummaryInstructions
 } from "./research-draft.js";
-import { maskContacts, maskContactsEnabled } from "./contact-mask.js";
+import { CONTACT_PLACEHOLDER, maskContacts, maskContactsEnabled } from "./contact-mask.js";
 import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
@@ -131,7 +146,12 @@ export { NO_PRODUCT_CONTEXT_INSTRUCTIONS };
 export function chatInstructions(
   resolution: CustomerContextSuccess,
   productContext: string,
-  options: { colleagueOfferActive?: boolean; linkRule?: LinkRuleMode } = {}
+  options: {
+    colleagueOfferActive?: boolean;
+    /** The contact request is on (slice 4c): the model is told to ask for the contact instead of saying a colleague cannot be reached. */
+    contactRequestActive?: boolean;
+    linkRule?: LinkRuleMode;
+  } = {}
 ): string {
   return [
     ASSISTANT_INSTRUCTIONS,
@@ -146,7 +166,11 @@ export function chatInstructions(
     customerChatInstructions(resolution),
     // Only while the colleague offer is made (see request-prefilter-turns.ts); with the switch off the instructions are unchanged.
     ...(options.colleagueOfferActive
-      ? [COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS]
+      ? [
+          options.contactRequestActive
+            ? CONTACT_OFFER_FOLLOWUP_INSTRUCTIONS
+            : COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS
+        ]
       : [])
   ].join("\n\n");
 }
@@ -220,8 +244,11 @@ export interface ConversationStore {
     content: string;
     model?: string;
     usage?: MessageUsage;
+    localKind?: "contact_offer" | "contact_ask";
   }): Promise<string>;
   setMessageOutcome(messageId: string, outcome: string): Promise<void>;
+  /** The stored customer message with its contact replaced, after the OS recorded the request (slice 4c). */
+  maskUserMessage(messageId: string, maskedContent: string): Promise<void>;
   getConversationMessages(
     conversationId: string,
     limit?: number
@@ -229,6 +256,7 @@ export interface ConversationStore {
     Array<{
       role: "user" | "assistant" | "system";
       content: string;
+      localKind?: string | null;
     }>
   >;
 }
@@ -238,6 +266,7 @@ const databaseConversationStore: ConversationStore = {
   conversationBelongsToClient,
   saveMessage,
   setMessageOutcome,
+  maskUserMessage,
   getConversationMessages
 };
 
@@ -613,6 +642,97 @@ export function buildApp(dependencies: AppDependencies = {}) {
     );
 
     /**
+     * THE CONTACT REQUEST (card f5b8f7ba, slice 4c), BEFORE THE PRE-FILTER: the customer's reply to the colleague offer that carries a
+     * contact is handed to the OS and answered HERE, with no model call and no catalogue call. THE ORDER (plan 2 point 2): the OS
+     * records it (a receipt with `recorded: true`), THEN the stored message is masked, THEN the local answer says "forwarded"; on
+     * any failure the local answer claims no delivery and the raw value stays in the stored row (the retention covers it). Only the
+     * channel and the outcome are logged, never the value. `contactFlow` is read once and used for both halves of the flow.
+     */
+    const contactFlow = await contactFlowActive();
+    const previousRow = history.length >= 2 ? history[history.length - 2] : undefined;
+    const foundContact =
+      contactFlow &&
+      previousRow?.role === "assistant" &&
+      opensContactReply(previousRow.localKind)
+        ? findContact(message)
+        : null;
+    const handOverConfig = foundContact ? contactRequestConfig() : null;
+
+    if (foundContact && handOverConfig) {
+      const receipt = await handOverContact(
+        {
+          channel: foundContact.channel,
+          value: foundContact.value,
+          conversationRef: activeConversationId,
+          requestKey: questionMessageId
+        },
+        { config: handOverConfig }
+      );
+      request.log.info(
+        {
+          contactRequest: {
+            channel: foundContact.channel,
+            ok: receipt.ok,
+            ...(receipt.ok
+              ? { duplicate: receipt.duplicate, notified: receipt.notified }
+              : { error: receipt.error, detail: receipt.detail })
+          }
+        },
+        receipt.ok
+          ? "the contact request was handed over to the OS"
+          : "the contact request could not be handed over; the stored message is unchanged"
+      );
+      if (receipt.ok) {
+        try {
+          await conversations.maskUserMessage(
+            questionMessageId,
+            maskHandedOver(message, foundContact.value, CONTACT_PLACEHOLDER)
+          );
+        } catch (error) {
+          // The request is recorded; the raw value stays in this service's row until the retention removes it. ONLY the error's name and
+          // database code are logged, not `safeErrorSummary`: that keeps the message, and a database message can quote the row.
+          request.log.error(
+            {
+              reason: {
+                name: (error as Error)?.name ?? "unknown",
+                code: typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : undefined
+              }
+            },
+            "could not mask the stored message after the hand-over"
+          );
+        }
+      }
+      const contactAnswer = receipt.ok
+        ? CONTACT_FORWARDED_ANSWER
+        : CONTACT_NOT_FORWARDED_ANSWER;
+      const contactMessageId = await conversations.saveMessage({
+        conversationId: activeConversationId,
+        role: "assistant",
+        content: contactAnswer,
+        model: CONTACT_REQUEST_MODEL_LABEL,
+        // a failed hand-over may be retried: the customer's next message with the contact is read as the reply again
+        ...(receipt.ok ? {} : { localKind: CONTACT_ASK_KIND })
+      });
+      await noteOutcome(receipt.ok ? "contact_forwarded" : "contact_not_forwarded");
+
+      return {
+        conversationId: activeConversationId,
+        messageId: contactMessageId,
+        answer: contactAnswer,
+        doseGuard: null,
+        linkGuard: null,
+        model: CONTACT_REQUEST_MODEL_LABEL,
+        productContext: {
+          state: "not_asked",
+          hitCount: null,
+          projectionVersion: null,
+          descriptionSources: []
+        },
+        ...customerChatFields(resolvedCustomer)
+      };
+    }
+
+    /**
      * THE LOCAL PRE-FILTER (card f5b8f7ba), AFTER THE MESSAGE IS SAVED AND BEFORE ANYTHING COSTS: the key check, the catalogue
      * search and the model call all come later. Off by default (`AI_CHAT_PREFILTER`, exactly `true`): off, this block is
      * skipped and the route is what it was.
@@ -743,6 +863,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructions: chatInstructions(resolvedCustomer, productContext, {
           colleagueOfferActive: colleagueOfferEnabled(),
+          contactRequestActive: contactFlow,
           linkRule
         }),
         input: modelInput,
@@ -791,7 +912,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
           { colleagueOffer: true },
           "the colleague offer was appended to the answer"
         );
-      const answerText = offerColleague ? withColleagueOffer(modelAnswer) : modelAnswer;
+      // While the contact request is on, the offer asks for the contact (slice 4c/4d) and the row is flagged so the next message is read as its reply.
+      const answerText = offerColleague
+        ? contactFlow
+          ? withContactOffer(modelAnswer)
+          : withColleagueOffer(modelAnswer)
+        : modelAnswer;
       if (!doseGuard.ok)
         request.log.warn(
           { doseGuard: doseGuard.reason },
@@ -822,7 +948,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
         role: "assistant",
         content: answerText,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
-        usage: readUsage(response)
+        usage: readUsage(response),
+        ...(offerColleague && contactFlow
+          ? { localKind: CONTACT_OFFER_KIND }
+          : contactFlow && previousRow?.role === "assistant" && previousRow.localKind === CONTACT_OFFER_KIND
+            ? // the model's answer to a message that followed the offer without a contact asks for it (the instruction says so): that
+              // answer is flagged for ONE step, so the next message with a contact is read as the reply
+              { localKind: CONTACT_ASK_KIND }
+            : {})
       });
 
       await noteOutcome("answered");

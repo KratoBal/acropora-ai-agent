@@ -75,6 +75,7 @@ describe("a conversation is continued only for the subject it was started for", 
       return "0d9c8b7a-6e5f-4a3b-9c2d-1e0f9a8b7c6d";
     },
     setMessageOutcome: async () => {},
+    maskUserMessage: async () => {},
     getConversationMessages: async () => []
   };
 

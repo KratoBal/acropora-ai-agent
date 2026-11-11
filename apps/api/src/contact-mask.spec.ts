@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   CONTACT_PLACEHOLDER,
   MASK_CONTACTS_ENV,
+  findContact,
   maskContacts,
   maskContactsEnabled
 } from "./contact-mask.js";
@@ -102,5 +103,53 @@ describe("the switch", () => {
     for (const value of ["", "true", "FALSE", "0", "off", " false"])
       assert.equal(maskContactsEnabled({ [MASK_CONTACTS_ENV]: value }), true, JSON.stringify(value));
     assert.equal(maskContactsEnabled({ [MASK_CONTACTS_ENV]: "false" }), false);
+  });
+});
+
+describe("findContact (the contact in a reply to the offer: the same patterns as the mask)", () => {
+  it("finds an e-mail address and a Hungarian number, with the value as typed (trimmed)", () => {
+    assert.deepEqual(findContact("Igen, a címem: vasarlo@example.hu köszi"), {
+      channel: "EMAIL",
+      value: "vasarlo@example.hu"
+    });
+    assert.deepEqual(findContact("hívj: +36 30 123 4567."), {
+      channel: "PHONE",
+      value: "+36 30 123 4567"
+    });
+    assert.deepEqual(findContact("06-30-123-45-67"), {
+      channel: "PHONE",
+      value: "06-30-123-45-67"
+    });
+  });
+
+  it("returns the FIRST contact by position, one per message", () => {
+    assert.equal(findContact("06301234567 vagy vasarlo@example.hu")?.channel, "PHONE");
+    assert.equal(findContact("vasarlo@example.hu vagy 06301234567")?.channel, "EMAIL");
+    assert.equal(findContact("a@example.hu b@example.hu")?.value, "a@example.hu");
+  });
+
+  it("finds nothing in what is no contact: an order or part number, a foreign number, a long digit string, an incomplete address", () => {
+    for (const text of [
+      "a rendelésszámom 123456",
+      "A-2024-0042",
+      "+44 20 7946 0958",
+      "06301234567890",
+      "kovacs@",
+      "",
+      "Igen, kérem"
+    ])
+      assert.equal(findContact(text), null, text);
+  });
+
+  it("finds exactly what the mask would hide: masking the found value leaves no contact behind", () => {
+    for (const text of ["hívj a 06 30 123 4567 számon", "ide: vasarlo@example.hu"]) {
+      const found = findContact(text)!;
+      assert.equal(maskContacts(text).text.includes(found.value), false, text);
+    }
+  });
+
+  it("does not carry state between calls (no sticky regular expression)", () => {
+    for (let index = 0; index < 4; index += 1)
+      assert.equal(findContact("06301234567")?.value, "06301234567");
   });
 });

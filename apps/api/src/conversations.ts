@@ -76,6 +76,8 @@ export async function saveMessage(input: {
   content: string;
   model?: string;
   usage?: MessageUsage;
+  /** 'contact_offer' on the answer that carries the offer with the contact request, 'contact_ask' on an answer that asks for the contact again (see db.ts), else absent. */
+  localKind?: "contact_offer" | "contact_ask";
 }): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `
@@ -86,9 +88,10 @@ export async function saveMessage(input: {
         model,
         input_tokens,
         output_tokens,
-        total_tokens
+        total_tokens,
+        local_kind
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       RETURNING id
     `,
     [
@@ -98,7 +101,8 @@ export async function saveMessage(input: {
       input.model ?? null,
       input.usage?.inputTokens ?? null,
       input.usage?.outputTokens ?? null,
-      input.usage?.totalTokens ?? null
+      input.usage?.totalTokens ?? null,
+      input.localKind ?? null
     ]
   );
 
@@ -138,6 +142,25 @@ export async function setMessageOutcome(
   );
 }
 
+/**
+ * THE STORED CUSTOMER MESSAGE, MASKED AFTER A HAND-OVER (card f5b8f7ba, slice 4c; plan section 2 point 2 step 3). Only a `user` row,
+ * and only its text: the contact now lives in the OS, so this service's own copy is replaced. Called ONLY after the OS confirmed
+ * the request is recorded; before that the raw value stays (the retention covers it) so it cannot vanish without a delivery.
+ */
+export async function maskUserMessage(
+  messageId: string,
+  maskedContent: string
+): Promise<void> {
+  await pool.query(
+    `
+      UPDATE messages
+      SET content = $2
+      WHERE id = $1 AND role = 'user'
+    `,
+    [messageId, maskedContent]
+  );
+}
+
 export async function getConversationMessages(
   conversationId: string,
   limit = 20
@@ -145,14 +168,16 @@ export async function getConversationMessages(
   Array<{
     role: "user" | "assistant" | "system";
     content: string;
+    localKind?: string | null;
   }>
 > {
   const result = await pool.query<{
     role: "user" | "assistant" | "system";
     content: string;
+    localKind: string | null;
   }>(
     `
-      SELECT role, content
+      SELECT role, content, local_kind AS "localKind"
       FROM messages
       WHERE conversation_id = $1
       ORDER BY created_at DESC
