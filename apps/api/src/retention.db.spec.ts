@@ -6,15 +6,15 @@ import { after, before, beforeEach, describe, it } from "node:test";
  *
  * `retention.spec.ts` measures the job around the SQL with a recording client; this one measures the SQL. Like the other database
  * spec it needs a throwaway EMPTY database and is skipped without one (CI has none, by design: see ci.yml):
- * AI_CONVERSATIONS_DB_URL=postgres://... . It creates the schema, REFUSES to run if any of its tables already holds a row, and truncates them after each test.
+ * AI_RETENTION_DB_URL=postgres://... (its OWN variable and its own database: `node --test` runs the spec files in parallel, and the ownership spec's `AI_CONVERSATIONS_DB_URL` database is being created and emptied at the same time). It creates the schema, REFUSES to run if any of its tables already holds a row, and truncates them after each test.
  *
  * What turns it red: `<=` instead of `<` (the row exactly at the boundary goes); the aggregate written after the delete (the ratings
  * are gone before they are counted); the aggregate overwritten instead of added to; a conversation deleted while it still holds a
  * newer message, or while it is young and still empty; a delete that does not wait for the lock.
  */
-const url = process.env.AI_CONVERSATIONS_DB_URL;
+const url = process.env.AI_RETENTION_DB_URL;
 
-describe("the retention job in Postgres", { skip: url ? false : "AI_CONVERSATIONS_DB_URL is not set" }, () => {
+describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB_URL is not set" }, () => {
   let db: typeof import("./db.js");
   let job: typeof import("./retention.js");
   const NOW = new Date("2026-11-11T10:00:00.000Z");
