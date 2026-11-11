@@ -227,7 +227,9 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB
       await store.saveLastKnown(db.pool, view(365));
       await store.saveLastKnown(db.pool, view(90));
       assert.deepEqual(await lastKnown(), [{ d: 90 }]);
-      assert.deepEqual(await store.loadLastKnown(db.pool), view(90));
+      const known = await store.loadLastKnown(db.pool);
+      assert.deepEqual(known?.view, view(90));
+      assert.ok(known && Math.abs(Date.now() - known.readAt.getTime()) < 60_000, "readAt is when it was kept");
       await assert.rejects(store.saveLastKnown(db.pool, view(6)));
       await assert.rejects(store.saveLastKnown(db.pool, view(366)));
       assert.deepEqual(await lastKnown(), [{ d: 90 }], "a refused save changes nothing");
@@ -248,6 +250,22 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_RETENTION_DB
       // The OS is down now: the setting an owner moved to 365 is still what the job honours (a default of 180 would delete old200).
       await job.retentionPass(db.pool, silent, env, new Date(), osDown);
       assert.equal(await count("messages"), 1, "the 200-day-old message is still there");
+    });
+
+    it("a last-known value older than 24 hours does not decide: the OS is down, the value was read 25 hours ago: NOTHING is deleted", async () => {
+      const store = await import("./chat-settings-store.js");
+      await store.saveLastKnown(db.pool, view(30));
+      await db.pool.query("UPDATE chat_settings_last_known SET read_at = NOW() - INTERVAL '25 hours'");
+      const c = await conversation(ageDays(1));
+      await message(c, ageDays(400));
+      const lines: Array<Record<string, unknown>> = [];
+      await job.retentionPass(db.pool, { info: (p) => lines.push(p), error: (p) => lines.push(p) }, env, new Date(), osDown);
+      assert.equal(await count("messages"), 1);
+      assert.deepEqual(lines, [{ retention: "retention_skipped", reason: "last_known_stale", settings: "chat_settings_unavailable" }]);
+      // ...and a value read 23 hours ago does decide (the control)
+      await db.pool.query("UPDATE chat_settings_last_known SET read_at = NOW() - INTERVAL '23 hours'");
+      await job.retentionPass(db.pool, silent, env, new Date(), osDown);
+      assert.equal(await count("messages"), 0, "the 400-day-old message goes on the fresh enough 30-day value");
     });
 
     it("S10 on a real database: the OS is down and nothing was ever read: NOTHING is deleted", async () => {

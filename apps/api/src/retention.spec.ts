@@ -9,6 +9,7 @@ import {
   MAX_RETENTION_DAYS,
   MIN_RETENTION_DAYS,
   RETENTION_DAYS_ENV,
+  LAST_KNOWN_MAX_AGE_MS,
   RETENTION_ENV,
   retentionConfig,
   resolveRetentionDays,
@@ -58,7 +59,7 @@ interface Call {
 }
 
 function recordingPool(
-  options: { locked?: boolean; failAt?: string; rowCounts?: Record<string, number>; lastKnown?: number | null } = {}
+  options: { locked?: boolean; failAt?: string; rowCounts?: Record<string, number>; lastKnown?: number | null; lastKnownAgeMs?: number } = {}
 ) {
   const calls: Call[] = [];
   let released = 0;
@@ -71,7 +72,14 @@ function recordingPool(
         return options.lastKnown == null
           ? { rows: [], rowCount: 0 }
           : {
-              rows: [{ message_retention_days: options.lastKnown, offer_enabled: false, contact_request_enabled: false }],
+              rows: [
+                {
+                  message_retention_days: options.lastKnown,
+                  offer_enabled: false,
+                  contact_request_enabled: false,
+                  read_at: new Date(NOW.getTime() - (options.lastKnownAgeMs ?? 3_600_000))
+                }
+              ],
               rowCount: 1
             };
       const count = Object.entries(options.rowCounts ?? {}).find(([needle]) => text.includes(needle))?.[1] ?? 0;
@@ -257,6 +265,26 @@ describe("resolveRetentionDays", () => {
       skip: "settings_unavailable",
       note: "chat_settings_unavailable"
     });
+  });
+
+  it("a last-known value older than 24 hours does NOT decide a deletion: the run is skipped and named (acrobot 46847)", async () => {
+    assert.equal(LAST_KNOWN_MAX_AGE_MS, 24 * 60 * 60 * 1000);
+    const atLimit = recordingPool({ lastKnown: 365, lastKnownAgeMs: LAST_KNOWN_MAX_AGE_MS });
+    const counts = await resolveRetentionDays(atLimit.pool, withOs(), osDown, NOW);
+    assert.equal("days" in counts && counts.days, 365, "exactly at the limit still counts");
+    const over = recordingPool({ lastKnown: 365, lastKnownAgeMs: LAST_KNOWN_MAX_AGE_MS + 1 });
+    assert.deepEqual(await resolveRetentionDays(over.pool, withOs(), osDown, NOW), {
+      skip: "last_known_stale",
+      note: "chat_settings_unavailable"
+    });
+    const days = recordingPool({ lastKnown: 365, lastKnownAgeMs: 5 * 86_400_000 });
+    assert.equal("skip" in (await resolveRetentionDays(days.pool, withOs(), osDown, NOW)), true);
+  });
+
+  it("an answering OS ignores the age entirely (the fresh value is the OS's, the stale one is never read)", async () => {
+    const { pool, calls } = recordingPool({ lastKnown: 365, lastKnownAgeMs: 30 * 86_400_000 });
+    assert.deepEqual(await resolveRetentionDays(pool, withOs(), osAnswers(view(90)), NOW), { days: 90, origin: "os" });
+    assert.equal(calls.some((c) => c.text.includes("FROM chat_settings_last_known")), false);
   });
 
   it("a last-known row the contract does not allow is not repaired: it counts as nothing", async () => {

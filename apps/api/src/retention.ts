@@ -150,9 +150,22 @@ export async function runRetentionOnce(
   }
 }
 
+/**
+ * HOW OLD THE LAST KNOWN VALUE MAY BE and still decide a deletion (acrobot 46847: the price of "last known" is that an owner who
+ * RAISES the days while the OS is unreachable would see the job keep deleting on the older, shorter value; deleting is irreversible,
+ * so an old value does not decide). 24 hours. NOTE THE ARITHMETIC: the job reads the OS once per run and runs every 24 hours, so the
+ * stored value is about 24 hours old at the NEXT run: a failed read at that run usually finds the value just past the limit and the
+ * run is skipped (`last_known_stale`). The limit is therefore mostly a skip-on-outage rule; a longer one (48 hours tolerates one
+ * missed read) is this constant.
+ */
+export const LAST_KNOWN_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
 export type RetentionDays =
   | { days: number; origin: "os" | "last_known" | "env"; note?: ChatSettingsErrorCode }
-  | { skip: "switch_off" | "invalid_days" | "settings_unavailable"; note?: ChatSettingsErrorCode };
+  | {
+      skip: "switch_off" | "invalid_days" | "settings_unavailable" | "last_known_stale";
+      note?: ChatSettingsErrorCode;
+    };
 
 /**
  * WHERE THE DAYS COME FROM (plan 2/1, barracuda 1 and acrobot 46747). The switch is the master: not exactly `true`, nothing runs.
@@ -165,7 +178,8 @@ export type RetentionDays =
 export async function resolveRetentionDays(
   pool: RetentionPool,
   env: NodeJS.ProcessEnv = process.env,
-  fetchImpl?: typeof fetch
+  fetchImpl?: typeof fetch,
+  now: Date = new Date()
 ): Promise<RetentionDays> {
   if (env[RETENTION_ENV] !== "true") return { skip: "switch_off" };
 
@@ -186,9 +200,16 @@ export async function resolveRetentionDays(
       return { days: read.view.messageRetentionDays, origin: "os" };
     }
     const known = await loadLastKnown(client).catch(() => null);
-    return known
-      ? { days: known.messageRetentionDays, origin: "last_known", note: read.error }
-      : { skip: "settings_unavailable", note: read.error };
+    if (!known) return { skip: "settings_unavailable", note: read.error };
+    // An old value does not decide a deletion (deleting is irreversible). A value exactly at the limit still counts; one a
+    // millisecond older does not.
+    if (now.getTime() - known.readAt.getTime() > LAST_KNOWN_MAX_AGE_MS)
+      return { skip: "last_known_stale", note: read.error };
+    return {
+      days: known.view.messageRetentionDays,
+      origin: "last_known",
+      note: read.error
+    };
   } finally {
     client.release();
   }
@@ -207,7 +228,7 @@ export async function retentionPass(
   now: Date = new Date(),
   fetchImpl?: typeof fetch
 ): Promise<void> {
-  const resolved = await resolveRetentionDays(pool, env, fetchImpl);
+  const resolved = await resolveRetentionDays(pool, env, fetchImpl, now);
   if ("skip" in resolved) {
     // A switched-off job is silent; a skipped one (a value it does not trust, or no value at all) is named.
     if (resolved.skip !== "switch_off")

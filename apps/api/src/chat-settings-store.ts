@@ -21,7 +21,7 @@ export const SAVE_LAST_KNOWN_SQL = `
 `;
 
 export const LOAD_LAST_KNOWN_SQL = `
-  SELECT message_retention_days, offer_enabled, contact_request_enabled
+  SELECT message_retention_days, offer_enabled, contact_request_enabled, read_at
   FROM chat_settings_last_known
   WHERE singleton
 `;
@@ -37,16 +37,26 @@ export async function saveLastKnown(
   ]);
 }
 
-/** `null` when nothing was ever read, and also when the stored row is not what the contract allows (it is not repaired). */
+export interface LastKnownSettings {
+  view: ChatSettingsView;
+  readAt: Date;
+}
+
+/**
+ * `null` when nothing was ever read, and also when the stored row is not what the contract allows (it is not repaired). The AGE is
+ * the caller's to judge (`readAt`): a value that is too old to act on is the job's decision, not the store's.
+ */
 export async function loadLastKnown(
   db: SettingsQuery
-): Promise<ChatSettingsView | null> {
+): Promise<LastKnownSettings | null> {
   const result = await db.query(LOAD_LAST_KNOWN_SQL);
   const row = result.rows[0];
   if (!row) return null;
-  return parseChatSettingsView({
+  const view = parseChatSettingsView({
     messageRetentionDays: row.message_retention_days,
     offerEnabled: row.offer_enabled,
     contactRequestEnabled: row.contact_request_enabled
   });
+  const readAt = row.read_at instanceof Date ? row.read_at : null;
+  return view && readAt ? { view, readAt } : null;
 }
