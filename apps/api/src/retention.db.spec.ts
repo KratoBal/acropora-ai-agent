@@ -6,7 +6,7 @@ import { after, before, beforeEach, describe, it } from "node:test";
  *
  * `retention.spec.ts` measures the job around the SQL with a recording client; this one measures the SQL. Like the other database
  * spec it needs a throwaway EMPTY database and is skipped without one (CI has none, by design: see ci.yml):
- * AI_CONVERSATIONS_DB_URL=postgres://... . It creates the schema and removes the rows it wrote.
+ * AI_CONVERSATIONS_DB_URL=postgres://... . It creates the schema, REFUSES to run if any of its tables already holds a row, and truncates them after each test.
  *
  * What turns it red: `<=` instead of `<` (the row exactly at the boundary goes); the aggregate written after the delete (the ratings
  * are gone before they are counted); the aggregate overwritten instead of added to; a conversation deleted while it still holds a
@@ -27,6 +27,12 @@ describe("the retention job in Postgres", { skip: url ? false : "AI_CONVERSATION
     db = await import("./db.js");
     job = await import("./retention.js");
     await db.pool.query(db.SCHEMA_SQL);
+    // The spec TRUNCATES the tables it uses. It refuses to start on a database that already holds anything: the variable must
+    // never be pointed at data.
+    for (const table of ["conversations", "messages", "answer_ratings", "rating_aggregates"]) {
+      const held = Number((await db.pool.query(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
+      if (held > 0) throw new Error(`refusing to run: ${table} already holds rows, this is not a throwaway database`);
+    }
   });
 
   beforeEach(async () => {
