@@ -370,6 +370,11 @@ export interface AppDependencies {
  * `server.ts` stays the entry point, so the container still runs
  * `node dist/server.js`.
  */
+/** The longest client key kept (the caller's key is stored with every conversation). */
+export const CLIENT_KEY_MAX_LENGTH = 128;
+/** A 400's body for an `x-client-key` that is there but is not a key. */
+export const INVALID_CLIENT_KEY = "invalid x-client-key";
+
 export function buildApp(dependencies: AppDependencies = {}) {
   const limits = aiProviderLimits();
   const conversations =
@@ -473,10 +478,16 @@ export function buildApp(dependencies: AppDependencies = {}) {
    * defaulted differently would accept writes against conversations the chat
    * route would refuse to continue.
    */
-  function clientKeyOf(header: unknown): string {
-    return typeof header === "string" && header.length > 0
-      ? header.slice(0, 128)
-      : "stage-test-client";
+  function clientKeyOf(header: unknown): string | null {
+    // the shared fallback ONLY when the header is missing (card 7a5ea203): a header that is there but is not one key (empty or
+    // blank, not a single string, longer than the limit) is refused, never quietly turned into the shared key or cut to a prefix
+    // that could equal another caller's
+    if (header === undefined) return "stage-test-client";
+    return typeof header === "string" &&
+      header.trim().length > 0 &&
+      header.length <= CLIENT_KEY_MAX_LENGTH
+      ? header
+      : null;
   }
 
   app.get("/health", async () => {
@@ -577,6 +588,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
+    if (clientKey === null) return reply.code(400).send({ error: INVALID_CLIENT_KEY });
     /*
      * Who this conversation is about. A conversation is continued only for the
      * same subject it was started for (card a3e0327f): otherwise a second
@@ -1800,6 +1812,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
+    if (clientKey === null) return reply.code(400).send({ error: INVALID_CLIENT_KEY });
 
     if (!(await ratings.answerIsRatable(messageId, clientKey))) {
       /**
@@ -1847,6 +1860,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
+    if (clientKey === null) return reply.code(400).send({ error: INVALID_CLIENT_KEY });
 
     return {
       conversationId,
