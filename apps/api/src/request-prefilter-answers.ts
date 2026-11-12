@@ -35,13 +35,17 @@ export const PREFILTER_ASK_ANSWER =
 /** The model label saved with a local answer: no model ran, and a judging surface must be able to tell. */
 export const PREFILTER_MODEL_LABEL = "local-prefilter";
 
-/** `offTopicSeries` is how many off-topic questions in a row end with this one (slice 3): from the fifth the firmer text is used. */
+/**
+ * `offTopicSeries` is how many off-topic questions in a row end with this one (slice 3); from `firmAt` on the firmer text is used.
+ * `firmAt` is the OS setting (`offtopic-threshold.ts`), Balázs's 5 when it cannot be read.
+ */
 export function localAnswerFor(
   decision: Exclude<PrefilterDecision, "pass">,
-  offTopicSeries = 1
+  offTopicSeries = 1,
+  firmAt = OFFTOPIC_SERIES_FIRM_AT
 ): string {
   if (decision === "ask") return PREFILTER_ASK_ANSWER;
-  return offTopicSeries >= OFFTOPIC_SERIES_FIRM_AT
+  return offTopicSeries >= firmAt
     ? PREFILTER_FIRM_BLOCK_ANSWER
     : PREFILTER_BLOCK_ANSWER;
 }
