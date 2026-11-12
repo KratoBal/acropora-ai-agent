@@ -1,5 +1,5 @@
 import { fetchChatSettings, chatSettingsConfig } from "./chat-settings.js";
-import { colleagueOfferEnabled } from "./request-prefilter-answers.js";
+import { colleagueOfferActive } from "./colleague-offer-setting.js";
 import { COLLEAGUE_OFFER } from "./request-prefilter-turns.js";
 import { contactRequestConfig } from "./contact-request.js";
 
@@ -131,9 +131,11 @@ export async function contactRequestEnabledInOs(
 export async function contactFlowActive(
   environment: NodeJS.ProcessEnv = process.env,
   fetchImpl?: typeof fetch,
-  now: number = Date.now()
+  now: number = Date.now(),
+  /** The offer's state the route already read for this request (the offer is the only door to a request); read here if not given. */
+  offerActive?: boolean
 ): Promise<boolean> {
-  if (!colleagueOfferEnabled(environment)) return false;
+  if (!(offerActive ?? (await colleagueOfferActive(environment, fetchImpl, now)))) return false;
   if (!contactRequestSwitch(environment)) return false;
   if (!contactRequestConfig(environment)) return false;
   return contactRequestEnabledInOs(now, fetchImpl, environment);

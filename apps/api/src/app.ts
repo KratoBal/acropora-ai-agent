@@ -80,7 +80,6 @@ import { searchProducts } from "./product-search.js";
 import { classifyRequest, type RecentTurn } from "./request-prefilter.js";
 import {
   PREFILTER_MODEL_LABEL,
-  colleagueOfferEnabled,
   localAnswerFor,
   prefilterEnabled
 } from "./request-prefilter-answers.js";
@@ -101,6 +100,7 @@ import {
   type LinkRuleMode
 } from "./answer-link-guard.js";
 import { readLinkSources, type LinkSourcesRead } from "./link-sources.js";
+import { colleagueOfferActive } from "./colleague-offer-setting.js";
 import {
   guardRecommendationText,
   MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
@@ -648,7 +648,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
      * any failure the local answer claims no delivery and the raw value stays in the stored row (the retention covers it). Only the
      * channel and the outcome are logged, never the value. `contactFlow` is read once and used for both halves of the flow.
      */
-    const contactFlow = await contactFlowActive();
+    // the offer's state for this request: the environment's gate and the OS box (card f5b8f7ba, acrobot 49021), read once
+    const offerActive = await colleagueOfferActive();
+    const contactFlow = await contactFlowActive(process.env, undefined, Date.now(), offerActive);
     const previousRow = history.length >= 2 ? history[history.length - 2] : undefined;
     const foundContact =
       contactFlow &&
@@ -862,7 +864,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructions: chatInstructions(resolvedCustomer, productContext, {
-          colleagueOfferActive: colleagueOfferEnabled(),
+          colleagueOfferActive: offerActive,
           contactRequestActive: contactFlow,
           linkRule
         }),
@@ -906,7 +908,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       // SLICE 3: after the fourth customer turn, ONE sentence is appended by local logic (no model call of its own). Behind its OWN
       // switch (AI_CHAT_COLLEAGUE_OFFER, off by default) and the gate's. The count is of the history the route loaded, with the message being answered in it.
       const offerColleague =
-        colleagueOfferEnabled() && shouldOfferColleague(customerTurnCount(history));
+        offerActive && shouldOfferColleague(customerTurnCount(history));
       if (offerColleague)
         request.log.info(
           { colleagueOffer: true },
