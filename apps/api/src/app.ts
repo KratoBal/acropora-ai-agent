@@ -86,6 +86,7 @@ import {
 import {
   COLLEAGUE_OFFER_FOLLOWUP_INSTRUCTIONS,
   customerTurnCount,
+  OFFTOPIC_SERIES_FIRM_AT,
   offTopicSeries,
   shouldOfferColleague,
   withColleagueOffer
@@ -101,6 +102,7 @@ import {
 } from "./answer-link-guard.js";
 import { readLinkSources, type LinkSourcesRead } from "./link-sources.js";
 import { colleagueOfferActive } from "./colleague-offer-setting.js";
+import { readOffTopicThreshold } from "./offtopic-threshold.js";
 import {
   guardRecommendationText,
   MEASUREMENT_RECOMMENDATION_INSTRUCTIONS,
@@ -757,11 +759,26 @@ export function buildApp(dependencies: AppDependencies = {}) {
         // The series is a number, never text. It is replayed from the history (no stored counter).
         const series =
           verdict.decision === "block" ? offTopicSeries(earlier) : 0;
+        // the threshold is the OS setting (Balázs 2026-11-11: settable, 5); read only for an off-topic turn, 5 when it cannot be read
+        const threshold =
+          verdict.decision === "block"
+            ? await readOffTopicThreshold().catch(() => null)
+            : null;
+        const firmAt = threshold?.firmAt ?? OFFTOPIC_SERIES_FIRM_AT;
         request.log.info(
-          { prefilter: verdict, offTopicSeries: series },
+          {
+            prefilter: verdict,
+            offTopicSeries: series,
+            ...(threshold
+              ? {
+                  offTopicFirmAt: firmAt,
+                  ...(threshold.ok ? {} : { offTopicFirmAtRead: threshold.reason })
+                }
+              : {})
+          },
           "the local pre-filter answered; no model call"
         );
-        const localAnswer = localAnswerFor(verdict.decision, series);
+        const localAnswer = localAnswerFor(verdict.decision, series, firmAt);
         const localMessageId = await conversations.saveMessage({
           conversationId: activeConversationId,
           role: "assistant",
