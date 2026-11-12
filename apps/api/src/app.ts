@@ -358,6 +358,11 @@ export interface AppDependencies {
   resolveCustomer?: (rawCustomerId: unknown) => Promise<CustomerContextResult>;
 }
 
+/** The longest client key kept (the caller's key is stored with every conversation). */
+export const CLIENT_KEY_MAX_LENGTH = 128;
+/** A 400's body for an `x-client-key` that is there but is not a key. */
+export const INVALID_CLIENT_KEY = "invalid x-client-key";
+
 /**
  * Builds the HTTP application without starting it.
  *
@@ -370,11 +375,6 @@ export interface AppDependencies {
  * `server.ts` stays the entry point, so the container still runs
  * `node dist/server.js`.
  */
-/** The longest client key kept (the caller's key is stored with every conversation). */
-export const CLIENT_KEY_MAX_LENGTH = 128;
-/** A 400's body for an `x-client-key` that is there but is not a key. */
-export const INVALID_CLIENT_KEY = "invalid x-client-key";
-
 export function buildApp(dependencies: AppDependencies = {}) {
   const limits = aiProviderLimits();
   const conversations =
