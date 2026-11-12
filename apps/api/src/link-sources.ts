@@ -25,6 +25,12 @@ export const LINK_SOURCES_TIMEOUT_MS = 3_000;
 /** The list changes by hand, rarely: one read a minute is enough, and a chat turn does not wait for the OS each time. */
 export const LINK_SOURCES_CACHE_MS = 60_000;
 
+/**
+ * A FAILED READ IS KEPT TEN SECONDS (barracuda on #82, acrobot 49057): while the OS is down every turn would otherwise wait for the
+ * timeout again. Ten seconds, as the contact request's switch; the empty list it holds is the safe side anyway.
+ */
+export const LINK_SOURCES_FAILURE_CACHE_MS = 10_000;
+
 export type LinkSourcesRead =
   | { ok: true; sources: StoredLinkSource[]; dropped: number }
   | { ok: false; sources: []; reason: "not_configured" | "unauthorized" | "unavailable" | "bad_response" };
@@ -53,21 +59,30 @@ export function parseLinkSource(raw: unknown): StoredLinkSource | null {
   };
 }
 
-let cache: { at: number; read: LinkSourcesRead & { ok: true } } | null = null;
+let cache: { until: number; read: LinkSourcesRead } | null = null;
 
 /** For the specs: the next read goes to the OS. */
 export function clearLinkSourcesCache(): void {
   cache = null;
 }
 
-/** The stored list, from the OS or the last good read of the past minute. A failed read is not cached. */
+/** The stored list, from the OS or the last read: a good one for a minute, a failed one (an empty list) for ten seconds. */
 export async function readLinkSources(options: LinkSourcesOptions = {}): Promise<LinkSourcesRead> {
   const now = options.now ?? Date.now();
-  if (cache && now - cache.at < LINK_SOURCES_CACHE_MS) return cache.read;
+  if (cache && now < cache.until) return cache.read;
 
   const config = chatSettingsConfig(options.environment ?? process.env);
   if (!config) return { ok: false, sources: [], reason: "not_configured" };
 
+  const read = await readFromOs(config, options);
+  cache = { until: now + (read.ok ? LINK_SOURCES_CACHE_MS : LINK_SOURCES_FAILURE_CACHE_MS), read };
+  return read;
+}
+
+async function readFromOs(
+  config: NonNullable<ReturnType<typeof chatSettingsConfig>>,
+  options: LinkSourcesOptions
+): Promise<LinkSourcesRead> {
   const answer = await requestChatSettings({
     config,
     fetchImpl: options.fetchImpl,
@@ -88,7 +103,5 @@ export async function readLinkSources(options: LinkSourcesOptions = {}): Promise
 
   const raw = (body.linkSources ?? []) as unknown[];
   const sources = raw.map(parseLinkSource).filter((s): s is StoredLinkSource => s !== null);
-  const read = { ok: true as const, sources, dropped: raw.length - sources.length };
-  cache = { at: now, read };
-  return read;
+  return { ok: true as const, sources, dropped: raw.length - sources.length };
 }

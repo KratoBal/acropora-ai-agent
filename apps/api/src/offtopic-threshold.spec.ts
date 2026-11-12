@@ -5,6 +5,7 @@ import { buildApp, type AppDependencies, type ConversationStore } from "./app.js
 import { CHAT_SETTINGS_TOKEN_ENV } from "./chat-settings.js";
 import {
   OFFTOPIC_THRESHOLD_CACHE_MS,
+  OFFTOPIC_THRESHOLD_FAILURE_CACHE_MS,
   OFFTOPIC_THRESHOLD_PATH,
   clearOffTopicThresholdCache,
   readOffTopicThreshold
@@ -70,12 +71,14 @@ describe("readOffTopicThreshold", () => {
     });
     const refused = await readOffTopicThreshold({ environment: env, fetchImpl: counting(() => json({}, 401)).fetchImpl });
     assert.deepEqual(refused, { ok: false, firmAt: 5, reason: "unauthorized" });
+    // a failure is kept ten seconds: the next case is a fresh read
+    clearOffTopicThresholdCache();
     const down = await readOffTopicThreshold({ environment: env, fetchImpl: counting(() => json({}, 503)).fetchImpl });
     assert.deepEqual(down, { ok: false, firmAt: 5, reason: "unavailable" });
     assert.equal(JSON.stringify([refused, down]).includes(TOKEN), false);
   });
 
-  it("one read a minute; a failed read is not cached", async () => {
+  it("one read a minute; a failed read is kept ten seconds, holding the last good value (barracuda on #82)", async () => {
     const good = counting(() => json({ offTopicFirmAt: 7 }));
     await readOffTopicThreshold({ environment: env, fetchImpl: good.fetchImpl, now: 1_000 });
     await readOffTopicThreshold({ environment: env, fetchImpl: good.fetchImpl, now: 1_000 + OFFTOPIC_THRESHOLD_CACHE_MS - 1 });
@@ -83,11 +86,22 @@ describe("readOffTopicThreshold", () => {
     await readOffTopicThreshold({ environment: env, fetchImpl: good.fetchImpl, now: 1_000 + OFFTOPIC_THRESHOLD_CACHE_MS });
     assert.equal(good.calls.length, 2);
 
-    clearOffTopicThresholdCache();
+    // the OS goes down after a good read of 7: the failure holds 7, not the default, and is asked again only after ten seconds
     const bad = counting(() => json({}, 503));
-    await readOffTopicThreshold({ environment: env, fetchImpl: bad.fetchImpl, now: 1_000 });
-    await readOffTopicThreshold({ environment: env, fetchImpl: bad.fetchImpl, now: 1_001 });
+    const down = 1_000 + 2 * OFFTOPIC_THRESHOLD_CACHE_MS;
+    assert.deepEqual(await readOffTopicThreshold({ environment: env, fetchImpl: bad.fetchImpl, now: down }), {
+      ok: false,
+      firmAt: 7,
+      reason: "unavailable"
+    });
+    await readOffTopicThreshold({ environment: env, fetchImpl: bad.fetchImpl, now: down + OFFTOPIC_THRESHOLD_FAILURE_CACHE_MS - 1 });
+    assert.equal(bad.calls.length, 1);
+    await readOffTopicThreshold({ environment: env, fetchImpl: bad.fetchImpl, now: down + OFFTOPIC_THRESHOLD_FAILURE_CACHE_MS });
     assert.equal(bad.calls.length, 2);
+
+    // with no good read in this process the failure holds Balázs's 5
+    clearOffTopicThresholdCache();
+    assert.equal((await readOffTopicThreshold({ environment: env, fetchImpl: bad.fetchImpl, now: 0 })).firmAt, 5);
   });
 });
 

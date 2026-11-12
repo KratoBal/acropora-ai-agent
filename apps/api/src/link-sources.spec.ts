@@ -5,6 +5,7 @@ import { LINK_RULE_ENV } from "./answer-link-guard.js";
 import { buildApp, type AppDependencies, type ConversationStore } from "./app.js";
 import {
   LINK_SOURCES_CACHE_MS,
+  LINK_SOURCES_FAILURE_CACHE_MS,
   LINK_SOURCES_PATH,
   LINK_SOURCES_TOKEN_ENV,
   clearLinkSourcesCache,
@@ -120,18 +121,23 @@ describe("readLinkSources", () => {
     }
   });
 
-  it("a good read is kept for a minute; a failure is not kept", async () => {
+  // a failure is kept ten seconds too (barracuda on #82, acrobot 49057): an OS outage must not cost every turn the timeout
+  it("a good read is kept for a minute; a failure (an empty list) for ten seconds", async () => {
     let status = 500;
     const { calls, fetchImpl } = counting(() =>
       status === 200 ? json({ linkSources: [{ host: "nebih.gov.hu", category: "AUTHORITY" }] }) : json({}, status)
     );
     assert.equal((await readLinkSources({ environment: env, fetchImpl, now: 0 })).ok, false);
     status = 200;
-    assert.equal((await readLinkSources({ environment: env, fetchImpl, now: 1 })).ok, true);
-    status = 500;
-    assert.equal((await readLinkSources({ environment: env, fetchImpl, now: LINK_SOURCES_CACHE_MS })).ok, true);
+    const kept = await readLinkSources({ environment: env, fetchImpl, now: LINK_SOURCES_FAILURE_CACHE_MS - 1 });
+    assert.deepEqual([kept.ok, kept.sources, calls.length], [false, [], 1]);
+    assert.equal((await readLinkSources({ environment: env, fetchImpl, now: LINK_SOURCES_FAILURE_CACHE_MS })).ok, true);
     assert.equal(calls.length, 2);
-    assert.equal((await readLinkSources({ environment: env, fetchImpl, now: LINK_SOURCES_CACHE_MS + 1 })).ok, false);
+    status = 500;
+    const goodUntil = LINK_SOURCES_FAILURE_CACHE_MS + LINK_SOURCES_CACHE_MS;
+    assert.equal((await readLinkSources({ environment: env, fetchImpl, now: goodUntil - 1 })).ok, true);
+    assert.equal(calls.length, 2);
+    assert.equal((await readLinkSources({ environment: env, fetchImpl, now: goodUntil })).ok, false);
     assert.equal(calls.length, 3);
   });
 });
