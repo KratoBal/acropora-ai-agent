@@ -252,7 +252,8 @@ describe("resolveRetentionDays", () => {
   it("S10: the OS does not answer and the last known value was 365: the run goes on 365, NOT on a code default of 180", async () => {
     for (const fetchImpl of [osDown, osAnswers({}, 500), osAnswers({}, 401), osAnswers({ nonsense: true })]) {
       const { pool } = recordingPool({ lastKnown: 365 });
-      const resolved = await resolveRetentionDays(pool, withOs(), fetchImpl);
+      // the fixture's last known value is an hour before NOW: the run is measured at NOW, not at the wall clock
+      const resolved = await resolveRetentionDays(pool, withOs(), fetchImpl, NOW);
       assert.equal("days" in resolved && resolved.days, 365);
       assert.equal("origin" in resolved && resolved.origin, "last_known");
       assert.ok("note" in resolved && resolved.note?.startsWith("chat_settings_"));
@@ -294,7 +295,7 @@ describe("resolveRetentionDays", () => {
 
   it("an OS value outside 7..365 is a bad response: the last known value is used, the illegal one never", async () => {
     const { pool } = recordingPool({ lastKnown: 200 });
-    const resolved = await resolveRetentionDays(pool, withOs(), osAnswers(view(3)));
+    const resolved = await resolveRetentionDays(pool, withOs(), osAnswers(view(3)), NOW);
     assert.equal("days" in resolved && resolved.days, 200);
   });
 });
