@@ -195,6 +195,36 @@ const TEST_NAMES: Record<TestCode, RegExp> = {
 const DOSE_FORM =
   /^(\d+(?:\.\d+)?) (ml|drop)\/(\d+(?:\.\d+)?) L(?:\/(day|week)|, \d+(?:-\d+)?\/(day|week))$/;
 
+/**
+ * THE DOSE'S FORMAT, NOT ITS CONTENT (Acropora OS card 85c38ab1, the AMIN runs): on one page the
+ * model wrote the same dose in the OS's form in one run and not in the next, DOSE_FORM refused the
+ * second, and whether AMIN got a dose depended on the run. Spacing, a decimal comma, letter case and
+ * the units' spelling (mL, liters, drops) are brought to the form here, and nothing else: the numbers,
+ * the order and the slashes stay as the model wrote them, so the number and role checks below still
+ * read its answer. A prose dose ("1 ml per 100 L daily") is still refused.
+ */
+const LOOSE_DOSE =
+  /^(\d+(?:[.,]\d+)?)\s*(ml|milliliters?|millilitres?|drops?)\s*\/\s*(\d+(?:[.,]\d+)?)\s*(l|liters?|litres?)\s*(?:\/\s*(day|week)|,\s*(\d+)(?:\s*-\s*(\d+))?\s*\/\s*(day|week))$/i;
+
+export function canonicalDose(dose: string): string | null {
+  const m = LOOSE_DOSE.exec(dose.trim());
+  if (!m) return null;
+  const [, amount, unit, volume, , plain, times, timesTo, freq] = m;
+  const num = (v: string) => v.replace(",", ".");
+  const base = `${num(amount!)} ${/^drop/i.test(unit!) ? "drop" : "ml"}/${num(volume!)} L`;
+  return plain
+    ? `${base}/${plain.toLowerCase()}`
+    : `${base}, ${times}${timesTo ? `-${timesTo}` : ""}/${freq!.toLowerCase()}`;
+}
+
+/** A refused dose's shape for the log: digits as 9, only the dose words kept, nothing of the page. */
+const DOSE_WORDS = new Set(["ml", "drop", "drops", "l", "liter", "liters", "day", "week", "per", "daily", "weekly", "x", "times"]);
+const doseShape = (dose: string) =>
+  dose
+    .slice(0, 60)
+    .replace(/\d/g, "9")
+    .replace(/[^\d\s/.,\-]+/g, (w) => (DOSE_WORDS.has(w.toLowerCase()) ? w.toLowerCase() : "x"));
+
 /** A number as a page writes it: the decimal point may be a comma. */
 const asWritten = (n: string) => n.replace(".", "[.,]");
 
@@ -241,7 +271,8 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
   if (typeof mode !== "string" || !(DOSING_MODES as readonly string[]).includes(mode))
     return { ok: false, refusal: "UNKNOWN_MODE" };
   const str = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
-  const dose = str(raw.dose);
+  const written = str(raw.dose);
+  const dose = written === null ? null : (canonicalDose(written) ?? written);
   const guidance = str(raw.guidance);
   const excerpt = str(raw.excerpt);
   // the model's own words, steered by the page: short, and shown as text only
@@ -267,6 +298,7 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
     if (THOUSANDS.test(excerpt)) return { ok: false, refusal: "THOUSANDS_GROUP" };
     if (OTHER_UNIT.test(withoutGallonConversion(fold(excerpt)))) return { ok: false, refusal: "OTHER_UNIT" };
     const role = doseRoleProblem(dose, excerpt);
+    if (role === "DOSE_FORM") return { ok: false, refusal: role, detail: `dose ${doseShape(written!)}` };
     if (role) return { ok: false, refusal: role };
   }
   if (mode === "TEST_DEPENDENT" && (guidance === null || excerpt === null || tests.length === 0))
