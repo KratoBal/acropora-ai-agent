@@ -162,6 +162,61 @@ describe("a modell válaszának őre", () => {
     assert.deepEqual(refusal({ address: "Másik utca 2, 99999 Másikváros" }), ["VALUE_NOT_IN_ANCHOR"]);
   });
 
+  // T4.4 pilot-20 v5: the model's anchor ran over 400 characters (Grotech) or slipped off the page after 345 (Tropic
+  // Marin) while a short stretch held the parts. WHAT TURNS THIS RED: such a company refused; the anchor rebuilt from
+  // outside the model's own stretch (from the whole page); the rebuilt one not said; one over 400 accepted.
+  it("a túl hosszú vagy a lapról lecsúszó horgony a modell saját szakaszán belül rövidül, és ezt kimondja", () => {
+    const filler = "Unsere Geschichte reicht weit zurück und wir lieben das Meer. ".repeat(6);
+    const block = "Kitalált Gyártó GmbH, Példa utca 1, 12345 Mintaváros, E-Mail: info@kitalalt.example";
+    const page = ["Impressum", "Kitalált Gyártó GmbH", filler, block, "Webdesign: Valaki Studio, Másik utca 2, 99999 Másikváros"].join("\n");
+    const company = {
+      role: "MAKER",
+      name: "Kitalált Gyártó GmbH",
+      address: "Példa utca 1, 12345 Mintaváros",
+      email: "info@kitalalt.example"
+    };
+    const one = (anchor: string, over: Record<string, unknown> = {}) => {
+      const r = guardProductFields(answer({ manufacturerInfo: [{ ...company, anchor, ...over }] }), page, [
+        "manufacturerInfo"
+      ]);
+      return r.ok ? r.answer : null;
+    };
+    // too long: from the first mention of the name to the e-mail, over 400 characters
+    const long = `Kitalált Gyártó GmbH ${filler}${block}`;
+    assert.ok(long.length > 400);
+    const shortened = one(long);
+    assert.deepEqual(
+      shortened?.fields.map((f) => (f.field === "manufacturerInfo" ? [f.anchor, f.anchorRebuilt] : [])),
+      [[block, true]]
+    );
+    // off the page by a slip at the end: the part before it is searched
+    assert.deepEqual(
+      one(`${block} Geschäftsführung: Erfundener Name`)?.fields.map((f) =>
+        f.field === "manufacturerInfo" ? [f.anchor, f.anchorRebuilt] : []
+      ),
+      [[block, true]]
+    );
+    // a sound anchor is not touched, and not marked
+    assert.deepEqual(
+      one(block)?.fields.map((f) => (f.field === "manufacturerInfo" ? [f.anchor, f.anchorRebuilt] : [])),
+      [[block, undefined]]
+    );
+    // the web designer's address, near on the page but not in the model's slipped stretch: still refused
+    assert.deepEqual(
+      one(`${block} Geschäftsführung: Erfundener Name`, { address: "Másik utca 2, 99999 Másikváros" })?.refusedFields.map(
+        (f) => f.refusal
+      ),
+      ["ANCHOR_NOT_IN_PAGE"]
+    );
+    // the shortest stretch of the model's own anchor still over 400: refused as before
+    const apart = ["Kitalált Gyártó GmbH", filler, filler, "Példa utca 1, 12345 Mintaváros, info@kitalalt.example"].join(" ");
+    const farPage = `Impressum ${apart}`;
+    const far = guardProductFields(answer({ manufacturerInfo: [{ ...company, anchor: apart }] }), farPage, [
+      "manufacturerInfo"
+    ]);
+    assert.deepEqual(far.ok && far.answer.refusedFields.map((f) => f.refusal), ["ANCHOR_TOO_LONG"]);
+  });
+
   it("a nem kért mező nem jön ki; a null mező nem hiba; a nem JSON válasz egészében elutasítva", () => {
     const r = guardProductFields(
       answer({
