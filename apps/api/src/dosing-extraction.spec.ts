@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { after, before, describe, it } from "node:test";
 
 import { buildApp, type AppDependencies } from "./app.js";
-import { guardDosingAnswer, parseDosingRequest } from "./dosing-extraction.js";
+import { canonicalDose, guardDosingAnswer, parseDosingRequest } from "./dosing-extraction.js";
 
 /**
  * THE DOSING EXTRACTION (Acropora OS card 85c38ab1). WHAT TURNS IT RED: an
@@ -160,11 +160,37 @@ describe("a modell válaszának őre", () => {
     assert.deepEqual(fixed("1 drop/100 L/day", "Dose 1 ml per 100 l daily."), { ok: false, refusal: "AMOUNT_ROLE" });
     // every number is in the excerpt ("2"), but 2 L is not the volume it states
     assert.deepEqual(fixed("2 drop/2 L/day", "Napi 2 csepp 50 literre."), { ok: false, refusal: "VOLUME_ROLE" });
-    assert.deepEqual(fixed("1 ml per 100 L daily", "Dose 1 ml per 100 l daily."), { ok: false, refusal: "DOSE_FORM" });
+    // a prose dose is still refused; the log gets its shape, digits as 9 (the OS does not show this detail)
+    assert.deepEqual(fixed("1 ml per 100 L daily", "Dose 1 ml per 100 l daily."), {
+      ok: false,
+      refusal: "DOSE_FORM",
+      detail: "dose 9 ml per 999 l daily"
+    });
     // controls: the same excerpts with the dose they state
     assert.equal(fixed("1 ml/100 L/day", "Dose 1 ml per 100 l daily.").ok, true);
     assert.equal(fixed("5 ml/100 L/week", "Dose 5 ml per 100 l weekly.").ok, true);
     assert.equal(fixed("2 drop/50 L/day", "Napi 2 csepp 50 literre.").ok, true);
+  });
+
+  // Acropora OS card 85c38ab1, the AMIN runs: the same dose in the OS's form in one run, not in the next. WHAT TURNS THIS
+  // RED: a spacing, comma, case or unit-spelling variant refused; a variant letting a wrong number or role through.
+  it("a dózis írásmódja (szóköz, tizedesvessző, kis-nagybetű, egység) nem tartalom", () => {
+    const page = ["Dose 0,5 ml per 100 l daily.", "Dose 2 drops per 100 l, 2-3 times per week."].join("\n");
+    const fixed = (dose: string, excerpt: string) =>
+      guardDosingAnswer(answer({ mode: "FIXED", dose, excerpt }), page);
+    for (const dose of ["0,5 ml / 100 l / day", "0.5mL/100 liters/day", "0.5 ML/100 L/Day"]) {
+      const r = fixed(dose, "Dose 0,5 ml per 100 l daily.");
+      assert.equal(r.ok && r.answer.dose, "0.5 ml/100 L/day", dose);
+    }
+    const freq = fixed("2 drops / 100 l, 2 - 3 / week", "Dose 2 drops per 100 l, 2-3 times per week.");
+    assert.equal(freq.ok && freq.answer.dose, "2 drop/100 L, 2-3/week");
+    // the numbers and roles are still checked on the brought-to-form dose
+    assert.deepEqual(fixed("5 ml / 100 l / day", "Dose 0,5 ml per 100 l daily."), {
+      ok: false,
+      refusal: "DOSE_NUMBER_NOT_IN_EXCERPT"
+    });
+    assert.deepEqual(fixed("0,5 ml / 100 l / week", "Dose 0,5 ml per 100 l daily."), { ok: false, refusal: "PERIOD_ROLE" });
+    assert.equal(canonicalDose("0.5 ml/100 L"), null);
   });
 
   it("a mg/l és a ca. nem nevez meg paramétert", () => {
