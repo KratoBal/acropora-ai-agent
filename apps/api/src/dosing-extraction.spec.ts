@@ -126,6 +126,22 @@ describe("a modell válaszának őre", () => {
     assert.equal(fixed("0.5 ml/100 L/day", "Adagolás: 0,5 ml 100 literre naponta.").ok, true);
   });
 
+  // Acropora OS card 85c38ab1, Fauna Marin AMIN: "100 liters (26 US gal)". WHAT TURNS THIS RED: a gallon conversion
+  // that agrees with the litres refused as another unit; one that does not agree, or a gallon volume, let through.
+  it("a liter zárójeles, számra egyező gallon-átváltása nem idegen egység", () => {
+    const excerpts = [
+      "Dose 0.5 ml / 100 liters (26 US gal) daily.",
+      "Dose 1 ml per 100 l (26,42 US gal.) per day.",
+      "Dose 1 ml per 100 l (50 US gal) daily."
+    ];
+    const page = excerpts.join("\n");
+    const fixed = (dose: string, excerpt: string) =>
+      guardDosingAnswer(answer({ mode: "FIXED", dose, excerpt }), page);
+    assert.equal(fixed("0.5 ml/100 L/day", excerpts[0]!).ok, true);
+    assert.equal(fixed("1 ml/100 L/day", excerpts[1]!).ok, true);
+    assert.deepEqual(fixed("1 ml/100 L/day", excerpts[2]!), { ok: false, refusal: "OTHER_UNIT" });
+  });
+
   it("a mérendő paraméter a kivonatban vagy az útmutatóban néven áll", () => {
     const guidance = "Az adagolás a heti kalcium- és KH-mérés alapján történik";
     const tested = (tests: string[]) =>
