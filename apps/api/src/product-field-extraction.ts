@@ -1,3 +1,5 @@
+import { JSON_INPUT_LEAD } from "./claim-extraction.js";
+
 /**
  * TWO PRODUCT FIELDS, READ FROM ONE MANUFACTURER PAGE (Acropora OS T4.4 S1b, card 8639ac2a, task
  * t-20261114-jev-s1b-termekmezo-kivonat). The S1 gate of the water-treatment set needs what the product is for
@@ -53,7 +55,7 @@ export function parseProductFieldRequest(body: unknown): ParsedProductFieldReque
 
 const FIELD_RULES: Record<ProductField, string> = {
   application:
-    '- "application": what the manufacturer says this product is FOR (its use or purpose), as {"value": string, "anchor": string}. "value" is copied character for character from the anchor (at most 300 characters): no paraphrase, no translation, no summary of several sentences. A marketing claim about results is not a use. If the page does not say what this product is for, or the sentence may belong to another product, null.',
+    '- "application": what the manufacturer says this product is FOR (its use or purpose), as {"value": string, "anchor": string}. "value" is ONE sentence, copied character for character from the anchor (at most 300 characters): the sentence that names the use most directly, without a heading before it; no paraphrase, no translation, no summary of several sentences. A marketing claim about results is not a use. If the page does not say what this product is for, or the sentence may belong to another product, null.',
   manufacturerInfo:
     '- "manufacturerInfo": the companies the page names for the products, as a list of {"role": "MAKER" | "RESPONSIBLE", "name": string, "address": string, "email": string | null, "anchor": string}. MAKER: the company the page says makes (produces) the products. RESPONSIBLE: the company the page names as responsible for the products or for the site (for example the brand\'s company when another one produces). If the page names both, give both; at most one company per role. Each of name, address and email is copied character for character from that company\'s anchor; "address" is the street, postcode, town and country only (no person, phone, e-mail or web address); "email" is a plain address as written, and an obfuscated one ("office (a) example.com", "info [at] example.com") is null; the anchor is the shortest stretch that holds all of them (at most 400 characters). A company without a postal address on the page is left out. Never take a web designer, a host, a law firm or a reseller. No company: null.'
 
@@ -72,8 +74,13 @@ export function productFieldInstructions(fields: readonly ProductField[]): strin
   ].join("\n");
 }
 
+/**
+ * The input leads with the words the provider's JSON mode wants (`JSON_INPUT_LEAD`, measured on the claims route, #63);
+ * the route asks in that mode (pilot-20, sixth run, 2026-11-14: one imprint answer refused as NOT_JSON, its maker block
+ * missing in that run and present in the next).
+ */
 export function productFieldInput(request: ProductFieldRequest): string {
-  return JSON.stringify({ productName: request.productName, pageText: request.pageText });
+  return `${JSON_INPUT_LEAD} ${JSON.stringify({ productName: request.productName, pageText: request.pageText })}`;
 }
 
 export type FieldValue =

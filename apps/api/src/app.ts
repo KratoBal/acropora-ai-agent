@@ -1282,6 +1282,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
       const response = await openai.responses.create({
         model,
         instructions: productFieldInstructions(parsed.request.fields),
+        // the provider's JSON mode, as on the claims route (one NOT_JSON on the sixth pilot-20 run, 2026-11-14)
+        text: CLAIMS_AS_JSON,
         input: [
           {
             role: "user",
