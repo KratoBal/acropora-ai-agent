@@ -95,6 +95,8 @@ export type FieldValue =
       anchor: string;
       /** The page wrote an e-mail, but not as an address ("office (a) …"): dropped, and said. */
       emailDropped?: true;
+      /** The model's anchor was too long or left the page; this one is the shortest stretch of it holding the parts. */
+      anchorRebuilt?: true;
     };
 
 export const MANUFACTURER_ROLES = ["MAKER", "RESPONSIBLE"] as const;
@@ -152,6 +154,47 @@ function anchored(parts: [string, string][], anchor: string, page: string): Chec
   return null;
 }
 
+/**
+ * THE ANCHOR, SHORTENED INSIDE THE MODEL'S OWN STRETCH (T4.4 pilot-20 v5, 2026-11-14). Three maker blocks of two runs
+ * went because the model's anchor ran over 400 characters (Grotech, twice) or left the page by one character after 345
+ * (Tropic Marin), while on those pages the shortest stretch holding a company's name, address and e-mail is 57 to 194
+ * characters (measured, numbers only). The limit is not raised (acrobot 52559); the model's choice is kept: only the part
+ * of its anchor that stands on the page is searched (the whole anchor when it was only too long, the part before the
+ * slip when it left the page), and the shortest stretch of it holding every part becomes the anchor. Not the whole page:
+ * an address the model did not anchor with the name (a web designer's) must not be bound to it by being near.
+ */
+function rebuiltAnchor(parts: [string, string][], anchor: string, page: string): string | null {
+  const a = squash(anchor);
+  // the longest beginning of the anchor that stands on the page (a shorter beginning stands if a longer one does)
+  let lo = 0;
+  let hi = a.length;
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2);
+    if (page.includes(a.slice(0, mid))) lo = mid;
+    else hi = mid - 1;
+  }
+  const region = a.slice(0, lo);
+  const at = parts.map(([, value]) => {
+    const v = squash(value);
+    const found: number[] = [];
+    for (let i = region.indexOf(v); i >= 0 && found.length < 50; i = region.indexOf(v, i + 1)) found.push(i);
+    return { length: v.length, found };
+  });
+  if (at.some((p) => p.found.length === 0)) return null;
+  let best: [number, number] | null = null;
+  const pick = (i: number, from: number, to: number) => {
+    if (i === at.length) {
+      if (best === null || to - from < best[1] - best[0]) best = [from, to];
+      return;
+    }
+    for (const start of at[i]!.found)
+      pick(i + 1, Math.min(from, start), Math.max(to, start + at[i]!.length));
+  };
+  pick(0, Number.POSITIVE_INFINITY, 0);
+  const [from, to] = best!;
+  return to - from <= MAX_ANCHOR ? region.slice(from, to) : null;
+}
+
 function checkField(field: ProductField, raw: unknown, page: string): Checked | null {
   if (raw === null || raw === undefined) return null;
   if (!isRecord(raw)) return { ok: false, refusal: "NOT_AN_OBJECT" };
@@ -178,13 +221,28 @@ function checkField(field: ProductField, raw: unknown, page: string): Checked | 
     ["address", address],
     ...(email === null ? [] : ([["email", email]] as [string, string][]))
   ];
-  return (
-    anchored(parts, anchor, page) ?? {
-      ok: true,
+  const problem = anchored(parts, anchor, page);
+  // too long, or off the page: shortened inside the model's own stretch, and said; a value its anchor does not hold stays
+  // refused (the web designer's address)
+  const rebuilt =
+    problem && !problem.ok && (problem.refusal === "ANCHOR_TOO_LONG" || problem.refusal === "ANCHOR_NOT_IN_PAGE")
+      ? rebuiltAnchor(parts, anchor, page)
+      : null;
+  if (problem && rebuilt === null) return problem;
+  return {
+    ok: true,
+    value: {
+      field,
+      role,
+      name,
+      address,
+      email,
+      anchor: rebuilt ?? anchor,
       // said, so the person who accepts the block knows its e-mail was on the page but not as an address (barracuda #90)
-      value: { field, role, name, address, email, anchor, ...(emailDropped ? { emailDropped: true as const } : {}) }
+      ...(emailDropped ? { emailDropped: true as const } : {}),
+      ...(rebuilt === null ? {} : { anchorRebuilt: true as const })
     }
-  );
+  };
 }
 
 /**
