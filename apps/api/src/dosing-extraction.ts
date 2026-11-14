@@ -149,6 +149,26 @@ const THOUSANDS = /(?<!\d)(?!0[.,]\d)\d{1,3}(?:[\s.,'’\u00a0\u202f]\d{3})+(?!\
 const OTHER_UNIT =
   /\d\s*(?:us\s*)?(?:gallons?|gal\b|g\b|gramm?s?\b|grams?\b|capful|caps?\b|scoops?|spoons?|teaspoons?|tablespoons?|tsp\b|messloffel|loffel|kupak|merokanal|kanal)/;
 
+/**
+ * A GALLON CONVERSION OF THE WATER VOLUME, IN BRACKETS ("0.5 ml / 100 liters (26 US gal)
+ * daily": Fauna Marin AMIN, Acropora OS card 85c38ab1): the same volume said twice, not a
+ * second unit, and OTHER_UNIT refused a clean dose. Left out of the unit check only right
+ * after a litre volume and only when the numbers agree, litres / 3.785 within 5 %; any
+ * other gallon is still refused. The OS reader has the same rule (acropora-os #2545).
+ */
+const GALLON_CONVERSION =
+  /(\d+(?:[.,]\d+)?)\s*(?:l|ltr|liters?|litres?|liter[a-z]*)(\s*\(\s*(?:approx\.?\s*|ca\.?\s*|~\s*)?(\d+(?:[.,]\d+)?)\s*(?:us\s*)?(?:gallons?|gal)\.?\s*\))/g;
+const LITRES_PER_US_GALLON = 3.785;
+
+function withoutGallonConversion(folded: string): string {
+  return folded.replace(GALLON_CONVERSION, (whole, litres: string, bracket: string, gallons: string) => {
+    const l = Number(litres.replace(",", "."));
+    const g = Number(gallons.replace(",", "."));
+    const agrees = g > 0 && Math.abs(l / LITRES_PER_US_GALLON - g) / g <= 0.05;
+    return agrees ? whole.slice(0, whole.length - bracket.length) + " ".repeat(bracket.length) : whole;
+  });
+}
+
 /** The names a parameter goes by on a page, folded; the code alone is a fallback. */
 const TEST_NAMES: Record<TestCode, RegExp> = {
   HOMERSEKLET: /homerseklet|temperatur|\btemp\b/,
@@ -245,7 +265,7 @@ export function guardDosingAnswer(modelText: string, pageText: string): GuardedD
     if (!numbersOf(dose).every((n) => inExcerpt.has(n)))
       return { ok: false, refusal: "DOSE_NUMBER_NOT_IN_EXCERPT" };
     if (THOUSANDS.test(excerpt)) return { ok: false, refusal: "THOUSANDS_GROUP" };
-    if (OTHER_UNIT.test(fold(excerpt))) return { ok: false, refusal: "OTHER_UNIT" };
+    if (OTHER_UNIT.test(withoutGallonConversion(fold(excerpt)))) return { ok: false, refusal: "OTHER_UNIT" };
     const role = doseRoleProblem(dose, excerpt);
     if (role) return { ok: false, refusal: role };
   }
