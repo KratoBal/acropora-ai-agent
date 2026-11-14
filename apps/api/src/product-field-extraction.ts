@@ -55,7 +55,7 @@ const FIELD_RULES: Record<ProductField, string> = {
   application:
     '- "application": what the manufacturer says this product is FOR (its use or purpose), as {"value": string, "anchor": string}. "value" is copied character for character from the anchor (at most 300 characters): no paraphrase, no translation, no summary of several sentences. A marketing claim about results is not a use. If the page does not say what this product is for, or the sentence may belong to another product, null.',
   manufacturerInfo:
-    '- "manufacturerInfo": the companies the page names for the products, as a list of {"role": "MAKER" | "RESPONSIBLE", "name": string, "address": string, "email": string | null, "anchor": string}. MAKER: the company the page says makes (produces) the products. RESPONSIBLE: the company the page names as responsible for the products or for the site (for example the brand\'s company when another one produces). If the page names both, give both; at most one company per role. Each of name, address and email is copied character for character from that company\'s anchor; the anchor is the shortest stretch that holds all of them (at most 400 characters). A company without a postal address on the page is left out. Never take a web designer, a host, a law firm or a reseller. No company: null.'
+    '- "manufacturerInfo": the companies the page names for the products, as a list of {"role": "MAKER" | "RESPONSIBLE", "name": string, "address": string, "email": string | null, "anchor": string}. MAKER: the company the page says makes (produces) the products. RESPONSIBLE: the company the page names as responsible for the products or for the site (for example the brand\'s company when another one produces). If the page names both, give both; at most one company per role. Each of name, address and email is copied character for character from that company\'s anchor; "address" is the street, postcode, town and country only (no person, phone, e-mail or web address); "email" is a plain address as written, and an obfuscated one ("office (a) example.com", "info [at] example.com") is null; the anchor is the shortest stretch that holds all of them (at most 400 characters). A company without a postal address on the page is left out. Never take a web designer, a host, a law firm or a reseller. No company: null.'
 
 };
 
@@ -158,9 +158,11 @@ function checkField(field: ProductField, raw: unknown, page: string): Checked | 
   if (role === null) return { ok: false, refusal: "UNKNOWN_ROLE" };
   const name = str(raw.name);
   const address = str(raw.address);
-  const email = str(raw.email);
+  let email = str(raw.email);
   if (name === null || address === null) return { ok: false, refusal: "NO_NAME_OR_ADDRESS" };
-  if (email !== null && !EMAIL.test(email)) return { ok: false, refusal: "NOT_AN_EMAIL" };
+  // an obfuscated address ("office (a) tropic-marin.com", the Tropic Marin imprint in the T4.4 pilot) is no e-mail: it
+  // goes, the company stays (refusing the company dropped the whole maker block on the OS side)
+  if (email !== null && !EMAIL.test(email)) email = null;
   const parts: [string, string][] = [
     ["name", name],
     ["address", address],
