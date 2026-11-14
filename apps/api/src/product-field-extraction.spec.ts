@@ -152,6 +152,11 @@ describe("a modell válaszának őre", () => {
       [["Kitalált Gyártó GmbH", null]]
     );
     assert.deepEqual(obfuscated.ok && obfuscated.answer.refusedFields, []);
+    // and the drop is said on the company, so the person who accepts the block sees it (barracuda on #90)
+    assert.deepEqual(
+      obfuscated.ok && obfuscated.answer.fields.map((f) => (f.field === "manufacturerInfo" ? f.emailDropped : null)),
+      [true]
+    );
     assert.deepEqual(refusal({ email: "sales@kitalalt.example" }), ["VALUE_NOT_IN_ANCHOR"]);
     // a valid address that the anchor does not hold (it is the web designer's)
     assert.deepEqual(refusal({ address: "Másik utca 2, 99999 Másikváros" }), ["VALUE_NOT_IN_ANCHOR"]);
