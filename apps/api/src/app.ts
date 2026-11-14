@@ -42,6 +42,12 @@ import {
   parseDosingRequest
 } from "./dosing-extraction.js";
 import {
+  guardProductFields,
+  parseProductFieldRequest,
+  productFieldInput,
+  productFieldInstructions
+} from "./product-field-extraction.js";
+import {
   CLAIM_EXTRACTION_PROMPT_VERSION,
   CLAIMS_AS_JSON,
   claimExtractionInput,
@@ -1227,6 +1233,94 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a dosing extraction"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * Two product fields from one manufacturer page (Acropora OS T4.4 S1b): what the product is for (`application`) and
+   * who makes it (`manufacturerInfo`, from the brand's imprint page). Every value rests on a verbatim anchor, checked
+   * against the page here (`guardProductFields`) and again in the OS; nothing is stored here. A refused field is named
+   * with its reason, the others stand; an answer the guard cannot read is a 200 with `refusal`.
+   */
+  app.post("/v1/product-field-extractions", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseProductFieldRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: productFieldInstructions(parsed.request.fields),
+        input: [
+          {
+            role: "user",
+            content: productFieldInput(parsed.request)
+          }
+        ],
+        store: false
+      });
+
+      const guarded = guardProductFields(
+        response.output_text ?? "",
+        parsed.request.pageText,
+        parsed.request.fields
+      );
+
+      if (!guarded.ok) {
+        request.log.warn({ refusal: guarded.refusal }, "the product field answer was refused by the guard");
+        return { refusal: guarded.refusal, model };
+      }
+
+      if (guarded.answer.refusedFields.length > 0)
+        // the details are counts and a character code, never page text
+        request.log.warn(
+          { refusedFields: guarded.answer.refusedFields },
+          "product fields were refused by the guard"
+        );
+
+      return { ...guarded.answer, model };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a product field extraction"
       );
 
       return reply.code(failure.status).send(failure.body);
