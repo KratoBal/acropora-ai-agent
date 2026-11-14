@@ -86,6 +86,8 @@ export type FieldValue =
       address: string;
       email: string | null;
       anchor: string;
+      /** The page wrote an e-mail, but not as an address ("office (a) …"): dropped, and said. */
+      emailDropped?: true;
     };
 
 export const MANUFACTURER_ROLES = ["MAKER", "RESPONSIBLE"] as const;
@@ -162,13 +164,20 @@ function checkField(field: ProductField, raw: unknown, page: string): Checked | 
   if (name === null || address === null) return { ok: false, refusal: "NO_NAME_OR_ADDRESS" };
   // an obfuscated address ("office (a) tropic-marin.com", the Tropic Marin imprint in the T4.4 pilot) is no e-mail: it
   // goes, the company stays (refusing the company dropped the whole maker block on the OS side)
-  if (email !== null && !EMAIL.test(email)) email = null;
+  const emailDropped = email !== null && !EMAIL.test(email);
+  if (emailDropped) email = null;
   const parts: [string, string][] = [
     ["name", name],
     ["address", address],
     ...(email === null ? [] : ([["email", email]] as [string, string][]))
   ];
-  return anchored(parts, anchor, page) ?? { ok: true, value: { field, role, name, address, email, anchor } };
+  return (
+    anchored(parts, anchor, page) ?? {
+      ok: true,
+      // said, so the person who accepts the block knows its e-mail was on the page but not as an address (barracuda #90)
+      value: { field, role, name, address, email, anchor, ...(emailDropped ? { emailDropped: true as const } : {}) }
+    }
+  );
 }
 
 /**
