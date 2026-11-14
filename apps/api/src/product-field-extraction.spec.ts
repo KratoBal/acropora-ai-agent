@@ -141,7 +141,17 @@ describe("a modell válaszának őre", () => {
       return r.ok ? r.answer.refusedFields.map((f) => f.refusal) : [r.refusal];
     };
     assert.deepEqual(refusal({ address: null }), ["NO_NAME_OR_ADDRESS"]);
-    assert.deepEqual(refusal({ email: "nem e-mail" }), ["NOT_AN_EMAIL"]);
+    // an obfuscated e-mail is dropped, the company stays (the Tropic Marin imprint: "office (a) tropic-marin.com")
+    const obfuscated = guardProductFields(
+      answer({ manufacturerInfo: [{ ...base, email: "info (a) kitalalt.example" }] }),
+      IMPRINT_PAGE,
+      ["manufacturerInfo"]
+    );
+    assert.deepEqual(
+      obfuscated.ok && obfuscated.answer.fields.map((f) => (f.field === "manufacturerInfo" ? [f.name, f.email] : [])),
+      [["Kitalált Gyártó GmbH", null]]
+    );
+    assert.deepEqual(obfuscated.ok && obfuscated.answer.refusedFields, []);
     assert.deepEqual(refusal({ email: "sales@kitalalt.example" }), ["VALUE_NOT_IN_ANCHOR"]);
     // a valid address that the anchor does not hold (it is the web designer's)
     assert.deepEqual(refusal({ address: "Másik utca 2, 99999 Másikváros" }), ["VALUE_NOT_IN_ANCHOR"]);
