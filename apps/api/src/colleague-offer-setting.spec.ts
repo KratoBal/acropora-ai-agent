@@ -153,7 +153,7 @@ describe("the chat route appends the offer sentence only when the OS box allows 
       const response = await app.inject({
         method: "POST",
         url: "/v1/chat",
-        headers: { authorization: `Bearer ${API_TOKEN}` },
+        headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" },
         payload: { message: AQUARIUM }
       });
       return (response.json() as { answer: string }).answer;

@@ -160,7 +160,7 @@ describe("a chat útja: a válasz-őr be van kötve", () => {
     const response = await app.inject({
       method: "POST",
       url: "/v1/chat",
-      headers: { authorization: `Bearer ${API_TOKEN}` },
+      headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" },
       payload: { message: "Mennyit adagoljak?" }
     });
     await app.close();

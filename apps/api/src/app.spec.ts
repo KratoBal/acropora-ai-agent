@@ -63,7 +63,7 @@ const chat = (headers: Record<string, string>) =>
     method: "POST",
     url: "/v1/chat",
     headers: {
-      authorization: `Bearer ${API_TOKEN}`,
+      authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client",
       "content-type": "application/json",
       ...headers
     },
@@ -376,7 +376,7 @@ describe("POST /v1/chat", () => {
       method: "POST",
       url: "/v1/chat",
       headers: {
-        authorization: `Bearer ${API_TOKEN}`,
+        authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client",
         "content-type": "application/json",
         "x-acropora-user-id": "cus_1"
       },
@@ -454,7 +454,7 @@ describe("the chat route, end to end", () => {
       method: "POST",
       url: "/v1/chat",
       headers: {
-        authorization: `Bearer ${API_TOKEN}`,
+        authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client",
         "content-type": "application/json"
       },
       payload: { message: "Van-e Fauna Marin nyomelem-adalekunk?" }
@@ -599,7 +599,7 @@ describe("rating an answer", () => {
       method: "POST",
       url: `/v1/messages/${messageId}/rating`,
       headers: {
-        authorization: `Bearer ${API_TOKEN}`,
+        authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client",
         "content-type": "application/json",
         ...headers
       },
@@ -816,7 +816,7 @@ describe("rating an answer", () => {
     const response = await ratedApp.inject({
       method: "GET",
       url: `/v1/conversations/${CONVERSATION_ID}/ratings`,
-      headers: { authorization: `Bearer ${API_TOKEN}` }
+      headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" }
     });
 
     assert.equal(response.statusCode, 200);
@@ -879,7 +879,7 @@ describe("what the upstream failure branch writes to the log", () => {
     ),
     {
       status: 401,
-      headers: { authorization: `Bearer ${API_TOKEN}` },
+      headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" },
       request: { headers: { authorization: `Bearer ${OPENAI_KEY}` } }
     }
   );
@@ -930,7 +930,7 @@ describe("what the upstream failure branch writes to the log", () => {
       method: "POST",
       url: "/v1/chat",
       headers: {
-        authorization: `Bearer ${API_TOKEN}`,
+        authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client",
         "content-type": "application/json"
       },
       payload: { message: "Mennyi a nitrat szintem?" }

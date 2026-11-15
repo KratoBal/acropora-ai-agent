@@ -345,7 +345,7 @@ describe("the chat route: the link gate behind AI_LINK_RULE", () => {
       const response = await app.inject({
         method: "POST",
         url: "/v1/chat",
-        headers: { authorization: `Bearer ${API_TOKEN}` },
+        headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" },
         payload: { message }
       });
       return {
