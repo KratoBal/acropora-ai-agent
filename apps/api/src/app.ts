@@ -368,6 +368,13 @@ export interface AppDependencies {
 export const CLIENT_KEY_MAX_LENGTH = 128;
 /** A 400's body for an `x-client-key` that is there but is not a key. */
 export const INVALID_CLIENT_KEY = "invalid x-client-key";
+/**
+ * A 400's body for a missing `x-client-key` (card 360f42ca, barracuda 49158 after #85). There was a shared fallback key for a
+ * caller that sent none; every caller that can reach the chat (the OS, since card 7a5ea203) sends its own, so the fallback only
+ * kept one door open: any token holder without a key would share one set of conversations. Missing is now refused like invalid,
+ * with its own word, so the caller can tell which of the two it is.
+ */
+export const MISSING_CLIENT_KEY = "missing x-client-key";
 
 /**
  * Builds the HTTP application without starting it.
@@ -485,15 +492,19 @@ export function buildApp(dependencies: AppDependencies = {}) {
    * route would refuse to continue.
    */
   function clientKeyOf(header: unknown): string | null {
-    // the shared fallback ONLY when the header is missing (card 7a5ea203): a header that is there but is not one key (empty or
-    // blank, not a single string, longer than the limit) is refused, never quietly turned into the shared key or cut to a prefix
-    // that could equal another caller's
-    if (header === undefined) return "stage-test-client";
+    // no shared fallback any more (card 360f42ca): a missing header is refused like one that is not a key (empty or blank, not a
+    // single string, longer than the limit); never quietly a shared key, never cut to a prefix that could equal another caller's
+    if (header === undefined) return null;
     return typeof header === "string" &&
       header.trim().length > 0 &&
       header.length <= CLIENT_KEY_MAX_LENGTH
       ? header
       : null;
+  }
+
+  /** Which of the two 400s: the header is missing, or it is there and not a key. */
+  function clientKeyRefusal(header: unknown): string {
+    return header === undefined ? MISSING_CLIENT_KEY : INVALID_CLIENT_KEY;
   }
 
   app.get("/health", async () => {
@@ -594,7 +605,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
-    if (clientKey === null) return reply.code(400).send({ error: INVALID_CLIENT_KEY });
+    if (clientKey === null)
+      return reply.code(400).send({ error: clientKeyRefusal(request.headers["x-client-key"]) });
     /*
      * Who this conversation is about. A conversation is continued only for the
      * same subject it was started for (card a3e0327f): otherwise a second
@@ -1908,7 +1920,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
-    if (clientKey === null) return reply.code(400).send({ error: INVALID_CLIENT_KEY });
+    if (clientKey === null)
+      return reply.code(400).send({ error: clientKeyRefusal(request.headers["x-client-key"]) });
 
     if (!(await ratings.answerIsRatable(messageId, clientKey))) {
       /**
@@ -1956,7 +1969,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     const clientKey = clientKeyOf(request.headers["x-client-key"]);
-    if (clientKey === null) return reply.code(400).send({ error: INVALID_CLIENT_KEY });
+    if (clientKey === null)
+      return reply.code(400).send({ error: clientKeyRefusal(request.headers["x-client-key"]) });
 
     return {
       conversationId,

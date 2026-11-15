@@ -177,7 +177,7 @@ async function ask(fx: ReturnType<typeof fixture>, message: string) {
     const response = await app.inject({
       method: "POST",
       url: "/v1/chat",
-      headers: { authorization: `Bearer ${API_TOKEN}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client", "content-type": "application/json" },
       payload: { message, conversationId: CONVERSATION }
     });
     return { status: response.statusCode, body: response.json() as Record<string, unknown> };

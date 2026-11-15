@@ -120,7 +120,7 @@ describe("a conversation is continued only for the subject it was started for", 
       method: "POST",
       url: "/v1/chat",
       headers: {
-        authorization: `Bearer ${API_TOKEN}`,
+        authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client",
         "content-type": "application/json",
         ...(customerId === undefined ? {} : { "x-acropora-user-id": customerId })
       },

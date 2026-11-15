@@ -4,6 +4,7 @@ import { after, before, describe, it } from "node:test";
 import {
   CLIENT_KEY_MAX_LENGTH,
   INVALID_CLIENT_KEY,
+  MISSING_CLIENT_KEY,
   buildApp,
   type AppDependencies,
   type ConversationStore,
@@ -11,17 +12,17 @@ import {
 } from "./app.js";
 
 /**
- * THE SHARED FALLBACK KEY ONLY FOR A MISSING HEADER (card 7a5ea203). A conversation and its ratings belong to the caller named by
+ * THE CALLER'S KEY IS REQUIRED (card 7a5ea203; the missing-header fallback removed by card 360f42ca). A conversation and its ratings belong to the caller named by
  * `x-client-key`. WHAT TURNS IT RED: a header that is there but is not a key (empty, blank, longer than the limit) is quietly
  * turned into the shared key or cut to a prefix (two callers could then share a conversation); the given key is not the one a
- * conversation is kept under; the fallback is lost for a caller that sends no header at all; the rating routes read the key
+ * conversation is kept under; a caller that sends no header at all still gets the shared key (or a 400 that does not say the header is missing); the rating routes read the key
  * differently from the chat route.
  */
 const API_TOKEN = "kliens-kulcs-teszt";
 const CONVERSATION_ID = "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30";
 const MESSAGE_ID = "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f";
 
-describe("x-client-key: the shared fallback only when the header is missing", () => {
+describe("x-client-key: required, no shared fallback (card 360f42ca)", () => {
   const saved = { ...process.env };
   before(() => {
     process.env.NODE_ENV = "test";
@@ -89,10 +90,10 @@ describe("x-client-key: the shared fallback only when the header is missing", ()
   };
   const chat = { method: "POST" as const, url: "/v1/chat", payload: { message: "Milyen világítás kell a korallokhoz?" } };
 
-  it("no header: the shared fallback key, as before", async () => {
+  it("no header: refused with 400 that says it is missing, and no conversation is made under any key (card 360f42ca)", async () => {
     const h = harness();
-    const { status } = await call(h.deps, chat);
-    assert.deepEqual([status, h.keys], [200, ["stage-test-client"]]);
+    const { status, body } = await call(h.deps, chat);
+    assert.deepEqual([status, body.error, h.keys], [400, MISSING_CLIENT_KEY, []]);
   });
 
   it("a key is kept as it is, up to the limit, never cut", async () => {
@@ -119,6 +120,9 @@ describe("x-client-key: the shared fallback only when the header is missing", ()
     };
     const list = { method: "GET" as const, url: `/v1/conversations/${CONVERSATION_ID}/ratings` };
     for (const request of [rate, list]) {
+      const missing = harness();
+      const unkeyed = await call(missing.deps, request);
+      assert.deepEqual([unkeyed.status, unkeyed.body.error, missing.ratingKeys], [400, MISSING_CLIENT_KEY, []], request.url);
       const bad = harness();
       const refused = await call(bad.deps, request, "");
       assert.deepEqual([refused.status, refused.body.error, bad.ratingKeys], [400, INVALID_CLIENT_KEY, []], request.url);

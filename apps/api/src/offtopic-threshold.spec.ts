@@ -166,7 +166,7 @@ describe("the chat route takes the firmer text from the threshold the OS holds",
       const response = await app.inject({
         method: "POST",
         url: "/v1/chat",
-        headers: { authorization: `Bearer ${API_TOKEN}` },
+        headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" },
         payload: { message: questions.at(-1) }
       });
       return (response.json() as { answer: string }).answer;

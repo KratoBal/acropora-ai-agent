@@ -54,7 +54,7 @@ async function ask(
   const response = await app.inject({
     method: "POST",
     url: "/v1/chat",
-    headers: { authorization: `Bearer ${API_TOKEN}` },
+    headers: { authorization: `Bearer ${API_TOKEN}`, "x-client-key": "stage-test-client" },
     payload: { message: "Melyik szűrő kell 200 literhez?" }
   });
 
