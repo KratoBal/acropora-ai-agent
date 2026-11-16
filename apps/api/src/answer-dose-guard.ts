@@ -84,8 +84,13 @@ const OTHER_UNIT =
  * naponta"). Next to a period word it is a dose the guard cannot check, but
  * only as a THING GIVEN: with a dosing verb, or in the accusative (see
  * `isGivenCount`).
+ *
+ * A HYPHENATED SUFFIX OTHER THAN THE ACCUSATIVE IS NO BARE COUNT ("naponta 2-3-szor p\u00f3tolja", "3-mal", "5-sz\u00f6r"): the
+ * suffix says what the number counts (times, a factor), not an amount given. The third question-set run lost the ATO
+ * answer to exactly this: "-szor" passed as a bare count, and "p\u00f3tolja" (the evaporated water) as a dosing verb. Only
+ * the accusative ("3-at") stays a count.
  */
-const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]))`);
+const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]|-[a-z]))`);
 
 /**
  * THE KIND OF THE SENTENCE, NOT THE PRODUCT IN IT (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719).

@@ -123,6 +123,17 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
   });
 
+  // the third question-set run (2026-11-16): the ATO answer was swapped on a multiplicative suffix
+  it("egy kötőjeles toldalék (szorzó, eszközhatározó) nem puszta szám, egy adagolási ige mellett sem", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const answer of [
+      "Az ATO naponta 2-3-szor pótolja az elpárolgott vizet.",
+      "Hetente 5-ször pótolja a vizet.",
+      "Pótold naponta, 3-mal kevesebbet, mint tegnap."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
   it("a név nélküli adag igével, tárgyraggal vagy egységgel továbbra is fennakad, és a szabály neve a válaszban", () => {
     const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
     for (const [answer, rule] of [
@@ -137,7 +148,9 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       ["Hetente 1 jut 100 literre.", "per-volume-count"],
       // a bare count next to a volume that is no rate ("literes"): the bare-count-plus-volume reading
       ["Az Ön 300 literes akváriumába napi 2.", "per-volume-count"],
-      ["Naponta 2-3 ml-t adj.", "no-fixed-dose"]
+      ["Naponta 2-3 ml-t adj.", "no-fixed-dose"],
+      // the accusative stays a count after the suffix change (third run, ATO)
+      ["Pótold naponta 2-3-at.", "given-count"]
     ] as const) {
       const result = guardAnswerDoses(answer, empty);
       assert.equal(result.ok, false, answer);
