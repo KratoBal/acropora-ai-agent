@@ -33,6 +33,7 @@ import { ANSWER_ORDER_INSTRUCTIONS } from "./answer-order.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
 import { instructionsVersion } from "./instructions-version.js";
 import { LIVE_DATA_INSTRUCTIONS } from "./live-data.js";
+import { doseGuardDebugOn, namesDoseSentenceTo } from "./question-set-client.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
 import {
   productContextInstructions,
@@ -154,10 +155,6 @@ const FIXED_INSTRUCTIONS = [
   LIVE_DATA_INSTRUCTIONS,
   GLOSSARY_INSTRUCTIONS
 ] as const;
-
-/** The dose guard's debug switch: exactly "true" turns on `doseGuardSentence` on /v1/chat. OFF by default. */
-export const DOSE_GUARD_DEBUG_ENV = "AI_DOSE_GUARD_DEBUG";
-const doseGuardDebug = (env: NodeJS.ProcessEnv = process.env) => env[DOSE_GUARD_DEBUG_ENV] === "true";
 
 /** Stored with every model answer (`messages.instructions_version`), see instructions-version.ts. */
 export const INSTRUCTIONS_VERSION = instructionsVersion(FIXED_INSTRUCTIONS);
@@ -565,6 +562,11 @@ export function buildApp(dependencies: AppDependencies = {}) {
        * from its own build.
        */
       instructionsVersion: INSTRUCTIONS_VERSION,
+      /**
+       * Whether this instance may name the dose guard's sentence to the question-set runner (barracuda, #103): a
+       * boolean, so "never on a production service" is a measurable claim, not a promise.
+       */
+      doseGuardDebug: doseGuardDebugOn(),
       database: "ok",
       timestamp: new Date().toISOString()
     };
@@ -1056,12 +1058,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
         /** Which reading of the guard found it (t-20261116-adagolasi-or-szukites): the question-set run reports it. */
         doseGuardRule: doseGuard.ok ? null : doseGuard.rule,
         /**
-         * The sentence that set the guard off, ONLY where `AI_DOSE_GUARD_DEBUG` is exactly "true" (the test AI;
-         * t-20261116-kerdeskeszlet-or, acrobot 53798). The question-set runs narrowed the guard blind: the swapped text
-         * is not stored, so which sentence fired could only be guessed. It is the refused, possibly unsafe dose text,
-         * so it is off by default and never on the production service; the switch is read per call.
+         * The sentence that set the guard off, ONLY to the question-set runner's own client key AND only where the
+         * instance allows it (see question-set-client.ts; acrobot 53798, 53803; barracuda #103). The runs narrowed the
+         * guard blind: the swapped text is not stored. The test AI also answers the live OS, and an OS key
+         * (`os-user:<id>`) never gets the field, switch or no switch.
          */
-        ...(doseGuardDebug() && !doseGuard.ok ? { doseGuardSentence: doseGuard.sentence } : {}),
+        ...(namesDoseSentenceTo(clientKey) && !doseGuard.ok ? { doseGuardSentence: doseGuard.sentence } : {}),
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
         linkGuard:
           linkGuard === null

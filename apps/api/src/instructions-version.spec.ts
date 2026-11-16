@@ -79,8 +79,10 @@ describe("the health report names the instruction version", () => {
     const app = buildApp({ databaseCheck: async () => {} });
     await app.ready();
     try {
-      const body = (await app.inject({ method: "GET", url: "/health" })).json() as { instructionsVersion?: string };
+      const body = (await app.inject({ method: "GET", url: "/health" })).json() as { instructionsVersion?: string; doseGuardDebug?: boolean };
       assert.equal(body.instructionsVersion, INSTRUCTIONS_VERSION);
+      // the dose-sentence switch is reported, and off by default (barracuda, #103)
+      assert.equal(body.doseGuardDebug, false);
     } finally {
       await app.close();
     }

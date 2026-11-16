@@ -11,6 +11,7 @@ import {
   QUESTION_SET_VERSION,
   type PinnedQuestion
 } from "./question-set.js";
+import { QUESTION_SET_CLIENT_KEY } from "./question-set-client.js";
 import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
 
 /**
@@ -191,7 +192,7 @@ export interface QuestionResult {
   source: AnswerSource | null;
   /** The guard that swapped the text, and its reason ("doseGuard: ..."); null when nothing was swapped. */
   replacedBy: string | null;
-  /** The sentence that set the dose guard off, when the server's debug switch is on (the test AI only); else null. */
+  /** The sentence that set the dose guard off; the server names it only to the runner's own client key, else null. */
   replacedSentence: string | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
@@ -365,7 +366,7 @@ export interface RunReport {
  * on a regression, so this is the rule it speaks by.
  *
  * A REGRESSION is: a question that passed and now fails or is replaced; any failed call; more fails, more replaced
- * answers or more avoided glossary forms than before. A `human` verdict is never compared: a person reads it. A question
+ * answers or more avoided glossary forms than before, counted over the questions both runs asked. A `human` verdict is never compared: a person reads it. A question
  * in only one of the two runs (the set changed) is listed, not judged.
  *
  * THE CAUSE names what moved between the runs: the instruction text, the server's code, both, or neither (the model
@@ -399,14 +400,31 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
     else if (SCORED.includes(before.verdict) && before.verdict !== "pass" && now.verdict === "pass")
       improvements.push(`${id}: ${before.verdict} -> pass`);
   }
-  const before = prev.summary;
-  const counts: [string, number, number | undefined][] = [
-    ["fail", next.summary.fail, before?.fail],
-    ["replaced", next.summary.replaced, before?.replaced],
-    ["avoided glossary forms", next.summary.glossary.avoided, before?.glossary?.avoided]
-  ];
-  for (const [name, now, then] of counts)
-    if (typeof then === "number" && now > then) regressions.push(`${name}: ${then} -> ${now}`);
+  // the three counts over the questions BOTH runs asked (barracuda, #103): a question the set gained is listed in
+  // `onlyInOne`, and its first fail must not read as a rise. An old report's result has no `source`: a replaced or
+  // local verdict says so, anything else is the model's answer.
+  const common = [...nextResults.keys()].filter((id) => prevResults.has(id));
+  const tally = (results: Map<string, QuestionResult>) => {
+    let fail = 0;
+    let replaced = 0;
+    let avoided = 0;
+    for (const id of common) {
+      const r = results.get(id)!;
+      if (r.verdict === "fail") fail++;
+      if (r.verdict === "replaced") replaced++;
+      const own = r.source ? r.source === "model" : r.verdict !== "replaced" && r.verdict !== "local";
+      if (own && typeof r.answer === "string") avoided += total(countTerms(r.answer).avoided);
+    }
+    return { fail, replaced, avoided };
+  };
+  const then = tally(prevResults);
+  const now = tally(nextResults);
+  for (const [name, a, b] of [
+    ["fail", then.fail, now.fail],
+    ["replaced", then.replaced, now.replaced],
+    ["avoided glossary forms", then.avoided, now.avoided]
+  ] as const)
+    if (b > a) regressions.push(`${name}: ${a} -> ${b}`);
   if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
   return {
     previous: {
@@ -547,7 +565,7 @@ export async function main(
     .catch(() => ({}))) as Record<string, unknown>;
   const startedAt = new Date().toISOString();
   const results = await runQuestionSet(
-    httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? "question-set-run", fetchImpl })
+    httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? QUESTION_SET_CLIENT_KEY, fetchImpl })
   );
   // the server's /health first; an older server without it still names the version on each model answer
   const fromAnswers = [...new Set(results.map((r) => r.instructionsVersion).filter((v): v is string => v !== null))];

@@ -321,19 +321,25 @@ describe("httpSender against the real /v1/chat answer", () => {
       if (!reply.ok) return;
       assert.equal(reply.source, "replaced");
       assert.match(reply.replacedBy ?? "", /^doseGuard: NO_FIXED_DOSE \(no-fixed-dose\)$/);
-      // the debug switch is off: the refused sentence does not leave the service
+      // the runner's key with the instance switch OFF: no sentence (barracuda, #103 v2)
       assert.equal(reply.replacedSentence, null);
+      const sentenceFor = async (clientKey: string) => {
+        const r = await httpSender({ baseUrl: "http://ai.test", token: API_TOKEN, clientKey, fetchImpl })({ message: "Mennyit adagoljak?" });
+        return r.ok ? [r.source, r.replacedSentence] : ["error", null];
+      };
       process.env.AI_DOSE_GUARD_DEBUG = "true";
       try {
-        const debug = await send({ message: "Mennyit adagoljak?" });
-        assert.equal(debug.ok && debug.replacedSentence, "Adagolj napi 5 ml-t 100 literenként");
+        // the key AND the switch: the sentence
+        assert.deepEqual(await sentenceFor("question-set-run"), ["replaced", "Adagolj napi 5 ml-t 100 literenként"]);
+        // an OS key never, switch or no switch: the same AI answers the live OS
+        for (const clientKey of ["os-user:42", "question-set-run-x", "QUESTION-SET-RUN"])
+          assert.deepEqual(await sentenceFor(clientKey), ["replaced", null], clientKey);
       } finally {
         delete process.env.AI_DOSE_GUARD_DEBUG;
       }
       process.env.AI_DOSE_GUARD_DEBUG = "1";
       try {
-        const notExactlyTrue = await send({ message: "Mennyit adagoljak?" });
-        assert.equal(notExactlyTrue.ok && notExactlyTrue.replacedSentence, null);
+        assert.deepEqual(await sentenceFor("question-set-run"), ["replaced", null]);
       } finally {
         delete process.env.AI_DOSE_GUARD_DEBUG;
       }
@@ -506,19 +512,40 @@ describe("compareReports (t-20261116-kerdeskeszlet-or)", () => {
         result("d", "fail")
       ])
     );
-    assert.deepEqual(c.regressions, ["a: pass -> fail", "b: pass -> replaced (doseGuard: DOSE_NOT_IN_CATALOGUE (given-count))"]);
+    assert.deepEqual(c.regressions, [
+      "a: pass -> fail",
+      "b: pass -> replaced (doseGuard: DOSE_NOT_IN_CATALOGUE (given-count))",
+      // the counts over the common questions see the same moves (c fail -> pass, d human -> fail)
+      "fail: 1 -> 2",
+      "replaced: 0 -> 1"
+    ]);
     assert.deepEqual(c.improvements, ["c: fail -> pass"]);
     assert.equal(c.cause, "none");
   });
 
-  it("counts a rise in fails, replaced answers, avoided forms and any error; an old report without counts is no rise", () => {
+  it("counts a rise in fails, replaced answers, avoided forms over the common questions, and any error", () => {
     const c = compareReports(
-      report([], { fail: 1, replaced: 1, glossary: { answers: 1, preferred: 1, avoided: 0 } }),
-      report([], { fail: 2, replaced: 3, errors: 1, glossary: { answers: 1, preferred: 1, avoided: 2 } })
+      report([result("a", "fail"), result("b", "human", { answer: "tengeri akvárium", source: "model" }), result("c", "human")]),
+      report(
+        [
+          result("a", "fail"),
+          result("b", "fail", { answer: "zátonyakvárium és skimmer", source: "model" }),
+          result("c", "replaced")
+        ],
+        { errors: 1 }
+      )
     );
-    assert.deepEqual(c.regressions, ["fail: 1 -> 2", "replaced: 1 -> 3", "avoided glossary forms: 0 -> 2", "errors: 1"]);
-    const old = { summary: { pass: 1, fail: 0, human: 0, errors: 0, glossary: { answers: 1, preferred: 1, avoided: 0 } }, results: [] };
-    assert.deepEqual(compareReports(old, report([], { replaced: 2 })).regressions, []);
+    assert.deepEqual(c.regressions, ["fail: 1 -> 2", "replaced: 0 -> 1", "avoided glossary forms: 0 -> 2", "errors: 1"]);
+  });
+
+  // barracuda, #103: a question the set gained is listed, and its first fail is no rise (exit 3 would be a false alarm)
+  it("a new question's fail or replaced answer is no rise; an old report without `source` still compares", () => {
+    const c = compareReports(
+      { results: [{ id: "a", verdict: "pass", answer: "x" }] },
+      report([result("a", "pass", { answer: "x", source: "model" }), result("new", "fail"), result("new2", "replaced")])
+    );
+    assert.deepEqual(c.regressions, []);
+    assert.deepEqual(c.onlyInOne, ["new: new", "new2: new"]);
   });
 
   it("names what moved: the instruction text, the server, both or neither; and lists a question in only one run", () => {
