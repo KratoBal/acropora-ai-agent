@@ -116,6 +116,25 @@ describe("the ticket draft guard", () => {
     }
   });
 
+  it("a DATE or a time in the summary is not a number (barracuda, ai#106), and a phone number next to it still is", () => {
+    for (const date of ["2026.11.16.", "2026-11-16", "2026. 11. 16.", "16.11.2026", "16/11/2026", "14:30"])
+      assert.equal(guardTicketDraft(answer({ ...good, summary: `A hiba ${date} óta áll fenn.` })).ok, true, date);
+    const phone = guardTicketDraft(answer({ ...good, summary: "A hiba 2026.11.16. óta áll fenn, hívd a +36 30 123 4567 számot." }));
+    assert.deepEqual([phone.ok, !phone.ok && phone.detail], [false, "summary number"]);
+  });
+
+  it("CONTROL: an invisible or direction-changing character is UNSAFE_OUTPUT (barracuda, ai#106)", () => {
+    for (const mark of ["\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\u202a", "\u202e", "\u2066", "\u2069"]) {
+      const r = guardTicketDraft(answer({ ...good, title: `Csöpög${mark}a szűrő` }));
+      assert.deepEqual([r.ok, !r.ok && r.refusal, !r.ok && r.detail], [false, "UNSAFE_OUTPUT", "title control"], JSON.stringify(mark));
+    }
+  });
+
+  it("U+2028 and the BOM count as white space to the squash: they become plain spaces, not an invisible character", () => {
+    const r = guardTicketDraft(answer({ ...good, title: "Csöpög\u2028a\ufeffszűrő" }));
+    assert.deepEqual(r.ok && r.draft.title, "Csöpög a szűrő");
+  });
+
   it("a normal summary with placeholders, short numbers and a unit is not refused", () => {
     const r = guardTicketDraft(answer({ title: "Szivattyú zaj a 2-es akváriumnál", summary: "A szivattyú 3 napja zajos, [NÉV] szerint 12 literes tartálynál. Elérhetőség: [TELEFON], [E-MAIL]." }));
     assert.equal(r.ok, true);

@@ -79,12 +79,19 @@ const squash = (value: string) => value.replace(/\s+/g, " ").trim();
  * mail could try to smuggle through a model to a manager's screen, and the title and the summary have no use for them.
  */
 function unsafeCode(value: string): string | null {
-  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return "control";
+  // control characters, and the invisible and direction-changing ones (zero width, bidi marks and overrides, the BOM): on a screen they can hide
+  // or reverse the text (barracuda, ai#106)
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/.test(value)) return "control";
   if (/<\s*\/?\s*[a-z!]/i.test(value)) return "html";
   // an address before a link: an address holds a domain, and the kind it is named by is the more specific one
   if (/[^\s@]+@[^\s@]+\.[^\s@]+/.test(value)) return "email";
   if (/(?:https?:\/\/|www\.|\b[a-z0-9.-]+\.(?:hu|com|org|net|eu)\b)/i.test(value)) return "link";
-  if (/(?:\+|00)?\d[\d\s/().-]{7,}\d/.test(value)) return "number";
+  // a DATE is not a phone number: the instructions ask for "since when", and a date (2026.11.16., 2026-11-16, 16.11.2026) or a time (14:30) is allowed
+  const withoutDates = value
+    .replace(/\b\d{4}\s?[.\-/]\s?\d{1,2}\s?[.\-/]\s?\d{1,2}\b\.?/g, " ")
+    .replace(/\b\d{1,2}\s?[.\-/]\s?\d{1,2}\s?[.\-/]\s?\d{4}\b\.?/g, " ")
+    .replace(/\b\d{1,2}:\d{2}\b/g, " ");
+  if (/(?:\+|00)?\d[\d\s/().-]{7,}\d/.test(withoutDates)) return "number";
   return null;
 }
 
