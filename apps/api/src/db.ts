@@ -84,6 +84,15 @@ export const SCHEMA_SQL = `
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS local_kind TEXT;
 
     /*
+     * WHICH LANGUAGE RULES the model answered under (Acropora OS card 7a5ea203): the hash of the fixed instruction text
+     * (base, live data, glossary), see instructions-version.ts. The rules are code constants, so the commit says which
+     * text RUNS; this column says which text an answer WAS MADE WITH, so a before-and-after comparison of the pinned
+     * question set can tell the two apart. Written on a model answer only. NULL is a local answer (no model ran), a
+     * user row, and every row written before this column.
+     */
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS instructions_version TEXT;
+
+    /*
      * WHO the conversation is about, fixed when it is created.
      *
      * The customer used to be read per request and stored nowhere, so a

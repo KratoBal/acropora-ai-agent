@@ -78,6 +78,8 @@ export async function saveMessage(input: {
   usage?: MessageUsage;
   /** 'contact_offer' on the answer that carries the offer with the contact request, 'contact_ask' on an answer that asks for the contact again (see db.ts), else absent. */
   localKind?: "contact_offer" | "contact_ask";
+  /** The fixed instruction text's version, on a model answer only (see instructions-version.ts). */
+  instructionsVersion?: string;
 }): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `
@@ -89,9 +91,10 @@ export async function saveMessage(input: {
         input_tokens,
         output_tokens,
         total_tokens,
-        local_kind
+        local_kind,
+        instructions_version
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING id
     `,
     [
@@ -102,7 +105,8 @@ export async function saveMessage(input: {
       input.usage?.inputTokens ?? null,
       input.usage?.outputTokens ?? null,
       input.usage?.totalTokens ?? null,
-      input.localKind ?? null
+      input.localKind ?? null,
+      input.instructionsVersion ?? null
     ]
   );
 

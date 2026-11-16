@@ -32,6 +32,10 @@ describe("conversation ownership in Postgres", { skip: url ? false : "AI_CONVERS
       "INSERT INTO conversations (client_key) VALUES ('k') RETURNING id"
     );
     written.push(legacy.rows[0].id);
+    // and a messages table from before the later columns (instructions_version among them, card 7a5ea203)
+    await db.pool.query(
+      "CREATE TABLE IF NOT EXISTS messages (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, role TEXT NOT NULL, content TEXT NOT NULL, model TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
+    );
     await db.pool.query(db.SCHEMA_SQL);
   });
 
@@ -57,5 +61,24 @@ describe("conversation ownership in Postgres", { skip: url ? false : "AI_CONVERS
     for (const subject of ["anonymous", "customer:cus_A", ""]) {
       assert.equal(await mod.conversationBelongsToClient(legacy, "k", subject), false, subject);
     }
+  });
+
+  it("stores the instruction version on the row, and NULL where it is not given (card 7a5ea203)", async () => {
+    const conversation = await mod.createConversation("k", "anonymous");
+    written.push(conversation);
+    const withVersion = await mod.saveMessage({
+      conversationId: conversation,
+      role: "assistant",
+      content: "valasz",
+      instructionsVersion: "abc123def456"
+    });
+    const without = await mod.saveMessage({ conversationId: conversation, role: "user", content: "kerdes" });
+    const rows = await db.pool.query<{ id: string; instructions_version: string | null }>(
+      "SELECT id, instructions_version FROM messages WHERE id = ANY($1::uuid[])",
+      [[withVersion, without]]
+    );
+    const byId = new Map(rows.rows.map((row) => [row.id, row.instructions_version]));
+    assert.equal(byId.get(withVersion), "abc123def456");
+    assert.equal(byId.get(without), null);
   });
 });
