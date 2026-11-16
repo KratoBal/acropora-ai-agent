@@ -191,6 +191,8 @@ export interface QuestionResult {
   source: AnswerSource | null;
   /** The guard that swapped the text, and its reason ("doseGuard: ..."); null when nothing was swapped. */
   replacedBy: string | null;
+  /** The sentence that set the dose guard off, when the server's debug switch is on (the test AI only); else null. */
+  replacedSentence: string | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
   /**
@@ -217,10 +219,14 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
         measures: terms
       };
     }
+    // An avoided form is a glossary error anywhere: fail. A preferred form can be content, not decoration: the fourth
+    // run's nitrate answer split its measuring advice by "Induló friss tengeri akvárium" and "Beállt, vegyes korallos
+    // akvárium", which the criterion does not forbid; a count cannot tell the two apart, so it goes to a person
+    // (acrobot 53798). No form at all is a pass.
     case "glossary-not-forced": {
       const terms = countTerms(answer);
       return {
-        verdict: total(terms.avoided) + total(terms.preferred) === 0 ? "pass" : "fail",
+        verdict: total(terms.avoided) > 0 ? "fail" : total(terms.preferred) > 0 ? "human" : "pass",
         measures: terms
       };
     }
@@ -269,6 +275,7 @@ export type SendQuestion = (input: {
       answer: string;
       source: AnswerSource;
       replacedBy: string | null;
+      replacedSentence: string | null;
       instructionsVersion: string | null;
       productContext: string | null;
     }
@@ -317,6 +324,7 @@ export async function runQuestionSet(
       answer,
       source: reply.ok ? reply.source : null,
       replacedBy: reply.ok ? reply.replacedBy : null,
+      replacedSentence: reply.ok ? reply.replacedSentence : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
@@ -488,6 +496,7 @@ export function httpSender(options: {
           : linkReplaced !== null
             ? `linkGuard: ${linkReplaced}`
             : null,
+      replacedSentence: typeof body.doseGuardSentence === "string" ? body.doseGuardSentence : null,
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
       productContext:
         typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"

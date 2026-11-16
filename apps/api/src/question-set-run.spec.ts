@@ -33,7 +33,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -68,7 +68,9 @@ describe("score", () => {
     assert.equal(score(question("glossary-preferred-term"), "Egy tengeri akvárium indítása...").verdict, "pass");
     assert.equal(score(question("glossary-preferred-term"), "Egy zátonyakvárium, vagyis tengeri akvárium...").verdict, "fail");
     assert.equal(score(question("glossary-not-forced"), "A nitrátot hetente mérd.").verdict, "pass");
-    assert.equal(score(question("glossary-not-forced"), "A korallos akváriumban a nitrát...").verdict, "fail");
+    // a preferred form can be content (the fourth run's nitrate answer): a person decides; an avoided form fails
+    assert.equal(score(question("glossary-not-forced"), "A korallos akváriumban a nitrát...").verdict, "human");
+    assert.equal(score(question("glossary-not-forced"), "A zátonyakváriumban a nitrát...").verdict, "fail");
     assert.equal(score(question("abbreviation-expanded"), "ATO (Automatic Top Off - automatikus) kell.").verdict, "pass");
     assert.equal(score(question("abbreviation-expanded"), "Kell ATO.").verdict, "fail");
     assert.equal(score(question("abbreviation-not-repeated"), "Az ATO tartálya 10 liter.").verdict, "pass");
@@ -280,6 +282,7 @@ describe("httpSender against the real /v1/chat answer", () => {
         answer: "A nitrátot hetente mérd.",
         source: "model",
         replacedBy: null,
+        replacedSentence: null,
         instructionsVersion: INSTRUCTIONS_VERSION,
         // no OS configured in the test: the route reports the branch the model had
         productContext: "not_configured"
@@ -318,6 +321,22 @@ describe("httpSender against the real /v1/chat answer", () => {
       if (!reply.ok) return;
       assert.equal(reply.source, "replaced");
       assert.match(reply.replacedBy ?? "", /^doseGuard: NO_FIXED_DOSE \(no-fixed-dose\)$/);
+      // the debug switch is off: the refused sentence does not leave the service
+      assert.equal(reply.replacedSentence, null);
+      process.env.AI_DOSE_GUARD_DEBUG = "true";
+      try {
+        const debug = await send({ message: "Mennyit adagoljak?" });
+        assert.equal(debug.ok && debug.replacedSentence, "Adagolj napi 5 ml-t 100 literenként");
+      } finally {
+        delete process.env.AI_DOSE_GUARD_DEBUG;
+      }
+      process.env.AI_DOSE_GUARD_DEBUG = "1";
+      try {
+        const notExactlyTrue = await send({ message: "Mennyit adagoljak?" });
+        assert.equal(notExactlyTrue.ok && notExactlyTrue.replacedSentence, null);
+      } finally {
+        delete process.env.AI_DOSE_GUARD_DEBUG;
+      }
     } finally {
       await app.close();
     }
@@ -557,7 +576,7 @@ describe("main --compare", () => {
     const worse = await main(
       ["--url", "http://ai.test", "--out", third, "--compare", first],
       { AI_API_TOKEN: "t" },
-      { log: (l) => lines.push(l), fetchImpl: answering("A korallos akváriumban a nitrátot hetente mérd.") }
+      { log: (l) => lines.push(l), fetchImpl: answering("A zátonyakváriumban a nitrátot hetente mérd.") }
     );
     assert.equal(worse, 3);
     const report = JSON.parse(readFileSync(third, "utf8")) as RunReport;

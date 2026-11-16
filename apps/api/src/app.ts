@@ -155,6 +155,10 @@ const FIXED_INSTRUCTIONS = [
   GLOSSARY_INSTRUCTIONS
 ] as const;
 
+/** The dose guard's debug switch: exactly "true" turns on `doseGuardSentence` on /v1/chat. OFF by default. */
+export const DOSE_GUARD_DEBUG_ENV = "AI_DOSE_GUARD_DEBUG";
+const doseGuardDebug = (env: NodeJS.ProcessEnv = process.env) => env[DOSE_GUARD_DEBUG_ENV] === "true";
+
 /** Stored with every model answer (`messages.instructions_version`), see instructions-version.ts. */
 export const INSTRUCTIONS_VERSION = instructionsVersion(FIXED_INSTRUCTIONS);
 
@@ -1051,6 +1055,13 @@ export function buildApp(dependencies: AppDependencies = {}) {
         doseGuard: doseGuard.ok ? null : doseGuard.reason,
         /** Which reading of the guard found it (t-20261116-adagolasi-or-szukites): the question-set run reports it. */
         doseGuardRule: doseGuard.ok ? null : doseGuard.rule,
+        /**
+         * The sentence that set the guard off, ONLY where `AI_DOSE_GUARD_DEBUG` is exactly "true" (the test AI;
+         * t-20261116-kerdeskeszlet-or, acrobot 53798). The question-set runs narrowed the guard blind: the swapped text
+         * is not stored, so which sentence fired could only be guessed. It is the refused, possibly unsafe dose text,
+         * so it is off by default and never on the production service; the switch is read per call.
+         */
+        ...(doseGuardDebug() && !doseGuard.ok ? { doseGuardSentence: doseGuard.sentence } : {}),
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
         linkGuard:
           linkGuard === null
