@@ -61,6 +61,14 @@ import {
   parseClaimRequest
 } from "./claim-extraction.js";
 import {
+  TICKET_DRAFT_AS_JSON,
+  TICKET_DRAFT_PROMPT_VERSION,
+  guardTicketDraft,
+  parseTicketDraftRequest,
+  ticketDraftInput,
+  ticketDraftInstructions
+} from "./ticket-draft.js";
+import {
   FIGURE_BODY_LIMIT,
   FIGURE_CLAIM_EXTRACTION_PROMPT_VERSION,
   figureClaimInput,
@@ -1511,6 +1519,98 @@ export function buildApp(dependencies: AppDependencies = {}) {
           timeoutMs: limits.timeoutMs
         },
         "OpenAI request failed for a claim extraction"
+      );
+
+      return reply.code(failure.status).send(failure.body);
+    }
+  });
+
+  /**
+   * A service ticket draft from one fault report e-mail (Acropora OS, card ec7b947b, S3a). The OS server calls it with the shared token and sends
+   * the subject and the text of a mail it has ALREADY redacted (placeholders stand where names, addresses, numbers and links were; Balázs,
+   * 2026-11-16: the model gets only filtered text). The answer is a short title and a short summary and nothing else; `guardTicketDraft` refuses
+   * anything that is not exactly those two plain strings (a link, an address, a long number, HTML). The mail's text is third-party text: it reaches
+   * the model only as JSON data in the input, and the instructions say so. Nothing is stored here, and the log carries counts only. A model answer
+   * the guard cannot read is a 200 with `refusal`.
+   */
+  app.post("/v1/ticket-drafts", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({
+        error: "unauthorized"
+      });
+    }
+
+    if (!consumeRateLimit(request.ip)) {
+      return reply
+        .code(429)
+        .header("Retry-After", "60")
+        .send({
+          error: "rate limit exceeded"
+        });
+    }
+
+    const parsed = parseTicketDraftRequest(request.body);
+
+    if (!parsed.ok) {
+      return reply.code(400).send({
+        error: parsed.error
+      });
+    }
+
+    if (!process.env.OPENAI_API_KEY) {
+      return reply.code(503).send({
+        error: "AI provider is not configured"
+      });
+    }
+
+    const model = process.env.OPENAI_MODEL ?? "gpt-5.1";
+    const extractedBy = `${model} ${TICKET_DRAFT_PROMPT_VERSION}`;
+    const askedAt = Date.now();
+
+    try {
+      const response = await openai.responses.create({
+        model,
+        instructions: ticketDraftInstructions(),
+        input: [
+          {
+            role: "user",
+            content: ticketDraftInput(parsed.request)
+          }
+        ],
+        text: TICKET_DRAFT_AS_JSON,
+        store: false
+      });
+
+      const incomplete =
+        response.status === "incomplete" ? (response.incomplete_details?.reason ?? "unknown") : null;
+      const guarded = guardTicketDraft(response.output_text ?? "", incomplete);
+
+      if (!guarded.ok) {
+        // the detail is a code or counts, never the answer's text
+        request.log.warn(
+          { refusal: guarded.refusal, detail: guarded.detail },
+          "the ticket draft answer was refused by the guard"
+        );
+        return { refusal: guarded.refusal, detail: guarded.detail, extractedBy };
+      }
+
+      // lengths only in the log: the draft carries text of a mail
+      request.log.info(
+        { titleLength: guarded.draft.title.length, summaryLength: guarded.draft.summary.length },
+        "ticket draft guarded"
+      );
+      return { title: guarded.draft.title, summary: guarded.draft.summary, extractedBy };
+    } catch (error) {
+      const failure = aiProviderFailure(error, Date.now() - askedAt);
+
+      request.log.error(
+        {
+          aiProviderError: safeErrorSummary(error),
+          aiProviderOutcome: failure.body.error,
+          waitedMs: failure.body.waitedMs,
+          timeoutMs: limits.timeoutMs
+        },
+        "OpenAI request failed for a ticket draft"
       );
 
       return reply.code(failure.status).send(failure.body);
