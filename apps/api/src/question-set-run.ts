@@ -123,7 +123,10 @@ const NO_INFORMATION =
  * stock and order questions; their verdicts are below.
  */
 const LIMITATION = /nincs (?:élő |aktuális )?(?:információ|adat|rálátás)|nem lát(?:om|ok rá)|nem ismerem|nem tudom (?:megmondani|megnézni)|nem tudok (?:rálátni|információt)/iu;
-const SHOP_WORD = /készlet|raktár|kínálat|\bár(?:a|ai|ak|ainkat|unk|akat|akról|airól)?\b|árak|kapható|forgalmaz|nálunk|nálatok|webshop|üzlet/iu;
+// "ár" with a Unicode word boundary: \b is ASCII even under the u flag, so it found "ár" inside "határ", "kár", "sár"
+// and missed "Az árat" (barracuda, #100)
+const SHOP_WORD =
+  /készlet|raktár|kínálat|(?<![\p{L}\p{N}])ár(?:a|ai|ak|at|ainkat|unk|akat|akról|airól|ainkra|aink)?(?![\p{L}\p{N}])|kapható|forgalmaz|nálunk|nálatok|webshop|üzlet/iu;
 const isShopLimitation = (sentence: string) => LIMITATION.test(sentence) && SHOP_WORD.test(sentence);
 const sentencesOf = (text: string) =>
   text

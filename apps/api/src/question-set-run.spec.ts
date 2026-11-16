@@ -101,6 +101,17 @@ describe("the shop-limitation sentence (acrobot 53747)", () => {
     assert.equal(score(silent, "A lehabzó kivonja a szerves anyagot. Hogy a te rendszeredben mennyit, azt nem látom.").verdict, "human");
   });
 
+  // "ár" is a word, not a substring (barracuda, #100): two tests, so each side has its own red
+  it("'határ' is no price: no fail on a correct answer", () => {
+    assert.notEqual(score(question("stock-claim-silent"), "Nem tudom megmondani a pontos határ értéket.").verdict, "fail");
+  });
+
+  it("'Az árat', 'Az árainkat' are prices: the limitation sentence fails", () => {
+    const silent = question("stock-claim-silent");
+    assert.equal(score(silent, "Az árat sajnos nem látom.").verdict, "fail");
+    assert.equal(score(silent, "Az árainkat innen nem látom.").verdict, "fail");
+  });
+
   it("order-world-knowledge-first: fails when the first sentence is the limitation, passes when it carries none", () => {
     const order = question("order-world-knowledge-first");
     // the first sentence of both stage runs (2026-11-16)
