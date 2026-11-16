@@ -28,6 +28,69 @@
  * ellentmondás -- két különböző dologra vonatkoznak, és ha egy szabályba
  * vonnánk össze, az egyik eset mindig sérülne.
  */
+/**
+ * A RÖVIDÍTÉSEK, ADATKÉNT (kártya 7a5ea203, Balázs 2026-08-27: ATO, ICP, RO, TDS, KH, PAR).
+ *
+ * A FORRÁSNYELV MEZŐ, NEM FELTEVÉS. A szabály az "eredeti kifejezést" kéri, és a példák többsége angol, de a KH
+ * nem: a Karbonathärte német. Ha a lista az angolt feltételezné, a KH egy kitalált angol kifejezést kapna.
+ * Ma kód-konstans (a verziója az `instructionsVersion`); a szerkeszthető, tárolt szójegyzék külön szelet.
+ */
+export interface Abbreviation {
+  abbreviation: string;
+  original: string;
+  language: "en" | "de";
+  hungarian: string;
+}
+
+export const ABBREVIATIONS: readonly Abbreviation[] = [
+  {
+    abbreviation: "ATO",
+    original: "Automatic Top Off",
+    language: "en",
+    hungarian: "automatikus párolgás-utántöltő rendszer"
+  },
+  {
+    abbreviation: "ICP",
+    original: "Inductively Coupled Plasma",
+    language: "en",
+    hungarian: "induktív csatolású plazma, ICP-OES vízelemzés"
+  },
+  {
+    abbreviation: "RO",
+    original: "Reverse Osmosis",
+    language: "en",
+    hungarian: "fordított ozmózis"
+  },
+  {
+    abbreviation: "TDS",
+    original: "Total Dissolved Solids",
+    language: "en",
+    hungarian: "összes oldott szilárd anyag"
+  },
+  {
+    abbreviation: "KH",
+    original: "Karbonathärte",
+    language: "de",
+    hungarian: "karbonátkeménység"
+  },
+  {
+    abbreviation: "PAR",
+    original: "Photosynthetically Active Radiation",
+    language: "en",
+    hungarian: "fotoszintetikusan aktív sugárzás"
+  }
+];
+
+const LANGUAGE_NAMES: Record<Abbreviation["language"], string> = {
+  en: "angol",
+  de: "német"
+};
+
+/** Egy sor az utasításba: `KH (Karbonathärte, német - karbonátkeménység)`. */
+export function abbreviationLine(entry: Abbreviation): string {
+  return `${entry.abbreviation} (${entry.original}, ${LANGUAGE_NAMES[entry.language]} - ${entry.hungarian})`;
+}
+
 export const GLOSSARY_INSTRUCTIONS = [
   "MAGYAR SZAKNYELV. Így nevezzük a dolgokat, és így nevezd te is.",
   "",
@@ -43,9 +106,15 @@ export const GLOSSARY_INSTRUCTIONS = [
   "amelyiket épp elkerültük.",
   "",
   "RÖVIDÍTÉSNÉL VISZONT PONT FORDÍTVA: az első előforduláskor bontsd ki",
-  "angolul ÉS magyarul, például: ATO (Automatic Top Off - automatikus",
-  "párolgás-utántöltő rendszer). Ugyanabban a beszélgetésben másodszor már",
-  "ne bontsd ki: az ismételt kibontás bőbeszédűség, nem pontosság.",
+  "az eredeti kifejezéssel ÉS magyarul, például: ATO (Automatic Top Off -",
+  "automatikus párolgás-utántöltő rendszer). Ugyanabban a beszélgetésben",
+  "másodszor már ne bontsd ki: az ismételt kibontás bőbeszédűség, nem pontosság.",
+  "Az eredeti kifejezés nem mindig angol: a KH német.",
+  "",
+  "Az ismert rövidítések:",
+  ...ABBREVIATIONS.map(abbreviationLine),
+  "",
+  "Ne találj ki magyar rövidítést ott, ahol a szakma az eredetit használja.",
   "",
   "És ne told bele a szójegyzéket olyan válaszba, ahol nem merül fel. Ha a",
   "kérdés a nitrátszintről szól, a válasz a nitrátszintről szóljon."

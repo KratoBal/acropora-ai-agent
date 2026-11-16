@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import { chatInstructions } from "./app.js";
-import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
+import {
+  ABBREVIATIONS,
+  abbreviationLine,
+  GLOSSARY_INSTRUCTIONS
+} from "./glossary.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
 import {
   EMPTY_RESULT_INSTRUCTIONS,
@@ -80,5 +84,33 @@ describe("a szójegyzék a promptban", () => {
    */
   it("kimondja, hogy nem kell mindenhova beletenni", () => {
     assert.match(GLOSSARY_INSTRUCTIONS, /ne told bele/i);
+  });
+});
+
+/*
+  A RÖVIDÍTÉS-LISTA (kártya 7a5ea203). MI PIROSÍT: Balázs hat példájából egy hiányzik; a KH angol forrást kap (a szabály
+  az eredeti kifejezést kéri, és a KH német); egy rövidítés két sorban áll; vagy a lista nem jut el az utasításig.
+*/
+describe("a rövidítések listája", () => {
+  it("Balázs hat példája mind benne van, egyszer", () => {
+    const names = ABBREVIATIONS.map((entry) => entry.abbreviation);
+    assert.deepEqual([...names].sort(), ["ATO", "ICP", "KH", "PAR", "RO", "TDS"]);
+    assert.equal(new Set(names).size, names.length);
+  });
+
+  it("a KH német forrással áll, és a szabály az eredeti kifejezést kéri, nem az angolt", () => {
+    const kh = ABBREVIATIONS.find((entry) => entry.abbreviation === "KH");
+    assert.equal(kh?.language, "de");
+    assert.equal(abbreviationLine(kh!), "KH (Karbonathärte, német - karbonátkeménység)");
+    assert.match(GLOSSARY_INSTRUCTIONS, /az eredeti kifejezéssel ÉS magyarul/);
+    assert.doesNotMatch(GLOSSARY_INSTRUCTIONS, /bontsd ki\s+angolul/);
+  });
+
+  it("minden sor eljut az utasításig", () => {
+    for (const entry of ABBREVIATIONS)
+      assert.ok(
+        GLOSSARY_INSTRUCTIONS.includes(abbreviationLine(entry)),
+        `${entry.abbreviation}: hiányzik az utasításból`
+      );
   });
 });

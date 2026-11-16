@@ -30,6 +30,8 @@ import {
   createAiClient
 } from "./ai-provider.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
+import { instructionsVersion } from "./instructions-version.js";
+import { LIVE_DATA_INSTRUCTIONS } from "./live-data.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
 import {
   productContextInstructions,
@@ -140,6 +142,19 @@ import {
 const ASSISTANT_INSTRUCTIONS =
   "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.";
 
+/**
+ * The fixed part of the instructions, in the order the model gets it: the base, the live-data rule (card 7a5ea203)
+ * and the glossary. All three unconditional; the version stored with each model answer is taken from exactly these.
+ */
+const FIXED_INSTRUCTIONS = [
+  ASSISTANT_INSTRUCTIONS,
+  LIVE_DATA_INSTRUCTIONS,
+  GLOSSARY_INSTRUCTIONS
+] as const;
+
+/** Stored with every model answer (`messages.instructions_version`), see instructions-version.ts. */
+export const INSTRUCTIONS_VERSION = instructionsVersion(FIXED_INSTRUCTIONS);
+
 
 /**
  * The complete instruction text handed to the model.
@@ -162,11 +177,10 @@ export function chatInstructions(
   } = {}
 ): string {
   return [
-    ASSISTANT_INSTRUCTIONS,
-    // FELTETEL NELKUL, es a helye sem veletlen: a szojegyzek nyelvi szabaly,
-    // tehat a szemely-blokk mellett all, NEM a termekkontextus agai kozott. Ott
-    // egy uzemzavar csendben elvinne a szohasznalatot is.
-    GLOSSARY_INSTRUCTIONS,
+    // FELTETEL NELKUL, es a helye sem veletlen: az elo adat es a szojegyzek nyelvi
+    // szabaly, tehat a szemely-blokk mellett all, NEM a termekkontextus agai
+    // kozott. Ott egy uzemzavar csendben elvinne oket is.
+    ...FIXED_INSTRUCTIONS,
     // R1 of the link rule (card 9d060f5c): told under `log` and `enforce`, absent
     // under `off`, so the default keeps the prompt what it was.
     ...((options.linkRule ?? "off") === "off" ? [] : [LINK_RULE_INSTRUCTIONS]),
@@ -253,6 +267,7 @@ export interface ConversationStore {
     model?: string;
     usage?: MessageUsage;
     localKind?: "contact_offer" | "contact_ask";
+    instructionsVersion?: string;
   }): Promise<string>;
   setMessageOutcome(messageId: string, outcome: string): Promise<void>;
   /** The stored customer message with its contact replaced, after the OS recorded the request (slice 4c). */
@@ -998,6 +1013,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         content: answerText,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         usage: readUsage(response),
+        instructionsVersion: INSTRUCTIONS_VERSION,
         ...(offerColleague && contactFlow
           ? { localKind: CONTACT_OFFER_KIND }
           : contactFlow && previousRow?.role === "assistant" && previousRow.localKind === CONTACT_OFFER_KIND

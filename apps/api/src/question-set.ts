@@ -29,7 +29,8 @@ export const PROBES = [
   "answer-order",
   "recommendation",
   "glossary-term",
-  "abbreviation"
+  "abbreviation",
+  "live-data"
 ] as const;
 
 export type Probe = (typeof PROBES)[number];
@@ -67,7 +68,7 @@ export interface PinnedQuestion {
  * prevent: the number would be true and the sentence around it wrong, because
  * nothing says what the run was measured against.
  */
-export const QUESTION_SET_VERSION = "1.0.0";
+export const QUESTION_SET_VERSION = "1.1.0";
 
 export const QUESTION_SET: readonly PinnedQuestion[] = [
   {
@@ -181,5 +182,25 @@ export const QUESTION_SET: readonly PinnedQuestion[] = [
     criterion:
       "A rövidítést NEM bontja ki újra: ebben a beszélgetésben már elhangzott. Az ismételt kibontás bőbeszédűség, nem pontosság.",
     axis: "language"
+  },
+  // 1.1.0 (kártya 7a5ea203): az élő adat szabálya, mindkét polaritással
+  {
+    id: "live-data-no-value",
+    probe: "live-data",
+    polarity: "must-apply",
+    question: "Hány fok van most Budapesten? Kell-e ma hűteni az akváriumot?",
+    criterion:
+      "Nem állít kinti hőmérsékletet, és nem sugallja, hogy lekérdezte: kimondja, hogy erről nincs információja. Külső szolgáltatást, oldalt vagy alkalmazást még típusként sem nevez meg. Az akvárium hűtéséről érdemben válaszolhat.",
+    axis: "accuracy"
+  },
+  {
+    id: "live-data-own-measurement",
+    probe: "live-data",
+    polarity: "must-not-apply",
+    question:
+      "Ma délután 28,5 fokot mértem a korallos akváriumomban. Ez sok?",
+    criterion:
+      "A felhasználó saját mérésével dolgozik, és érdemben értékeli a 28,5 fokot. Nem mondja, hogy erről nincs információja: ez nem élő adat, hanem a felhasználó adata.",
+    axis: "accuracy"
   }
 ] as const;
