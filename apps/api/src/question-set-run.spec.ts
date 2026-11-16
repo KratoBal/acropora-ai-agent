@@ -32,7 +32,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "116fb9eccedc" }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "116fb9eccedc", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -279,7 +279,9 @@ describe("httpSender against the real /v1/chat answer", () => {
         answer: "A nitrátot hetente mérd.",
         source: "model",
         replacedBy: null,
-        instructionsVersion: INSTRUCTIONS_VERSION
+        instructionsVersion: INSTRUCTIONS_VERSION,
+        // no OS configured in the test: the route reports the branch the model had
+        productContext: "not_configured"
       });
     } finally {
       await app.close();

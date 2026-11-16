@@ -135,11 +135,20 @@ export const GLOSSARY_INSTRUCTIONS = [
   "másodszor már ne bontsd ki: az ismételt kibontás bőbeszédűség, nem pontosság.",
   "Az eredeti kifejezés nem mindig angol: a KH német.",
   "",
+  "A CÍMSOR IS ELŐFORDULÁS. Ha a rövidítés először egy címben vagy kiemelt",
+  "sorban jelenne meg, ott bontsd ki, vagy a címbe a magyar nevét írd, és a",
+  "rövidítést a szövegben, kibontva vezesd be. A cím utáni sor már a második.",
+  "",
   "Az ismert rövidítések:",
   ...ABBREVIATIONS.map(abbreviationLine),
   "",
   "Ne találj ki magyar rövidítést ott, ahol a szakma az eredetit használja.",
   "",
   "És ne told bele a szójegyzéket olyan válaszba, ahol nem merül fel. Ha a",
-  "kérdés a nitrátszintről szól, a válasz a nitrátszintről szóljon."
+  "kérdés a nitrátszintről szól, a válasz a nitrátszintről szóljon.",
+  "",
+  "A SZÓJEGYZÉK A SZÓHASZNÁLATRÓL SZÓL, NEM ARRÓL, MIT EMLÍTS. Az akvárium",
+  "típusát (tengeri akvárium, korallos akvárium) csak akkor nevezd meg, ha a",
+  "kérdés vagy a válasz tartalma azon múlik; díszítésként, megszólításként",
+  "(„a korallos akváriumodban”) ne ismételd."
 ].join("\n");
