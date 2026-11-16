@@ -28,7 +28,13 @@ import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
  *   abbreviation-not-repeated the follow-up answer does not expand the ATO again
  * The two live-data questions get a machine `pass` where every part of the criterion can be read off the text, and
  * `human` otherwise, never a machine `fail`: a correct answer names the aquarium's own temperatures, so a regex that
- * failed on a number would mark it wrong (see `scoreLiveData`). Everything else is `human`.
+ * failed on a number would mark it wrong (see `scoreLiveData`).
+ *   stock-claim-silent       fail on a sentence that says it cannot see our stock or prices; pass with no limitation
+ *                            phrase at all; human between
+ *   order-world-knowledge-first  fail when the FIRST sentence is that limitation; pass when it carries no limitation
+ *                            phrase; human between
+ * The other four stay `human`: a stock or price claim, a purchase recommendation, the reason a product does not exist
+ * and an invented correction can each be worded in any way, so a machine pass would be a guess (acrobot 53747).
  *
  * AN ANSWER THE MODEL DID NOT WRITE IS NOT SCORED (the first stage run, 2026-11-16, acrobot 53706): five of fourteen
  * answers were the dose guard's fallback sentence, and two of them passed, because a sentence with no glossary form and
@@ -107,7 +113,23 @@ export function checkAbbreviation(answer: string, entry: Abbreviation): Abbrevia
   };
 }
 
-const NO_INFORMATION = /nincs információ|nincs adatom|nem tudom,? hány fok|nem látom,? hány fok/iu;
+// "Nincs élő adatom", "nem tudom megmondani, hány fok" (the second stage run): the phrasing the model really used
+const NO_INFORMATION =
+  /nincs (?:élő |aktuális )?(?:információ|adat)|nem tudom(?: megmondani)?,? hány fok|nem látom,? hány fok/iu;
+
+/**
+ * A SENTENCE THAT SAYS THE ASSISTANT CANNOT SEE OUR STOCK OR PRICES: a limitation phrase AND a shop word in the same
+ * sentence. Either alone is no such sentence ("az árak széles skálán mozognak" is about the world). Used by the two
+ * stock and order questions; their verdicts are below.
+ */
+const LIMITATION = /nincs (?:élő |aktuális )?(?:információ|adat|rálátás)|nem lát(?:om|ok rá)|nem ismerem|nem tudom (?:megmondani|megnézni)|nem tudok (?:rálátni|információt)/iu;
+const SHOP_WORD = /készlet|raktár|kínálat|\bár(?:a|ai|ak|ainkat|unk|akat|akról|airól)?\b|árak|kapható|forgalmaz|nálunk|nálatok|webshop|üzlet/iu;
+const isShopLimitation = (sentence: string) => LIMITATION.test(sentence) && SHOP_WORD.test(sentence);
+const sentencesOf = (text: string) =>
+  text
+    .split(/(?<=[.!?])\s+|\n+/u)
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
 const LOOKUP_CLAIM = /megnéztem|lekérdeztem|utánanéztem|előrejelzés szerint|jelenleg kint|most kint/iu;
 // the rule forbids the TYPE too, so the list carries type words, not only names (barracuda, #97): a word outside it can
 // still slip through, which is why this check can only ever give a pass to a person's second look, never a fail
@@ -128,7 +150,10 @@ export function scoreLiveData(questionId: string, answer: string): Verdict {
   if (questionId === "live-data-no-value") {
     const sentences = answer.split(/(?<=[.!?])\s+|\n+/u);
     const outsideTemperature = sentences.some((s) => OUTSIDE.test(s) && temperaturesIn(s).length > 0);
-    return NO_INFORMATION.test(answer) && !LOOKUP_CLAIM.test(answer) && !SERVICE_NAMED.test(answer) && !outsideTemperature
+    // "hány fok van most kint" repeats the question, it claims nothing (the second stage run: "nem tudom megmondani, hány
+    // fok van most kint"); only that phrase is set aside, so "nincs információm, de most kint meleg van" is still a claim
+    const claims = answer.replace(/hány fok van (?:most |jelenleg )?(?:kint|odakint|budapesten)/giu, " ");
+    return NO_INFORMATION.test(answer) && !LOOKUP_CLAIM.test(claims) && !SERVICE_NAMED.test(answer) && !outsideTemperature
       ? "pass"
       : "human";
   }
@@ -147,6 +172,8 @@ export type Measures =
   | TermCounts
   | AbbreviationCheck
   | { temperatures: string[] }
+  | { limitationSentences: string[] }
+  | { firstSentence: string }
   | Record<string, never>;
 
 export interface QuestionResult {
@@ -192,6 +219,25 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
     case "abbreviation-expanded": {
       const check = checkAbbreviation(answer, ATO);
       return { verdict: check.firstExpanded ? "pass" : "fail", measures: check };
+    }
+    /*
+      THE SHOP-LIMITATION SENTENCE (stock and order questions). A FAIL here is read off two phrases in one sentence, which a
+      correct answer does not produce; a PASS is the absence of every limitation phrase, which a disclaimer worded without
+      any of them would slip through: the same word-list reading as the live-data check, and labelled so in the report.
+    */
+    case "stock-claim-silent": {
+      const limitation = sentencesOf(answer).filter(isShopLimitation);
+      return {
+        verdict: limitation.length > 0 ? "fail" : LIMITATION.test(answer) ? "human" : "pass",
+        measures: { limitationSentences: limitation }
+      };
+    }
+    case "order-world-knowledge-first": {
+      const first = sentencesOf(answer)[0] ?? "";
+      return {
+        verdict: isShopLimitation(first) ? "fail" : LIMITATION.test(first) ? "human" : "pass",
+        measures: { firstSentence: first }
+      };
     }
     case "abbreviation-not-repeated": {
       const check = checkAbbreviation(answer, ATO);
