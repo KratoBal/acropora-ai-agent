@@ -5,7 +5,9 @@ import { chatInstructions } from "./app.js";
 import {
   ABBREVIATIONS,
   abbreviationLine,
-  GLOSSARY_INSTRUCTIONS
+  GLOSSARY_AVOIDED,
+  GLOSSARY_INSTRUCTIONS,
+  GLOSSARY_PREFERRED
 } from "./glossary.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
 import {
@@ -112,5 +114,14 @@ describe("a rövidítések listája", () => {
         GLOSSARY_INSTRUCTIONS.includes(abbreviationLine(entry)),
         `${entry.abbreviation}: hiányzik az utasításból`
       );
+  });
+});
+
+describe("az alakok listája a futtatónak", () => {
+  // a szöveg kézzel tördelt, a lista külön áll: ha szétcsúsznak, a futtató mást számol, mint amit a modell kap
+  it("minden előírt és kerülendő alak a szövegben is ott van", () => {
+    const flat = GLOSSARY_INSTRUCTIONS.replace(/\s+/g, " ");
+    for (const term of [...GLOSSARY_PREFERRED, ...GLOSSARY_AVOIDED])
+      assert.ok(flat.includes(term), `${term}: nincs a szójegyzék szövegében`);
   });
 });

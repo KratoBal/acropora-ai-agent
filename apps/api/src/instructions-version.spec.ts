@@ -72,3 +72,16 @@ describe("the stored answer carries the instruction version", () => {
     assert.equal(question?.instructionsVersion, undefined);
   });
 });
+
+describe("the health report names the instruction version", () => {
+  it("is the value written on the answers, so a run can read it from the server it measures", async () => {
+    const app = buildApp({ databaseCheck: async () => {} });
+    await app.ready();
+    try {
+      const body = (await app.inject({ method: "GET", url: "/health" })).json() as { instructionsVersion?: string };
+      assert.equal(body.instructionsVersion, INSTRUCTIONS_VERSION);
+    } finally {
+      await app.close();
+    }
+  });
+});

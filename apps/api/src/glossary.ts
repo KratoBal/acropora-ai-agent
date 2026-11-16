@@ -91,6 +91,30 @@ export function abbreviationLine(entry: Abbreviation): string {
   return `${entry.abbreviation} (${entry.original}, ${LANGUAGE_NAMES[entry.language]} - ${entry.hungarian})`;
 }
 
+/**
+ * Az előírt és a kerülendő alakok listaként is, a kérdéskészlet futtatójának (`question-set-run.ts`), ami megszámolja őket.
+ * A szöveg (lent) nem ebből épül, mert sortörései kézzel állnak; hogy a kettő ne csússzon szét, a spec minden alakot
+ * a szövegben is keres.
+ */
+export const GLOSSARY_PREFERRED: readonly string[] = [
+  "tengeri akvárium",
+  "korallos akvárium",
+  "tengeri akvarisztika",
+  "lehabzó",
+  "fehérjelehabzó"
+];
+
+export const GLOSSARY_AVOIDED: readonly string[] = [
+  "zátonyakvárium",
+  "sósvízi irányultság",
+  "sósvizes akvarisztika",
+  "fehérjehabozó",
+  "fehérjehabzó",
+  "fehérjelefölöző",
+  "skimmer",
+  "skimmel"
+];
+
 export const GLOSSARY_INSTRUCTIONS = [
   "MAGYAR SZAKNYELV. Így nevezzük a dolgokat, és így nevezd te is.",
   "",
