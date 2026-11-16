@@ -81,9 +81,41 @@ const OTHER_UNIT =
 
 /**
  * A number with no unit: bare, or with an accusative ending ("adjon 3-at
- * naponta"). Next to a period word it is a dose the guard cannot check.
+ * naponta"). Next to a period word it is a dose the guard cannot check, but
+ * only as a THING GIVEN: with a dosing verb, or in the accusative (see
+ * `isGivenCount`).
  */
 const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]))`);
+
+/**
+ * THE KIND OF THE SENTENCE, NOT THE PRODUCT IN IT (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719).
+ * The first question-set run on the test AI lost six of fourteen general answers to this branch (ATO, nitrate testing,
+ * lighting, a skimmer's sizing: "napi 8-10 órás megvilágítás", "hetente 1-2 alkalommal mérd"). A dose without a product
+ * name is still a dose, so the guard is NOT narrowed to a product context; a bare number next to a period is a dose only
+ * when something is GIVEN: a dosing verb in the sentence, or the number in the accusative ("adjon 3-at"), OR a water
+ * volume in the same sentence ("Az adag 100 literenként napi 2.", "Hetente 1 jut 100 literre": an amount per volume is
+ * one of the strongest dose marks, with or without a verb; barracuda, #99). A bare volume, a measured value and how
+ * often to measure are not.
+ */
+const DOSING_VERB =
+  /\b(?:adagol\w*|adj(?:on|al|alok|atok|anak|a)?|add|tegy\w*|tegyen|csepegtes\w*|cseppents\w*|onts\w*|ontsd|potol\w*|potold|dose|dosing|give|gib|geben|dosier\w*)\b/;
+const ACCUSATIVE_COUNT = new RegExp(`${NUM}-(?:a|e|o)?t\\b`);
+const isGivenCount = (s: string) => DOSING_VERB.test(s) || ACCUSATIVE_COUNT.test(s);
+
+/**
+ * AN AMOUNT PER VOLUME ("100 literenként", "100 literre", "100 literhez"): with a period in the sentence, ANY other number
+ * is a dose, even one followed by a word ("Hetente 1 jut 100 literre": the bare-count pattern sees no bare number
+ * there, and main let it through before this change too; barracuda, #99). The adjective ("200 literes akvárium") is no
+ * rate and stays out.
+ */
+const PER_VOLUME = new RegExp(`${NUM}\\s*(?:l|ltr|liter|litre)-?(?:enkent|re|ra|hez)\\b`);
+
+/**
+ * A NUMBER RANGE IS ONE NUMBER: "8-10 órás", "1-2 alkalommal", "5–10 ppm". Read as it stands, the range's first number
+ * has no unit after it and looks like a bare count; the range carries its unit on its upper bound, which is what is
+ * kept. A hyphen before a letter ("3-at") is no range and stays.
+ */
+const RANGE = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[-\u2013\u2014]\s*(?=\d)/g;
 
 /**
  * THE MARK OF A DOSE SENTENCE IS THE UNIT'S WORD, NOT THE NUMBER (barracuda,
@@ -108,9 +140,22 @@ function sentences(text: string): string[] {
   return text.split(/(?<!\d)[.!?;](?!\d)|\n/).filter((s) => s.trim() !== "");
 }
 
+/** Which rule refused the answer: the reason says what is wrong, the rule says which reading found it. */
+export type DoseGuardRule =
+  | "other-unit"
+  | "given-count"
+  | "per-volume-count"
+  | "no-fixed-dose"
+  | "not-in-catalogue";
+
 export type DoseGuardResult =
   | { ok: true; doseStatements: number }
-  | { ok: false; reason: "NO_FIXED_DOSE" | "DOSE_NOT_IN_CATALOGUE"; sentence: string };
+  | {
+      ok: false;
+      reason: "NO_FIXED_DOSE" | "DOSE_NOT_IN_CATALOGUE";
+      rule: DoseGuardRule;
+      sentence: string;
+    };
 
 export function guardAnswerDoses(
   answer: string,
@@ -119,7 +164,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw);
+    const s = fold(raw).replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
@@ -128,13 +173,14 @@ export function guardAnswerDoses(
     // dose statement (a pack's reach without a period aside), and it passes
     // only as a FULL, digit match below.
     if (OTHER_UNIT.test(s) && (volumes.length > 0 || periods.length > 0))
-      return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
-    if (
-      periods.length > 0 &&
-      amounts.length === 0 &&
-      BARE_COUNT.test(s.replace(VOLUME, " "))
-    )
-      return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
+      return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "other-unit", sentence: raw.trim() };
+    const rest = s.replace(VOLUME, " ");
+    if (periods.length > 0 && amounts.length === 0) {
+      if (BARE_COUNT.test(rest) && isGivenCount(s))
+        return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "given-count", sentence: raw.trim() };
+      if ((BARE_COUNT.test(rest) && volumes.length > 0) || (PER_VOLUME.test(s) && /\d/.test(rest)))
+        return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "per-volume-count", sentence: raw.trim() };
+    }
     // a pack's reach stands without a period; with one ("elég naponta 3 csepp")
     // the sentence is a dose and needs the full match (barracuda, #43)
     const dose =
@@ -142,7 +188,8 @@ export function guardAnswerDoses(
       (UNIT_WORD.test(s) && (volumes.length > 0 || periods.length > 0));
     if (!dose || (REACH.test(s) && periods.length === 0)) continue;
     statements++;
-    if (facts.length === 0) return { ok: false, reason: "NO_FIXED_DOSE", sentence: raw.trim() };
+    if (facts.length === 0)
+      return { ok: false, reason: "NO_FIXED_DOSE", rule: "no-fixed-dose", sentence: raw.trim() };
     const matches =
       amounts.length === 1 &&
       volumes.length === 1 &&
@@ -155,7 +202,8 @@ export function guardAnswerDoses(
           f.volume === num(volumes[0]![1]!) &&
           f.period === periods[0]
       );
-    if (!matches) return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", sentence: raw.trim() };
+    if (!matches)
+      return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "not-in-catalogue", sentence: raw.trim() };
   }
   return { ok: true, doseStatements: statements };
 }

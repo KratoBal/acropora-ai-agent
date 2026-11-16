@@ -990,7 +990,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         : modelAnswer;
       if (!doseGuard.ok)
         request.log.warn(
-          { doseGuard: doseGuard.reason },
+          { doseGuard: doseGuard.reason, rule: doseGuard.rule },
           "the answer stated a dose the catalogue does not hold; replaced"
         );
       // The host only, never the URL (it may carry the customer's words).
@@ -1046,6 +1046,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
         instructionsVersion: INSTRUCTIONS_VERSION,
         /** Why the answer was replaced, if it was: the judging surface reads it. */
         doseGuard: doseGuard.ok ? null : doseGuard.reason,
+        /** Which reading of the guard found it (t-20261116-adagolasi-or-szukites): the question-set run reports it. */
+        doseGuardRule: doseGuard.ok ? null : doseGuard.rule,
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
         linkGuard:
           linkGuard === null

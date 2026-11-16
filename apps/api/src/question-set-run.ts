@@ -359,7 +359,12 @@ export function httpSender(options: {
       answer: body.answer as string,
       // no model label (the contact flow) or the pre-filter's label: local logic, no model call
       source: dose !== null || linkReplaced !== null ? "replaced" : model === null || model === PREFILTER_MODEL_LABEL ? "local" : "model",
-      replacedBy: dose !== null ? `doseGuard: ${dose}` : linkReplaced !== null ? `linkGuard: ${linkReplaced}` : null,
+      replacedBy:
+        dose !== null
+          ? `doseGuard: ${dose}${typeof body.doseGuardRule === "string" ? ` (${body.doseGuardRule})` : ""}`
+          : linkReplaced !== null
+            ? `linkGuard: ${linkReplaced}`
+            : null,
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null
     };
   };
