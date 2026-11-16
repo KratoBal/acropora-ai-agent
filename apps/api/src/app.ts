@@ -29,6 +29,7 @@ import {
   aiProviderLimits,
   createAiClient
 } from "./ai-provider.js";
+import { ANSWER_ORDER_INSTRUCTIONS } from "./answer-order.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
 import { instructionsVersion } from "./instructions-version.js";
 import { LIVE_DATA_INSTRUCTIONS } from "./live-data.js";
@@ -143,11 +144,13 @@ const ASSISTANT_INSTRUCTIONS =
   "You are the Acropora marine aquarium assistant. Answer in Hungarian, clearly and safely. Use the previous conversation context. Do not invent measurements or diagnoses.";
 
 /**
- * The fixed part of the instructions, in the order the model gets it: the base, the live-data rule (card 7a5ea203)
- * and the glossary. All three unconditional; the version stored with each model answer is taken from exactly these.
+ * The fixed part of the instructions, in the order the model gets it: the base, the answer order (in every product
+ * context branch, t-20261116-ai-utasitas-hangolas), the live-data rule (card 7a5ea203) and the glossary. All
+ * unconditional; the version stored with each model answer is taken from exactly these.
  */
 const FIXED_INSTRUCTIONS = [
   ASSISTANT_INSTRUCTIONS,
+  ANSWER_ORDER_INSTRUCTIONS,
   LIVE_DATA_INSTRUCTIONS,
   GLOSSARY_INSTRUCTIONS
 ] as const;

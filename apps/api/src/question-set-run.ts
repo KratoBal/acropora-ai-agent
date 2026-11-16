@@ -193,6 +193,11 @@ export interface QuestionResult {
   replacedBy: string | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
+  /**
+   * Which product-context branch the model was given (`productContext.state` on /v1/chat: not_configured, unavailable,
+   * empty, hits ...). The branch texts differ, so an answer is read against the one it had. null when not reported.
+   */
+  productContext: string | null;
   /** Set when the call failed: the status and the error body's code, never the answer text. */
   error: string | null;
   verdict: Verdict;
@@ -265,6 +270,7 @@ export type SendQuestion = (input: {
       source: AnswerSource;
       replacedBy: string | null;
       instructionsVersion: string | null;
+      productContext: string | null;
     }
   | { ok: false; error: string }
 >;
@@ -312,6 +318,7 @@ export async function runQuestionSet(
       source: reply.ok ? reply.source : null,
       replacedBy: reply.ok ? reply.replacedBy : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
+      productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
       ...(reply.ok && reply.source !== "model"
         ? { verdict: reply.source, measures: {} }
@@ -414,7 +421,11 @@ export function httpSender(options: {
           : linkReplaced !== null
             ? `linkGuard: ${linkReplaced}`
             : null,
-      instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null
+      instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
+      productContext:
+        typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"
+          ? ((body.productContext as { state: string }).state)
+          : null
     };
   };
 }
