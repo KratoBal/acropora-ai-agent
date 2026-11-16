@@ -1042,6 +1042,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
          */
         messageId: answerMessageId,
         answer: answerText,
+        /** The language rules this answer was made under, the value stored on its row (card 7a5ea203). A local answer has none. */
+        instructionsVersion: INSTRUCTIONS_VERSION,
         /** Why the answer was replaced, if it was: the judging surface reads it. */
         doseGuard: doseGuard.ok ? null : doseGuard.reason,
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */

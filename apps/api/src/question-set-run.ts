@@ -11,6 +11,7 @@ import {
   QUESTION_SET_VERSION,
   type PinnedQuestion
 } from "./question-set.js";
+import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
 
 /**
  * THE PINNED QUESTION SET, RUN AGAINST A LIVE SERVICE (Acropora OS card 7a5ea203, task t-20261116-ai-kerdeskeszlet-futtato).
@@ -25,14 +26,24 @@ import {
  *   glossary-not-forced      no glossary form at all (the question is about nitrate)
  *   abbreviation-expanded    the first ATO is followed by its expansion
  *   abbreviation-not-repeated the follow-up answer does not expand the ATO again
- * Everything else is `human`: the live-data answers can name a temperature legitimately (the aquarium's own target),
- * so a regex would mark a correct answer wrong. The temperatures found are listed as a hint, not as a verdict.
+ * The two live-data questions get a machine `pass` where every part of the criterion can be read off the text, and
+ * `human` otherwise, never a machine `fail`: a correct answer names the aquarium's own temperatures, so a regex that
+ * failed on a number would mark it wrong (see `scoreLiveData`). Everything else is `human`.
+ *
+ * AN ANSWER THE MODEL DID NOT WRITE IS NOT SCORED (the first stage run, 2026-11-16, acrobot 53706): five of fourteen
+ * answers were the dose guard's fallback sentence, and two of them passed, because a sentence with no glossary form and
+ * no ATO "passes" the two questions that ask for their absence. A replaced answer (`doseGuard`, or the link gate under
+ * `enforce`) is `replaced`, a local one (the pre-filter, the contact flow) is `local`; neither is counted in the
+ * glossary totals.
  *
  * The 2026-08-28 baseline (18 answers: preferred 11, avoided 26, wrong translation 0) is in glossary.ts; the summary
  * gives the same two counts, so the two can stand side by side.
  */
 
-export type Verdict = "pass" | "fail" | "human";
+export type Verdict = "pass" | "fail" | "human" | "replaced" | "local";
+
+/** Who wrote the answer: the model, the model but a guard swapped the text, or local logic with no model call. */
+export type AnswerSource = "model" | "replaced" | "local";
 
 export interface TermCounts {
   preferred: Record<string, number>;
@@ -96,6 +107,33 @@ export function checkAbbreviation(answer: string, entry: Abbreviation): Abbrevia
   };
 }
 
+const NO_INFORMATION = /nincs információ|nincs adatom|nem tudom,? hány fok|nem látom,? hány fok/iu;
+const LOOKUP_CLAIM = /megnéztem|lekérdeztem|utánanéztem|előrejelzés szerint|jelenleg kint|most kint/iu;
+const SERVICE_NAMED = /alkalmazás|\bapp\b|weboldal|honlap|oldalon|előrejelzés|met\.hu|köpönyeg|koponyeg|accuweather|google/iu;
+const OUTSIDE = /budapest|kint|kinti|odakint|levegő/iu;
+
+/**
+ * The live-data rule's two questions, read off the text where that is safe.
+ *
+ * no value (must apply): `pass` when the answer says it has no information, claims no lookup, names no service or page
+ *   (the rule forbids even the type), and no sentence pairs an outside word (Budapest, kint, levegő) with a temperature.
+ * own measurement (must not apply): `pass` when the answer works with the user's 28,5 and does not say it has no
+ *   information.
+ * Anything else is `human`: these patterns can tell a clean answer apart, not every wrong one.
+ */
+export function scoreLiveData(questionId: string, answer: string): Verdict {
+  if (questionId === "live-data-no-value") {
+    const sentences = answer.split(/(?<=[.!?])\s+|\n+/u);
+    const outsideTemperature = sentences.some((s) => OUTSIDE.test(s) && temperaturesIn(s).length > 0);
+    return NO_INFORMATION.test(answer) && !LOOKUP_CLAIM.test(answer) && !SERVICE_NAMED.test(answer) && !outsideTemperature
+      ? "pass"
+      : "human";
+  }
+  if (questionId === "live-data-own-measurement")
+    return /28[,.]5/u.test(answer) && !NO_INFORMATION.test(answer) ? "pass" : "human";
+  return "human";
+}
+
 /** Temperatures stated in the answer ("27 fok", "26,5 °C"), as a hint for the human judge. */
 export function temperaturesIn(answer: string): string[] {
   return [...answer.matchAll(/\d+(?:[.,]\d+)?(?:\s*[-–]\s*\d+(?:[.,]\d+)?)?\s*(?:°\s*C|fok|celsius)/giu)].map((m) => m[0]);
@@ -116,6 +154,12 @@ export interface QuestionResult {
   conversationId: string | null;
   messageId: string | null;
   answer: string | null;
+  /** null when the call failed. */
+  source: AnswerSource | null;
+  /** The guard that swapped the text, and its reason ("doseGuard: ..."); null when nothing was swapped. */
+  replacedBy: string | null;
+  /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
+  instructionsVersion: string | null;
   /** Set when the call failed: the status and the error body's code, never the answer text. */
   error: string | null;
   verdict: Verdict;
@@ -151,10 +195,9 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
       return { verdict: check.expansions === 0 ? "pass" : "fail", measures: check };
     }
     default:
-      return {
-        verdict: "human",
-        measures: question.probe === "live-data" ? { temperatures: temperaturesIn(answer) } : {}
-      };
+      return question.probe === "live-data"
+        ? { verdict: scoreLiveData(question.id, answer), measures: { temperatures: temperaturesIn(answer) } }
+        : { verdict: "human", measures: {} };
   }
 }
 
@@ -162,7 +205,15 @@ export type SendQuestion = (input: {
   message: string;
   conversationId?: string;
 }) => Promise<
-  | { ok: true; conversationId: string; messageId: string; answer: string }
+  | {
+      ok: true;
+      conversationId: string;
+      messageId: string;
+      answer: string;
+      source: AnswerSource;
+      replacedBy: string | null;
+      instructionsVersion: string | null;
+    }
   | { ok: false; error: string }
 >;
 
@@ -206,8 +257,13 @@ export async function runQuestionSet(
       conversationId: reply.ok ? reply.conversationId : null,
       messageId: reply.ok ? reply.messageId : null,
       answer,
+      source: reply.ok ? reply.source : null,
+      replacedBy: reply.ok ? reply.replacedBy : null,
+      instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       error: reply.ok ? null : reply.error,
-      ...score(question, answer)
+      ...(reply.ok && reply.source !== "model"
+        ? { verdict: reply.source, measures: {} }
+        : score(question, answer))
     });
   }
   return questions.map((question) => results.get(question.id)!);
@@ -224,20 +280,25 @@ export interface RunReport {
     pass: number;
     fail: number;
     human: number;
+    /** Answers a guard swapped, and local answers: not scored, not in the glossary totals. */
+    replaced: number;
+    local: number;
     errors: number;
-    /** Over every answer of the run, to stand next to the 2026-08-28 baseline (preferred 11, avoided 26 on 18). */
+    /** Over the model's own answers, to stand next to the 2026-08-28 baseline (preferred 11, avoided 26 on 18). */
     glossary: { answers: number; preferred: number; avoided: number };
   };
   results: QuestionResult[];
 }
 
 export function summarize(results: readonly QuestionResult[]): RunReport["summary"] {
-  const answered = results.filter((result) => result.answer !== null);
+  const answered = results.filter((result) => result.answer !== null && result.source === "model");
   const terms = answered.map((result) => countTerms(result.answer!));
   return {
     pass: results.filter((r) => r.verdict === "pass").length,
     fail: results.filter((r) => r.verdict === "fail").length,
     human: results.filter((r) => r.verdict === "human").length,
+    replaced: results.filter((r) => r.verdict === "replaced").length,
+    local: results.filter((r) => r.verdict === "local").length,
     errors: results.filter((r) => r.error !== null).length,
     glossary: {
       answers: answered.length,
@@ -284,11 +345,19 @@ export function httpSender(options: {
       if (typeof value !== "string" || value.trim() === "")
         return { ok: false, error: `malformed response: ${field}` };
     }
+    const dose = typeof body.doseGuard === "string" ? body.doseGuard : null;
+    const link = body.linkGuard as { mode?: unknown; reason?: unknown } | null | undefined;
+    const linkReplaced = link?.mode === "enforce" && typeof link.reason === "string" ? link.reason : null;
+    const model = typeof body.model === "string" ? body.model : null;
     return {
       ok: true,
       conversationId: body.conversationId as string,
       messageId: body.messageId as string,
-      answer: body.answer as string
+      answer: body.answer as string,
+      // no model label (the contact flow) or the pre-filter's label: local logic, no model call
+      source: dose !== null || linkReplaced !== null ? "replaced" : model === null || model === PREFILTER_MODEL_LABEL ? "local" : "model",
+      replacedBy: dose !== null ? `doseGuard: ${dose}` : linkReplaced !== null ? `linkGuard: ${linkReplaced}` : null,
+      instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null
     };
   };
 }
@@ -322,9 +391,16 @@ export async function main(
   const results = await runQuestionSet(
     httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? "question-set-run", fetchImpl })
   );
+  // the server's /health first; an older server without it still names the version on each model answer
+  const fromAnswers = [...new Set(results.map((r) => r.instructionsVersion).filter((v): v is string => v !== null))];
   const report: RunReport = {
     questionSetVersion: QUESTION_SET_VERSION,
-    instructionsVersion: typeof health.instructionsVersion === "string" ? health.instructionsVersion : null,
+    instructionsVersion:
+      typeof health.instructionsVersion === "string"
+        ? health.instructionsVersion
+        : fromAnswers.length === 1
+          ? fromAnswers[0]!
+          : null,
     serverVersion: typeof health.version === "string" ? health.version : null,
     startedAt,
     finishedAt: new Date().toISOString(),
@@ -335,7 +411,7 @@ export async function main(
   const s = report.summary;
   io.log(
     `question set ${report.questionSetVersion}, instructions ${report.instructionsVersion ?? "unknown"}, server ${report.serverVersion ?? "unknown"}: ` +
-      `pass ${s.pass}, fail ${s.fail}, human ${s.human}, errors ${s.errors}; ` +
+      `pass ${s.pass}, fail ${s.fail}, human ${s.human}, replaced ${s.replaced}, local ${s.local}, errors ${s.errors}; ` +
       `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}`
   );
   return s.errors > 0 ? 1 : 0;
