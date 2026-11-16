@@ -53,7 +53,7 @@ export const ABBREVIATIONS: readonly Abbreviation[] = [
     abbreviation: "ICP",
     original: "Inductively Coupled Plasma",
     language: "en",
-    hungarian: "induktív csatolású plazmás vízelemzés"
+    hungarian: "induktív csatolású plazma, ICP-OES vízelemzés"
   },
   {
     abbreviation: "RO",
