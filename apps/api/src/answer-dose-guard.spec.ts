@@ -101,6 +101,49 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       assert.equal(guardAnswerDoses(answer, catalogue).ok, true, answer);
   });
 
+  /*
+    A MONDAT FAJTÁJA SZÁMÍT, NEM A TERMÉK (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719). Az első két
+    stage-futás hat általános választ veszített el ezen az ágon. MI PIROSÍT: egy általános válasz (megvilágítás, mérési
+    gyakoriság, párolgás, célérték) újra adagnak számít; vagy egy név nélküli adag (igével, tárgyraggal, egységgel)
+    kimegy; vagy a szabály neve nem az, ami elsült.
+  */
+  it("a puszta térfogat, a mért érték és a mérés gyakorisága nem adag, tartománnyal sem", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const answer of [
+      "A lámpát napi 8-10 órán át érdemes működtetni.",
+      "Hetente 1-2 alkalommal mérd a nitrátot, a cél 5–10 ppm.",
+      "Egy 200 literes akváriumnál napi 2-3 liter is elpárologhat.",
+      "A KH legyen 8–12 dKH, hetente mérd.",
+      "A habtartályt hetente 1-2 alkalommal ürítsd.",
+      "Naponta 3.",
+      // a dosing verb next to a range: the range's first number is no bare count
+      "Pótold hetente a párolgást, napi 2-3 liter is elmehet.",
+      "Adj a lámpának napi 8-10 órás megvilágítást."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a név nélküli adag igével, tárgyraggal vagy egységgel továbbra is fennakad, és a szabály neve a válaszban", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const [answer, rule] of [
+      ["Adjon 3-at naponta.", "given-count"],
+      ["Adj naponta 2-t.", "given-count"],
+      ["Adagolj naponta 2-3 alkalommal 3-at.", "given-count"],
+      ["Csepegtess naponta 3-4-et 100 literre.", "given-count"],
+      ["Adagolj hetente 2-3-at.", "given-count"],
+      ["Tegyél naponta 2 kupakot 100 literre.", "other-unit"],
+      ["Naponta 2-3 ml-t adj.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, empty);
+      assert.equal(result.ok, false, answer);
+      assert.equal((result as { rule?: string }).rule, rule, answer);
+    }
+    assert.equal(
+      (guardAnswerDoses("Naponta 3 csepp 100 literenként.", catalogue) as { rule?: string }).rule,
+      "not-in-catalogue"
+    );
+  });
+
   it("katalógus-adag nélkül nincs adag a válaszban", () => {
     const answer = "Naponta 1 csepp 100 literenként.";
     assert.equal((guardAnswerDoses(answer, { ok: true, result: { hits: [] } }) as { reason?: string }).reason, "NO_FIXED_DOSE");
@@ -164,12 +207,15 @@ describe("a chat útja: a válasz-őr be van kötve", () => {
       payload: { message: "Mennyit adagoljak?" }
     });
     await app.close();
-    return { body: response.json() as { answer: string; doseGuard: string | null }, saved };
+    return { body: response.json() as { answer: string; doseGuard: string | null; doseGuardRule: string | null }, saved };
   };
 
   it("egy kitalált adag helyett a biztonságos mondat megy ki és tárolódik", async () => {
     const { body, saved } = await run("Naponta 2 ml 100 literenként.");
-    assert.deepEqual([body.answer, body.doseGuard, saved], [DOSE_GUARD_FALLBACK, "NO_FIXED_DOSE", [DOSE_GUARD_FALLBACK]]);
+    assert.deepEqual(
+      [body.answer, body.doseGuard, body.doseGuardRule, saved],
+      [DOSE_GUARD_FALLBACK, "NO_FIXED_DOSE", "no-fixed-dose", [DOSE_GUARD_FALLBACK]]
+    );
   });
 
   it("adag nélküli válasz változatlan", async () => {

@@ -263,7 +263,7 @@ describe("httpSender against the real /v1/chat answer", () => {
       assert.equal(reply.ok, true);
       if (!reply.ok) return;
       assert.equal(reply.source, "replaced");
-      assert.match(reply.replacedBy ?? "", /^doseGuard: /);
+      assert.match(reply.replacedBy ?? "", /^doseGuard: NO_FIXED_DOSE \(no-fixed-dose\)$/);
     } finally {
       await app.close();
     }
