@@ -85,12 +85,13 @@ const OTHER_UNIT =
  * only as a THING GIVEN: with a dosing verb, or in the accusative (see
  * `isGivenCount`).
  *
- * A HYPHENATED SUFFIX OTHER THAN THE ACCUSATIVE IS NO BARE COUNT ("naponta 2-3-szor p\u00f3tolja", "3-mal", "5-sz\u00f6r"): the
- * suffix says what the number counts (times, a factor), not an amount given. The third question-set run lost the ATO
- * answer to exactly this: "-szor" passed as a bare count, and "p\u00f3tolja" (the evaporated water) as a dosing verb. Only
- * the accusative ("3-at") stays a count.
+ * THE MULTIPLICATIVE SUFFIX IS NO BARE COUNT ("naponta 2-3-szor pótolja", "5-ször", "1,5-szeres"): it says how many
+ * TIMES, not how much is given. The third question-set run lost the ATO answer to exactly this: "-szor" passed as a
+ * bare count, and "pótolja" (the evaporated water) as a dosing verb. ONLY this suffix: "-ra/-re" (a target, "napi
+ * 3-ra") and "-val/-vel/-mal/-mel" (a difference, "2-vel többet") carry an amount and stay counts (barracuda, #101).
+ * After `fold` the suffix reads "-szor" or "-szer".
  */
-const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]|-[a-z]))`);
+const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]|-sz[eo]r))`);
 
 /**
  * THE KIND OF THE SENTENCE, NOT THE PRODUCT IN IT (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719).
