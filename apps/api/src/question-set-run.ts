@@ -109,7 +109,10 @@ export function checkAbbreviation(answer: string, entry: Abbreviation): Abbrevia
 
 const NO_INFORMATION = /nincs információ|nincs adatom|nem tudom,? hány fok|nem látom,? hány fok/iu;
 const LOOKUP_CLAIM = /megnéztem|lekérdeztem|utánanéztem|előrejelzés szerint|jelenleg kint|most kint/iu;
-const SERVICE_NAMED = /alkalmazás|\bapp\b|weboldal|honlap|oldalon|előrejelzés|met\.hu|köpönyeg|koponyeg|accuweather|google/iu;
+// the rule forbids the TYPE too, so the list carries type words, not only names (barracuda, #97): a word outside it can
+// still slip through, which is why this check can only ever give a pass to a person's second look, never a fail
+const SERVICE_NAMED =
+  /alkalmazás|\bapp\b|weboldal|honlap|oldalon|előrejelzés|időjárás|meteorológ|szolgáltat|widget|telefon|keress rá|met\.hu|köpönyeg|koponyeg|accuweather|google/iu;
 const OUTSIDE = /budapest|kint|kinti|odakint|levegő/iu;
 
 /**

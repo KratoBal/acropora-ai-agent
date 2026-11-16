@@ -47,6 +47,11 @@ COPY --from=build /app/dist ./dist
 ARG ACROPORA_AI_BUILT_AT=""
 ENV ACROPORA_AI_BUILT_AT=${ACROPORA_AI_BUILT_AT}
 
+# The commit as Coolify passes it (acrobot 53709): the test instance is built there, not by deploy-stage.yml.
+# /health reads it when ACROPORA_AI_COMMIT is not set (build-version.ts). Empty when the build gives none.
+ARG SOURCE_COMMIT=""
+ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+
 EXPOSE 3000
 
 # Coolify showed this container as "Running (no healthcheck)": without one, a process that is up but

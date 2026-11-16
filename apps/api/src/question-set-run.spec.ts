@@ -328,6 +328,10 @@ describe("scoreLiveData", () => {
       "Nincs információm, de az előrejelzés szerint meleg lesz.",
       "Nincs információm; nézd meg egy időjárás-alkalmazásban.",
       "Nincs információm, de Budapesten ma 31 fok van.",
+      // the type words (barracuda, #97)
+      "Nincs információm; nézd meg egy meteorológiai szolgálat adatait.",
+      "Nincs információm, az időjárás-widgeted megmutatja.",
+      "Nincs információm, keress rá a telefonodon.",
       "Budapesten most 31 fok van, hűts."
     ])
       assert.equal(scoreLiveData("live-data-no-value", answer), "human", answer);
