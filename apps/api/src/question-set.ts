@@ -59,6 +59,12 @@ export interface PinnedQuestion {
   criterion: string;
   /** Which rating axis a failure would show up on. */
   axis: "accuracy" | "language";
+  /**
+   * Asked in the SAME conversation, right after the named question (1.2.0). The question only makes sense as a
+   * follow-up: "az előbb említett ATO" has nothing to refer to in a fresh conversation, and the runner used to have to
+   * guess that.
+   */
+  followsUp?: string;
 }
 
 /**
@@ -68,7 +74,7 @@ export interface PinnedQuestion {
  * prevent: the number would be true and the sentence around it wrong, because
  * nothing says what the run was measured against.
  */
-export const QUESTION_SET_VERSION = "1.1.0";
+export const QUESTION_SET_VERSION = "1.2.0";
 
 export const QUESTION_SET: readonly PinnedQuestion[] = [
   {
@@ -179,6 +185,7 @@ export const QUESTION_SET: readonly PinnedQuestion[] = [
     polarity: "must-not-apply",
     question:
       "Az előbb említett ATO-nál mekkora tartály elég egy hétre, és hova tegyem?",
+    followsUp: "abbreviation-expanded",
     criterion:
       "A rövidítést NEM bontja ki újra: ebben a beszélgetésben már elhangzott. Az ismételt kibontás bőbeszédűség, nem pontosság.",
     axis: "language"

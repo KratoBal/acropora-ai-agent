@@ -552,6 +552,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
        * one that kept a cached layer. `version` was identical in both.
        */
       builtAt: buildTime(),
+      /**
+       * WHICH LANGUAGE RULES this process answers under (card 7a5ea203): the same value it writes on every model answer
+       * (`messages.instructions_version`). The question-set runner reads it here, from the server it measures, and not
+       * from its own build.
+       */
+      instructionsVersion: INSTRUCTIONS_VERSION,
       database: "ok",
       timestamp: new Date().toISOString()
     };
