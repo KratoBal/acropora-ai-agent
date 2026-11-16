@@ -65,7 +65,7 @@ export const ABBREVIATIONS: readonly Abbreviation[] = [
     abbreviation: "TDS",
     original: "Total Dissolved Solids",
     language: "en",
-    hungarian: "összes oldott anyag"
+    hungarian: "összes oldott szilárd anyag"
   },
   {
     abbreviation: "KH",
