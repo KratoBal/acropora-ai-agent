@@ -84,8 +84,15 @@ const OTHER_UNIT =
  * naponta"). Next to a period word it is a dose the guard cannot check, but
  * only as a THING GIVEN: with a dosing verb, or in the accusative (see
  * `isGivenCount`).
+ *
+ * THE FREQUENCY SUFFIX IS NO BARE COUNT ("naponta 2-3-szor pótolja", "5-ször", "2-szori"): it says how many TIMES,
+ * not how much is given. The MULTIPLIER adjective ("2-szeres", "1,5-szoros adag") multiplies an amount and stays a count
+ * (barracuda, #101 v2). The third question-set run lost the ATO answer to exactly this: "-szor" passed as a
+ * bare count, and "pótolja" (the evaporated water) as a dosing verb. ONLY this suffix: "-ra/-re" (a target, "napi
+ * 3-ra") and "-val/-vel/-mal/-mel" (a difference, "2-vel többet") carry an amount and stay counts (barracuda, #101).
+ * After `fold` the suffix reads "-szor" or "-szer".
  */
-const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]))`);
+const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]|-sz[eo]r(?![eo]s)))`);
 
 /**
  * THE KIND OF THE SENTENCE, NOT THE PRODUCT IN IT (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719).

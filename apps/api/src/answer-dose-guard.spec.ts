@@ -123,6 +123,18 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
   });
 
+  // the third question-set run (2026-11-16): the ATO answer was swapped on a multiplicative suffix
+  it("a szorzó toldalék (-szor, -szer, -ször) nem puszta szám, egy adagolási ige mellett sem", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const answer of [
+      "Az ATO naponta 2-3-szor pótolja az elpárolgott vizet.",
+      "Hetente 5-ször pótolja a vizet.",
+      "Naponta 2-szer pótold a párolgást.",
+      "A 2-szori pótlás naponta elég."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
   it("a név nélküli adag igével, tárgyraggal vagy egységgel továbbra is fennakad, és a szabály neve a válaszban", () => {
     const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
     for (const [answer, rule] of [
@@ -137,7 +149,16 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       ["Hetente 1 jut 100 literre.", "per-volume-count"],
       // a bare count next to a volume that is no rate ("literes"): the bare-count-plus-volume reading
       ["Az Ön 300 literes akváriumába napi 2.", "per-volume-count"],
-      ["Naponta 2-3 ml-t adj.", "no-fixed-dose"]
+      ["Naponta 2-3 ml-t adj.", "no-fixed-dose"],
+      // the accusative stays a count after the suffix change (third run, ATO)
+      ["Pótold naponta 2-3-at.", "given-count"],
+      // a target and a difference carry an amount: only the multiplicative suffix is no count (barracuda, #101)
+      ["Növeld az adagolást napi 3-ra.", "given-count"],
+      ["Adagolj naponta 2-vel többet.", "given-count"],
+      ["Pótold naponta, 3-mal kevesebbet, mint tegnap.", "given-count"],
+      // the multiplier adjective multiplies an amount (barracuda, #101 v2)
+      ["Adagold naponta a 2-szeres adagot.", "given-count"],
+      ["Adj 1,5-szeres mennyiséget hetente.", "given-count"]
     ] as const) {
       const result = guardAnswerDoses(answer, empty);
       assert.equal(result.ok, false, answer);
