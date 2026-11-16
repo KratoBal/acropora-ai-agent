@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
 
-import { buildApp, type AppDependencies, type ConversationStore } from "./app.js";
+import { buildApp, INSTRUCTIONS_VERSION, type AppDependencies, type ConversationStore } from "./app.js";
 import { ABBREVIATIONS } from "./glossary.js";
 import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
@@ -14,6 +14,7 @@ import {
   main,
   runQuestionSet,
   score,
+  scoreLiveData,
   summarize,
   temperaturesIn,
   type RunReport,
@@ -29,6 +30,9 @@ import {
  */
 const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
+/** A model answer as the sender hands it on. */
+const modelReply = (conversationId: string, messageId: string, answer: string) =>
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "116fb9eccedc" }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -70,9 +74,9 @@ describe("score", () => {
     assert.equal(score(question("abbreviation-not-repeated"), "Az ATO (Automatic Top Off) tartálya...").verdict, "fail");
   });
 
-  it("leaves the live-data questions to a person, with the temperatures as a hint", () => {
+  it("scores the live-data questions with scoreLiveData, and lists the temperatures as a hint", () => {
     const result = score(question("live-data-no-value"), "Erről nincs információm. Az akvárium vize 25-26 fok legyen.");
-    assert.equal(result.verdict, "human");
+    assert.equal(result.verdict, "pass");
     assert.deepEqual(result.measures, { temperatures: ["25-26 fok"] });
     assert.deepEqual(temperaturesIn("28,5 °C és 27 fok"), ["28,5 °C", "27 fok"]);
   });
@@ -89,7 +93,7 @@ describe("runQuestionSet", () => {
     const send: SendQuestion = async (input) => {
       asked.push(input);
       n += 1;
-      return { ok: true, conversationId: input.conversationId ?? `c${n}`, messageId: `m${n}`, answer: "valasz" };
+      return modelReply(input.conversationId ?? `c${n}`, `m${n}`, "valasz");
     };
     const results = await runQuestionSet(send);
     const expanded = results.find((r) => r.id === "abbreviation-expanded")!;
@@ -104,7 +108,7 @@ describe("runQuestionSet", () => {
     const send: SendQuestion = async (input) =>
       input.message === question("abbreviation-expanded").question
         ? { ok: false, error: "HTTP 502 model unavailable" }
-        : { ok: true, conversationId: "c", messageId: "m", answer: "valasz" };
+        : modelReply("c", "m", "valasz");
     const results = await runQuestionSet(send);
     assert.equal(results.find((r) => r.id === "abbreviation-expanded")!.error, "HTTP 502 model unavailable");
     assert.match(results.find((r) => r.id === "abbreviation-not-repeated")!.error ?? "", /has no conversation/);
@@ -127,7 +131,7 @@ describe("runQuestionSet ordering", () => {
     const asked: { message: string; conversationId?: string }[] = [];
     const send: SendQuestion = async (input) => {
       asked.push(input);
-      return { ok: true, conversationId: input.conversationId ?? `c-${input.message}`, messageId: "m", answer: "a" };
+      return modelReply(input.conversationId ?? `c-${input.message}`, "m", "a");
     };
     await runQuestionSet(send, [q("c", "b"), q("b", "a"), q("a")]);
     assert.deepEqual(asked, [
@@ -144,7 +148,7 @@ describe("httpSender", () => {
     const waits: number[] = [];
     const responses = [
       new Response(JSON.stringify({ error: "rate limit exceeded" }), { status: 429, headers: { "retry-after": "2" } }),
-      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "valasz" }), { status: 200 })
+      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "valasz", model: "gpt-5.1", instructionsVersion: "116fb9eccedc" }), { status: 200 })
     ];
     const send = httpSender({
       baseUrl: "http://ai.test/",
@@ -159,7 +163,7 @@ describe("httpSender", () => {
       }
     });
     const reply = await send({ message: "kérdés" });
-    assert.deepEqual(reply, { ok: true, conversationId: "c1", messageId: "m1", answer: "valasz" });
+    assert.deepEqual(reply, modelReply("c1", "m1", "valasz"));
     assert.deepEqual(waits, [2000]);
     assert.equal(calls.length, 2);
     assert.equal(calls[0]!.url, "http://ai.test/v1/chat");
@@ -221,8 +225,45 @@ describe("httpSender against the real /v1/chat answer", () => {
         ok: true,
         conversationId: "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
         messageId: "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
-        answer: "A nitrátot hetente mérd."
+        answer: "A nitrátot hetente mérd.",
+        source: "model",
+        replacedBy: null,
+        instructionsVersion: INSTRUCTIONS_VERSION
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("an answer the dose guard swapped arrives as replaced, with the guard's reason, on the real route", async () => {
+    const store = {
+      createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+      conversationBelongsToClient: async () => true,
+      saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+      setMessageOutcome: async () => {},
+      getConversationMessages: async () => []
+    } as unknown as ConversationStore;
+    const openai = {
+      responses: { create: async () => ({ output_text: "Adagolj napi 5 ml-t 100 literenként." }) }
+    } as unknown as NonNullable<AppDependencies["openai"]>;
+    const app = buildApp({ conversations: store, openai });
+    await app.ready();
+    try {
+      const fetchImpl = (async (url: string, init: RequestInit) => {
+        const res = await app.inject({
+          method: "POST",
+          url: new URL(url).pathname,
+          headers: init.headers as Record<string, string>,
+          payload: init.body as string
+        });
+        return new Response(res.body, { status: res.statusCode });
+      }) as unknown as typeof fetch;
+      const send = httpSender({ baseUrl: "http://ai.test", token: API_TOKEN, clientKey: "question-set-run", fetchImpl });
+      const reply = await send({ message: "Mennyit adagoljak?" });
+      assert.equal(reply.ok, true);
+      if (!reply.ok) return;
+      assert.equal(reply.source, "replaced");
+      assert.match(reply.replacedBy ?? "", /^doseGuard: /);
     } finally {
       await app.close();
     }
@@ -243,6 +284,61 @@ describe("httpSender against the real /v1/chat answer", () => {
   });
 });
 
+describe("who wrote the answer", () => {
+  const sendWith = (body: Record<string, unknown>) =>
+    httpSender({
+      baseUrl: "http://ai.test",
+      token: "t",
+      clientKey: "k",
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ conversationId: "c", messageId: "m", answer: "a", ...body }))) as unknown as typeof fetch
+    })({ message: "x" });
+
+  it("the pre-filter and the contact flow are local; a link swapped under enforce is replaced; a link logged is the model's", async () => {
+    const sourceOf = async (body: Record<string, unknown>) => {
+      const reply = await sendWith(body);
+      return reply.ok ? [reply.source, reply.replacedBy] : ["error", null];
+    };
+    assert.deepEqual(await sourceOf({ model: "local-prefilter", doseGuard: null, linkGuard: null }), ["local", null]);
+    assert.deepEqual(await sourceOf({}), ["local", null]);
+    assert.deepEqual(await sourceOf({ model: "gpt-5.1", doseGuard: null, linkGuard: { mode: "enforce", reason: "external-host" } }), ["replaced", "linkGuard: external-host"]);
+    assert.deepEqual(await sourceOf({ model: "gpt-5.1", doseGuard: null, linkGuard: { mode: "log", reason: "external-host" } }), ["model", null]);
+    assert.deepEqual(await sourceOf({ model: "gpt-5.1", doseGuard: null, linkGuard: null }), ["model", null]);
+  });
+
+  it("a replaced answer is not scored and stays out of the glossary totals", async () => {
+    const send: SendQuestion = async (input) =>
+      input.message === question("glossary-not-forced").question
+        ? { ...modelReply("c", "m", "Erre a termékre a pontos adagolást most nem tudom..."), source: "replaced", replacedBy: "doseGuard: no-fixed-dose", instructionsVersion: null }
+        : modelReply("c", "m", "Egy tengeri akvárium...");
+    const results = await runQuestionSet(send);
+    const replaced = results.find((r) => r.id === "glossary-not-forced")!;
+    assert.deepEqual([replaced.verdict, replaced.measures, replaced.replacedBy], ["replaced", {}, "doseGuard: no-fixed-dose"]);
+    const summary = summarize(results);
+    assert.equal(summary.replaced, 1);
+    assert.equal(summary.glossary.answers, QUESTION_SET.length - 1);
+  });
+});
+
+describe("scoreLiveData", () => {
+  it("no value: a clean answer passes; a lookup, a named service or an outside temperature goes to a person, never fail", () => {
+    const clean = "Nincs információm arról, hány fok van most Budapesten. A döntés alapja a vízhőmérséklet: 24–26 °C a cél.";
+    assert.equal(scoreLiveData("live-data-no-value", clean), "pass");
+    for (const answer of [
+      "Nincs információm, de az előrejelzés szerint meleg lesz.",
+      "Nincs információm; nézd meg egy időjárás-alkalmazásban.",
+      "Nincs információm, de Budapesten ma 31 fok van.",
+      "Budapesten most 31 fok van, hűts."
+    ])
+      assert.equal(scoreLiveData("live-data-no-value", answer), "human", answer);
+  });
+
+  it("own measurement: working with the 28,5 passes; saying there is no information goes to a person", () => {
+    assert.equal(scoreLiveData("live-data-own-measurement", "A 28,5 °C sok egy korallos akváriumnak."), "pass");
+    assert.equal(scoreLiveData("live-data-own-measurement", "Erről nincs információm."), "human");
+  });
+});
+
 describe("main", () => {
   it("refuses to run without the token, the url or the output", async () => {
     const lines: string[] = [];
@@ -260,7 +356,7 @@ describe("main", () => {
       n += 1;
       return n === 3
         ? new Response(JSON.stringify({ error: "boom" }), { status: 502 })
-        : new Response(JSON.stringify({ conversationId: `c${n}`, messageId: `m${n}`, answer: "A nitrátot hetente mérd." }));
+        : new Response(JSON.stringify({ conversationId: `c${n}`, messageId: `m${n}`, answer: "A nitrátot hetente mérd.", model: "gpt-5.1" }));
     }) as unknown as typeof fetch;
     const lines: string[] = [];
     const code = await main(["--url", "http://ai.test", "--out", out], { AI_API_TOKEN: "t" }, { log: (l) => lines.push(l), fetchImpl });
@@ -283,5 +379,22 @@ describe("the question set's follow-ups", () => {
       assert.ok(target, `${q.id}: ${q.followsUp} nincs a készletben`);
       assert.equal(target.followsUp, undefined, `${q.id}: láncolt folytatás`);
     }
+  });
+});
+
+describe("main, with a server that predates the /health field", () => {
+  it("takes the instruction version from the answers when /health does not name it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "question-set-run-"));
+    const out = join(dir, "report.json");
+    const fetchImpl = (async (url: string) =>
+      url.endsWith("/health")
+        ? new Response(JSON.stringify({ version: "unknown" }))
+        : new Response(
+            JSON.stringify({ conversationId: "c", messageId: "m", answer: "a", model: "gpt-5.1", instructionsVersion: "116fb9eccedc" })
+          )) as unknown as typeof fetch;
+    await main(["--url", "http://ai.test", "--out", out], { AI_API_TOKEN: "t" }, { log: () => {}, fetchImpl });
+    const report = JSON.parse(readFileSync(out, "utf8")) as RunReport;
+    assert.equal(report.instructionsVersion, "116fb9eccedc");
+    assert.equal(report.serverVersion, "unknown");
   });
 });

@@ -66,6 +66,7 @@ describe("the stored answer carries the instruction version", () => {
     await app.close();
 
     assert.equal(response.statusCode, 200);
+    assert.equal((response.json() as { instructionsVersion?: string }).instructionsVersion, INSTRUCTIONS_VERSION);
     const answer = saved.find((entry) => entry.role === "assistant");
     const question = saved.find((entry) => entry.role === "user");
     assert.equal(answer?.instructionsVersion, INSTRUCTIONS_VERSION);
