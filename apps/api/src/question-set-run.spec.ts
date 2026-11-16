@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it } from "node:test";
+import { before, describe, it } from "node:test";
 
+import { buildApp, type AppDependencies, type ConversationStore } from "./app.js";
 import { ABBREVIATIONS } from "./glossary.js";
 import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
@@ -112,6 +113,31 @@ describe("runQuestionSet", () => {
   });
 });
 
+describe("runQuestionSet ordering", () => {
+  it("asks a follow-up of a follow-up after its parent, whatever the list order", async () => {
+    const q = (id: string, followsUp?: string): PinnedQuestion => ({
+      id,
+      probe: "abbreviation",
+      polarity: "must-apply",
+      question: id,
+      criterion: "x".repeat(40),
+      axis: "language",
+      ...(followsUp ? { followsUp } : {})
+    });
+    const asked: { message: string; conversationId?: string }[] = [];
+    const send: SendQuestion = async (input) => {
+      asked.push(input);
+      return { ok: true, conversationId: input.conversationId ?? `c-${input.message}`, messageId: "m", answer: "a" };
+    };
+    await runQuestionSet(send, [q("c", "b"), q("b", "a"), q("a")]);
+    assert.deepEqual(asked, [
+      { message: "a" },
+      { message: "b", conversationId: "c-a" },
+      { message: "c", conversationId: "c-a" }
+    ]);
+  });
+});
+
 describe("httpSender", () => {
   it("sends the token and the run's key, and waits out one 429", async () => {
     const calls: { url: string; headers: Record<string, string> }[] = [];
@@ -149,6 +175,71 @@ describe("httpSender", () => {
       fetchImpl: (async () => new Response(JSON.stringify({ error: "missing x-client-key" }), { status: 400 })) as unknown as typeof fetch
     });
     assert.deepEqual(await send({ message: "x" }), { ok: false, error: "HTTP 400 missing x-client-key" });
+  });
+});
+
+describe("httpSender against the real /v1/chat answer", () => {
+  /*
+    The other sender tests use a stand-in body of the sender's own shape: a renamed field on either side would keep
+    them green. This one gives the sender what buildApp's route really returns (barracuda, #96).
+  */
+  const API_TOKEN = "question-set-run-teszt-kulcs";
+  before(() => {
+    process.env.NODE_ENV = "test";
+    process.env.API_ACCESS_TOKEN = API_TOKEN;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    delete process.env.ACROPORA_OS_BASE_URL;
+    delete process.env.ACROPORA_OS_AI_SERVICE_TOKEN;
+  });
+
+  it("receives the model's answer, the conversation and the message id", async () => {
+    const store = {
+      createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+      conversationBelongsToClient: async () => true,
+      saveMessage: async (input: Record<string, unknown>) =>
+        input.role === "assistant" ? "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f" : "0d9c8b7a-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+      setMessageOutcome: async () => {},
+      getConversationMessages: async () => []
+    } as unknown as ConversationStore;
+    const openai = {
+      responses: { create: async () => ({ output_text: "A nitrátot hetente mérd." }) }
+    } as unknown as NonNullable<AppDependencies["openai"]>;
+    const app = buildApp({ conversations: store, openai });
+    await app.ready();
+    try {
+      const fetchImpl = (async (url: string, init: RequestInit) => {
+        const res = await app.inject({
+          method: "POST",
+          url: new URL(url).pathname,
+          headers: init.headers as Record<string, string>,
+          payload: init.body as string
+        });
+        return new Response(res.body, { status: res.statusCode });
+      }) as unknown as typeof fetch;
+      const send = httpSender({ baseUrl: "http://ai.test", token: API_TOKEN, clientKey: "question-set-run", fetchImpl });
+      assert.deepEqual(await send({ message: "Hogyan mérjem a nitrátot?" }), {
+        ok: true,
+        conversationId: "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+        messageId: "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+        answer: "A nitrátot hetente mérd."
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("a 200 without one of the three fields is a failed call, not an answer", async () => {
+    for (const missing of ["conversationId", "messageId", "answer"]) {
+      const body: Record<string, unknown> = { conversationId: "c", messageId: "m", answer: "valasz" };
+      delete body[missing];
+      const send = httpSender({
+        baseUrl: "http://ai.test",
+        token: "t",
+        clientKey: "k",
+        fetchImpl: (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+      });
+      assert.deepEqual(await send({ message: "x" }), { ok: false, error: `malformed response: ${missing}` }, missing);
+    }
   });
 });
 

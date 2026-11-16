@@ -43,8 +43,8 @@ const lower = (text: string) => text.toLocaleLowerCase("hu");
 
 /**
  * Occurrences of each form, longest first and without overlap: "fehérjelehabzó" is one preferred form, not also a
- * "lehabzó". A suffix is part of the word in Hungarian ("zátonyakváriumot"), so a form counts where the word starts
- * with it.
+ * "lehabzó". The match is a plain substring, anywhere in the text: a suffixed word ("zátonyakváriumot") counts as its
+ * form, and so would a compound that happens to contain one (none on today's lists).
  */
 export function countTerms(
   answer: string,
@@ -175,9 +175,20 @@ export async function runQuestionSet(
   questions: readonly PinnedQuestion[] = QUESTION_SET
 ): Promise<QuestionResult[]> {
   const conversationOf = new Map<string, string>();
-  const ordered = [...questions].sort(
-    (a, b) => Number(a.followsUp !== undefined) - Number(b.followsUp !== undefined)
-  );
+  // a question waits until the one it follows has been asked, at any depth; one whose parent is not in the set is
+  // asked last and gets the "no conversation" error
+  const ordered: PinnedQuestion[] = [];
+  const pending = [...questions];
+  while (pending.length > 0) {
+    const ready = pending.filter(
+      (q) => q.followsUp === undefined || ordered.some((done) => done.id === q.followsUp)
+    );
+    const next = ready.length > 0 ? ready : pending;
+    for (const q of next) {
+      ordered.push(q);
+      pending.splice(pending.indexOf(q), 1);
+    }
+  }
   const results = new Map<string, QuestionResult>();
   for (const question of ordered) {
     const conversationId = question.followsUp ? conversationOf.get(question.followsUp) : undefined;
@@ -266,11 +277,18 @@ export function httpSender(options: {
     const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok)
       return { ok: false, error: `HTTP ${response.status}${typeof body.error === "string" ? ` ${body.error}` : ""}` };
+    // a 200 without the three fields is a failed call, not an answer: "undefined" read as the answer would pass the
+    // glossary-not-forced and the abbreviation-not-repeated questions (barracuda, #96)
+    for (const field of ["conversationId", "messageId", "answer"] as const) {
+      const value = body[field];
+      if (typeof value !== "string" || value.trim() === "")
+        return { ok: false, error: `malformed response: ${field}` };
+    }
     return {
       ok: true,
-      conversationId: String(body.conversationId),
-      messageId: String(body.messageId),
-      answer: String(body.answer)
+      conversationId: body.conversationId as string,
+      messageId: body.messageId as string,
+      answer: body.answer as string
     };
   };
 }
