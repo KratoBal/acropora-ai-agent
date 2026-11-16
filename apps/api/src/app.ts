@@ -1,4 +1,4 @@
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import type OpenAI from "openai";
 import { pool } from "./db.js";
 import {
@@ -29,6 +29,7 @@ import {
   aiProviderLimits,
   createAiClient
 } from "./ai-provider.js";
+import { CHAT_DEADLINE_ERROR, chatDeadlineMs, type ChatDeadline, withChatDeadline } from "./chat-deadline.js";
 import { ANSWER_ORDER_INSTRUCTIONS } from "./answer-order.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
 import { instructionsVersion } from "./instructions-version.js";
@@ -348,6 +349,11 @@ export interface AppLogger {
   silent(payload: unknown, message?: string): void;
 }
 
+interface ChatBody {
+  message?: string;
+  conversationId?: string;
+}
+
 export interface AppDependencies {
   openai?: OpenAI;
   conversations?: ConversationStore;
@@ -572,12 +578,20 @@ export function buildApp(dependencies: AppDependencies = {}) {
     };
   });
 
-  app.post<{
-    Body: {
-      message?: string;
-      conversationId?: string;
-    };
-  }>("/v1/chat", async (request, reply) => {
+  /**
+   * The chat route runs under its own deadline, two seconds under the connection net (chat-deadline.ts): a handler
+   * that would have been cut with no HTTP answer now answers 504 `ai_chat_deadline`, which the OS names to the person.
+   */
+  const chatDeadline = chatDeadlineMs(limits.connectionTimeoutMs);
+  app.post<{ Body: ChatBody }>("/v1/chat", (request, reply) =>
+    withChatDeadline(reply, chatDeadline, (deadline) => answerChat(request, reply, deadline))
+  );
+
+  async function answerChat(
+    request: FastifyRequest<{ Body: ChatBody }>,
+    reply: FastifyReply,
+    deadline: ChatDeadline
+  ) {
     if (!tokenIsValid(request.headers.authorization)) {
       return reply.code(401).send({
         error: "unauthorized"
@@ -937,6 +951,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
         ? null
         : readLinkSources().catch(() => ({ ok: false, sources: [], reason: "unavailable" }) as const);
 
+    // PAST THE DEADLINE ALREADY (the search or the reads ran long): the 504 went out, no model call is started for it.
+    if (deadline.expired()) {
+      await noteOutcome(CHAT_DEADLINE_ERROR);
+      return reply;
+    }
+
     try {
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
@@ -947,7 +967,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
         }),
         input: modelInput,
         store: false
-      });
+      }, { signal: deadline.signal });
+
+      // The answer came after the 504 went out: it is not stored, the person never saw it, and the next turn's history
+      // must not hold an answer to a question they were told timed out.
+      if (deadline.expired()) {
+        await noteOutcome(CHAT_DEADLINE_ERROR);
+        return reply;
+      }
 
       // NO DOSE LEAVES THAT THE MANUFACTURER DID NOT GIVE (Acropora OS card
       // 85c38ab1): every dose statement must be a FIXED dose of a hit; else the
@@ -1092,6 +1119,11 @@ export function buildApp(dependencies: AppDependencies = {}) {
         ...customerChatFields(resolvedCustomer)
       };
     } catch (error) {
+      // the deadline aborted the call: the 504 already answered, and this is not a provider failure
+      if (deadline.expired()) {
+        await noteOutcome(CHAT_DEADLINE_ERROR);
+        return reply;
+      }
       const failure = aiProviderFailure(error, Date.now() - askedAt);
 
       // The error object is never handed to the logger: its shape belongs to
@@ -1110,7 +1142,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
       return reply.code(failure.status).send(failure.body);
     }
-  });
+  }
 
   /**
    * The water-measurement product recommendation (Acropora OS card 2b3983e1).

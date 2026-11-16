@@ -204,9 +204,9 @@ export interface QuestionResult {
   /** Set when the call failed: the status and the error body's code, or the network error's code; never the answer text. */
   error: string | null;
   /**
-   * How long the question took, end to end. The server cuts a connection at its socket net (45 s,
-   * `ACROPORA_AI_CONNECTION_TIMEOUT_MS`) with no HTTP answer, so a "network: UND_ERR_SOCKET" next to ~45 000 ms names
-   * that net (the first runs after #103, acrobot 53824).
+   * How long the question took, end to end. The server's chat deadline answers "HTTP 504 ai_chat_deadline" at ~43 000 ms,
+   * two seconds before its socket net (45 s, `ACROPORA_AI_CONNECTION_TIMEOUT_MS`) would cut the connection with no HTTP
+   * answer; a "network: UND_ERR_SOCKET" next to ~45 000 ms means a server without that deadline (acrobot 53824, 53996).
    */
   elapsedMs: number;
   verdict: Verdict;

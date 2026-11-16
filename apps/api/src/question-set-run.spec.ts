@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { before, describe, it } from "node:test";
@@ -644,7 +646,23 @@ describe("network failures on a real socket", () => {
     return { app, base: `http://127.0.0.1:${address.port}` };
   };
 
-  it("the connection net closes a slow handler with no HTTP answer; the runner writes it down as a network error", async () => {
+  it("a server that closes the socket with no HTTP answer: the runner writes it down as a network error", async () => {
+    // since the chat deadline (t-20261116-ai-kezelo-hatarido) our own server answers 504 before its net, so the close
+    // is played by a bare server that drops every connection
+    const server = createServer((request) => request.socket.destroy());
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    try {
+      const send = httpSender({ baseUrl: `http://127.0.0.1:${address.port}`, token: TOKEN, clientKey: "question-set-run" });
+      const reply = await send({ message: "Hogyan mérjem a nitrátot?" });
+      assert.equal(reply.ok, false);
+      assert.match(!reply.ok ? reply.error : "", /^network: /);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("a slow handler on our server: the runner gets the named 504 of the chat deadline, not a closed socket", async () => {
     process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS = "1000";
     const { app, base } = await serve(
       () => new Promise((resolve) => setTimeout(() => resolve({ output_text: "kesei valasz" }), 1500))
@@ -653,7 +671,7 @@ describe("network failures on a real socket", () => {
       const send = httpSender({ baseUrl: base, token: TOKEN, clientKey: "question-set-run" });
       const reply = await send({ message: "Hogyan mérjem a nitrátot?" });
       assert.equal(reply.ok, false);
-      assert.match(!reply.ok ? reply.error : "", /^network: /);
+      assert.equal(!reply.ok ? reply.error : "", "HTTP 504 ai_chat_deadline");
     } finally {
       delete process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS;
       await app.close();
