@@ -201,8 +201,14 @@ export interface QuestionResult {
    * empty, hits ...). The branch texts differ, so an answer is read against the one it had. null when not reported.
    */
   productContext: string | null;
-  /** Set when the call failed: the status and the error body's code, never the answer text. */
+  /** Set when the call failed: the status and the error body's code, or the network error's code; never the answer text. */
   error: string | null;
+  /**
+   * How long the question took, end to end. The server cuts a connection at its socket net (45 s,
+   * `ACROPORA_AI_CONNECTION_TIMEOUT_MS`) with no HTTP answer, so a "network: UND_ERR_SOCKET" next to ~45 000 ms names
+   * that net (the first runs after #103, acrobot 53824).
+   */
+  elapsedMs: number;
   verdict: Verdict;
   measures: Measures;
 }
@@ -309,10 +315,15 @@ export async function runQuestionSet(
   const results = new Map<string, QuestionResult>();
   for (const question of ordered) {
     const conversationId = question.followsUp ? conversationOf.get(question.followsUp) : undefined;
+    const askedAt = Date.now();
+    // a sender that throws (the run's own bug, or a stand-in) is one question's error too, never the end of the run
     const reply =
       question.followsUp && conversationId === undefined
         ? ({ ok: false, error: `the question it follows (${question.followsUp}) has no conversation` } as const)
-        : await send({ message: question.question, ...(conversationId ? { conversationId } : {}) });
+        : await send({ message: question.question, ...(conversationId ? { conversationId } : {}) }).catch(
+            (error: unknown) => ({ ok: false, error: `the sender threw: ${errorText(error)}` }) as const
+          );
+    const elapsedMs = Date.now() - askedAt;
     if (reply.ok) conversationOf.set(question.id, reply.conversationId);
     const answer = reply.ok ? reply.answer : null;
     results.set(question.id, {
@@ -329,6 +340,7 @@ export async function runQuestionSet(
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
+      elapsedMs,
       ...(reply.ok && reply.source !== "model"
         ? { verdict: reply.source, measures: {} }
         : score(question, answer))
@@ -460,6 +472,15 @@ export function summarize(results: readonly QuestionResult[]): RunReport["summar
   };
 }
 
+/** "UND_ERR_SOCKET other side closed": the cause's code and message when fetch wraps one, else the error's own. */
+export function errorText(error: unknown): string {
+  const e = error as { message?: unknown; code?: unknown; cause?: { message?: unknown; code?: unknown } } | null;
+  const inner = e?.cause ?? e;
+  const code = typeof inner?.code === "string" ? `${inner.code} ` : "";
+  const message = typeof inner?.message === "string" ? inner.message : String(error);
+  return `${code}${message}`.slice(0, 200);
+}
+
 /** The HTTP sender: Bearer token and the run's own client key, a 429 waits for its Retry-After (once per question). */
 export function httpSender(options: {
   baseUrl: string;
@@ -481,11 +502,19 @@ export function httpSender(options: {
       body: JSON.stringify(body)
     });
   return async (input) => {
-    let response = await call(input);
-    if (response.status === 429) {
-      const wait = Number(response.headers.get("retry-after") ?? "60");
-      await sleep((Number.isFinite(wait) ? wait : 60) * 1000);
+    // A NETWORK FAILURE IS ONE QUESTION'S ERROR (acrobot 53824): the first runs after #103 died on "fetch failed ...
+    // other side closed" in mid-run, and no report was written. Not retried: the request may have been answered and
+    // stored on the server, and a follow-up would then land twice in its conversation.
+    let response: Response;
+    try {
       response = await call(input);
+      if (response.status === 429) {
+        const wait = Number(response.headers.get("retry-after") ?? "60");
+        await sleep((Number.isFinite(wait) ? wait : 60) * 1000);
+        response = await call(input);
+      }
+    } catch (error) {
+      return { ok: false, error: `network: ${errorText(error)}` };
     }
     const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok)

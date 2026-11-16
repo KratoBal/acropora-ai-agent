@@ -11,6 +11,7 @@ import {
   checkAbbreviation,
   compareReports,
   countTerms,
+  errorText,
   httpSender,
   main,
   runQuestionSet,
@@ -609,5 +610,82 @@ describe("main --compare", () => {
     const report = JSON.parse(readFileSync(third, "utf8")) as RunReport;
     assert.ok(report.comparison!.regressions.includes("glossary-not-forced: pass -> fail"));
     assert.match(lines.at(-1)!, /REGRESSION/);
+  });
+});
+
+/*
+  WHAT CLOSED THE CONNECTION (acrobot 53824: the first runs after #103 died on "fetch failed ... other side closed",
+  UND_ERR_SOCKET, mid-question). Measured here on a real socket: the server's connection net
+  (`ACROPORA_AI_CONNECTION_TIMEOUT_MS`, 45 s by default) closes a request that is still working, with NO HTTP answer;
+  the model call has its own 40 s limit, but the net counts the whole handler (product search, link sources, the
+  model, the writes). The dose-sentence branch does not close anything: it answers 200. What turns this red: the runner
+  dying on a network error instead of writing it down per question; the debug branch closing the connection.
+*/
+describe("network failures on a real socket", () => {
+  const STORE = {
+    createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+    conversationBelongsToClient: async () => true,
+    saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+    setMessageOutcome: async () => {},
+    getConversationMessages: async () => []
+  } as unknown as ConversationStore;
+  const TOKEN = "network-teszt-kulcs";
+
+  const serve = async (answer: () => Promise<{ output_text: string }>) => {
+    process.env.NODE_ENV = "test";
+    process.env.API_ACCESS_TOKEN = TOKEN;
+    process.env.OPENAI_API_KEY = "test-openai-key";
+    const app = buildApp({
+      conversations: STORE,
+      openai: { responses: { create: answer } } as unknown as NonNullable<AppDependencies["openai"]>
+    });
+    await app.listen({ host: "127.0.0.1", port: 0 });
+    const address = app.server.address() as { port: number };
+    return { app, base: `http://127.0.0.1:${address.port}` };
+  };
+
+  it("the connection net closes a slow handler with no HTTP answer; the runner writes it down as a network error", async () => {
+    process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS = "1000";
+    const { app, base } = await serve(
+      () => new Promise((resolve) => setTimeout(() => resolve({ output_text: "kesei valasz" }), 1500))
+    );
+    try {
+      const send = httpSender({ baseUrl: base, token: TOKEN, clientKey: "question-set-run" });
+      const reply = await send({ message: "Hogyan mérjem a nitrátot?" });
+      assert.equal(reply.ok, false);
+      assert.match(!reply.ok ? reply.error : "", /^network: /);
+    } finally {
+      delete process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS;
+      await app.close();
+    }
+  });
+
+  it("the dose-sentence branch answers 200 over a real socket, switch on, with the runner's key", async () => {
+    process.env.AI_DOSE_GUARD_DEBUG = "true";
+    const { app, base } = await serve(async () => ({ output_text: "Adagolj napi 5 ml-t 100 literenként." }));
+    try {
+      const reply = await httpSender({ baseUrl: base, token: TOKEN, clientKey: "question-set-run" })({ message: "Mennyit?" });
+      assert.equal(reply.ok, true);
+      assert.equal(reply.ok && reply.replacedSentence, "Adagolj napi 5 ml-t 100 literenként");
+    } finally {
+      delete process.env.AI_DOSE_GUARD_DEBUG;
+      await app.close();
+    }
+  });
+
+  it("a sender that throws is one question's error; the run goes on and times every question", async () => {
+    let n = 0;
+    const send: SendQuestion = async () => {
+      n += 1;
+      if (n === 2) throw Object.assign(new TypeError("fetch failed"), { cause: { code: "UND_ERR_SOCKET", message: "other side closed" } });
+      return modelReply(`c${n}`, `m${n}`, "valasz");
+    };
+    const results = await runQuestionSet(send);
+    const failed = results.filter((r) => r.error !== null);
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0]!.error, "the sender threw: UND_ERR_SOCKET other side closed");
+    assert.equal(results.length, QUESTION_SET.length);
+    assert.ok(results.every((r) => typeof r.elapsedMs === "number" && r.elapsedMs >= 0));
+    assert.equal(errorText(new Error("plain")), "plain");
   });
 });
