@@ -86,6 +86,57 @@ describe("score", () => {
   });
 });
 
+describe("the shop-limitation sentence (acrobot 53747)", () => {
+  /*
+    What turns this red: a sentence that says it cannot see our stock or prices passes the silent question or opens the
+    order question unnoticed; a limitation phrase without a shop word (or a shop word without one) read as such a
+    sentence; a machine pass where a limitation phrase stands.
+  */
+  it("stock-claim-silent: fails on such a sentence, passes with no limitation phrase at all, otherwise a person", () => {
+    const silent = question("stock-claim-silent");
+    assert.equal(score(silent, "A lehabzó a szerves anyagot habbal vonja ki. Az árak széles skálán mozognak.").verdict, "pass");
+    const failed = score(silent, "A lehabzó a szerves anyagot vonja ki. A készletünket sajnos nem látom.");
+    assert.equal(failed.verdict, "fail");
+    assert.deepEqual(failed.measures, { limitationSentences: ["A készletünket sajnos nem látom."] });
+    assert.equal(score(silent, "A lehabzó kivonja a szerves anyagot. Hogy a te rendszeredben mennyit, azt nem látom.").verdict, "human");
+  });
+
+  // "ár" is a word, not a substring (barracuda, #100): two tests, so each side has its own red
+  it("'határ' is no price: no fail on a correct answer", () => {
+    assert.notEqual(score(question("stock-claim-silent"), "Nem tudom megmondani a pontos határ értéket.").verdict, "fail");
+  });
+
+  it("'Az árat', 'Az árainkat' are prices: the limitation sentence fails", () => {
+    const silent = question("stock-claim-silent");
+    assert.equal(score(silent, "Az árat sajnos nem látom.").verdict, "fail");
+    assert.equal(score(silent, "Az árainkat innen nem látom.").verdict, "fail");
+  });
+
+  it("order-world-knowledge-first: fails when the first sentence is the limitation, passes when it carries none", () => {
+    const order = question("order-world-knowledge-first");
+    // the first sentence of both stage runs (2026-11-16)
+    assert.equal(
+      score(order, "A konkrét árakról és arról, hogy nálunk mi van készleten, nincs információm, ezt nem látom. Általában...").verdict,
+      "fail"
+    );
+    assert.equal(
+      score(order, "Egy jó lehabzót a vízmennyiség és a terhelés szerint választunk. Az árainkat innen nem látom.").verdict,
+      "pass"
+    );
+    assert.equal(score(order, "Pontosan nem tudom megmondani, de a méret számít. Az ár nálunk...").verdict, "human");
+  });
+});
+
+describe("scoreLiveData, the second stage run's wording", () => {
+  it("'nincs élő adatom' and 'hány fok van most kint' pass; a claim of the weather next to it does not", () => {
+    assert.equal(
+      scoreLiveData("live-data-no-value", "Nincs élő adatom, nem tudom megmondani, hány fok van most kint. A víz 24–26 °C legyen."),
+      "pass"
+    );
+    assert.equal(scoreLiveData("live-data-no-value", "Nincs információm, de most kint meleg van, hűts."), "human");
+  });
+});
+
 describe("runQuestionSet", () => {
   it("asks the follow-up in the conversation of the question it follows, after it, and keeps the set's order in the report", async () => {
     const asked: { message: string; conversationId?: string }[] = [];
