@@ -9,6 +9,7 @@ import { ABBREVIATIONS } from "./glossary.js";
 import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
   checkAbbreviation,
+  compareReports,
   countTerms,
   httpSender,
   main,
@@ -32,7 +33,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "116fb9eccedc", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -67,7 +68,9 @@ describe("score", () => {
     assert.equal(score(question("glossary-preferred-term"), "Egy tengeri akvárium indítása...").verdict, "pass");
     assert.equal(score(question("glossary-preferred-term"), "Egy zátonyakvárium, vagyis tengeri akvárium...").verdict, "fail");
     assert.equal(score(question("glossary-not-forced"), "A nitrátot hetente mérd.").verdict, "pass");
-    assert.equal(score(question("glossary-not-forced"), "A korallos akváriumban a nitrát...").verdict, "fail");
+    // a preferred form can be content (the fourth run's nitrate answer): a person decides; an avoided form fails
+    assert.equal(score(question("glossary-not-forced"), "A korallos akváriumban a nitrát...").verdict, "human");
+    assert.equal(score(question("glossary-not-forced"), "A zátonyakváriumban a nitrát...").verdict, "fail");
     assert.equal(score(question("abbreviation-expanded"), "ATO (Automatic Top Off - automatikus) kell.").verdict, "pass");
     assert.equal(score(question("abbreviation-expanded"), "Kell ATO.").verdict, "fail");
     assert.equal(score(question("abbreviation-not-repeated"), "Az ATO tartálya 10 liter.").verdict, "pass");
@@ -199,7 +202,7 @@ describe("httpSender", () => {
     const waits: number[] = [];
     const responses = [
       new Response(JSON.stringify({ error: "rate limit exceeded" }), { status: 429, headers: { "retry-after": "2" } }),
-      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "valasz", model: "gpt-5.1", instructionsVersion: "116fb9eccedc" }), { status: 200 })
+      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "valasz", model: "gpt-5.1", instructionsVersion: "0123456789ab" }), { status: 200 })
     ];
     const send = httpSender({
       baseUrl: "http://ai.test/",
@@ -279,6 +282,7 @@ describe("httpSender against the real /v1/chat answer", () => {
         answer: "A nitrátot hetente mérd.",
         source: "model",
         replacedBy: null,
+        replacedSentence: null,
         instructionsVersion: INSTRUCTIONS_VERSION,
         // no OS configured in the test: the route reports the branch the model had
         productContext: "not_configured"
@@ -317,6 +321,28 @@ describe("httpSender against the real /v1/chat answer", () => {
       if (!reply.ok) return;
       assert.equal(reply.source, "replaced");
       assert.match(reply.replacedBy ?? "", /^doseGuard: NO_FIXED_DOSE \(no-fixed-dose\)$/);
+      // the runner's key with the instance switch OFF: no sentence (barracuda, #103 v2)
+      assert.equal(reply.replacedSentence, null);
+      const sentenceFor = async (clientKey: string) => {
+        const r = await httpSender({ baseUrl: "http://ai.test", token: API_TOKEN, clientKey, fetchImpl })({ message: "Mennyit adagoljak?" });
+        return r.ok ? [r.source, r.replacedSentence] : ["error", null];
+      };
+      process.env.AI_DOSE_GUARD_DEBUG = "true";
+      try {
+        // the key AND the switch: the sentence
+        assert.deepEqual(await sentenceFor("question-set-run"), ["replaced", "Adagolj napi 5 ml-t 100 literenként"]);
+        // an OS key never, switch or no switch: the same AI answers the live OS
+        for (const clientKey of ["os-user:42", "question-set-run-x", "QUESTION-SET-RUN"])
+          assert.deepEqual(await sentenceFor(clientKey), ["replaced", null], clientKey);
+      } finally {
+        delete process.env.AI_DOSE_GUARD_DEBUG;
+      }
+      process.env.AI_DOSE_GUARD_DEBUG = "1";
+      try {
+        assert.deepEqual(await sentenceFor("question-set-run"), ["replaced", null]);
+      } finally {
+        delete process.env.AI_DOSE_GUARD_DEBUG;
+      }
     } finally {
       await app.close();
     }
@@ -453,5 +479,135 @@ describe("main, with a server that predates the /health field", () => {
     const report = JSON.parse(readFileSync(out, "utf8")) as RunReport;
     assert.equal(report.instructionsVersion, "116fb9eccedc");
     assert.equal(report.serverVersion, "unknown");
+  });
+});
+
+describe("compareReports (t-20261116-kerdeskeszlet-or)", () => {
+  /*
+    What turns this red: a pass that became a fail or a replaced answer not called a regression; a human verdict
+    compared; a rise in fails, replaced answers or avoided forms missed; the cause naming the wrong thing that moved;
+    an older report shape (no replaced count) breaking the comparison.
+  */
+  const result = (id: string, verdict: string, extra: Record<string, unknown> = {}) =>
+    ({ id, verdict, replacedBy: null, ...extra }) as never;
+  const report = (results: unknown[], summary: Partial<Record<string, unknown>> = {}, versions: Record<string, unknown> = {}) =>
+    ({
+      questionSetVersion: "1.2.0",
+      instructionsVersion: "aaaaaaaaaaaa",
+      serverVersion: "s1",
+      startedAt: "2026-11-16T08:00:00.000Z",
+      finishedAt: "2026-11-16T08:05:00.000Z",
+      summary: { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, errors: 0, glossary: { answers: 1, preferred: 1, avoided: 0 }, ...summary },
+      results,
+      ...versions
+    }) as never;
+
+  it("calls a pass turned fail or replaced a regression, a fail turned pass an improvement, and ignores human", () => {
+    const c = compareReports(
+      report([result("a", "pass"), result("b", "pass"), result("c", "fail"), result("d", "human")]),
+      report([
+        result("a", "fail"),
+        result("b", "replaced", { replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)" }),
+        result("c", "pass"),
+        result("d", "fail")
+      ])
+    );
+    assert.deepEqual(c.regressions, [
+      "a: pass -> fail",
+      "b: pass -> replaced (doseGuard: DOSE_NOT_IN_CATALOGUE (given-count))",
+      // the counts over the common questions see the same moves (c fail -> pass, d human -> fail)
+      "fail: 1 -> 2",
+      "replaced: 0 -> 1"
+    ]);
+    assert.deepEqual(c.improvements, ["c: fail -> pass"]);
+    assert.equal(c.cause, "none");
+  });
+
+  it("counts a rise in fails, replaced answers, avoided forms over the common questions, and any error", () => {
+    const c = compareReports(
+      report([result("a", "fail"), result("b", "human", { answer: "tengeri akvárium", source: "model" }), result("c", "human")]),
+      report(
+        [
+          result("a", "fail"),
+          result("b", "fail", { answer: "zátonyakvárium és skimmer", source: "model" }),
+          result("c", "replaced")
+        ],
+        { errors: 1 }
+      )
+    );
+    assert.deepEqual(c.regressions, ["fail: 1 -> 2", "replaced: 0 -> 1", "avoided glossary forms: 0 -> 2", "errors: 1"]);
+  });
+
+  // barracuda, #103: a question the set gained is listed, and its first fail is no rise (exit 3 would be a false alarm)
+  it("a new question's fail or replaced answer is no rise; an old report without `source` still compares", () => {
+    const c = compareReports(
+      { results: [{ id: "a", verdict: "pass", answer: "x" }] },
+      report([result("a", "pass", { answer: "x", source: "model" }), result("new", "fail"), result("new2", "replaced")])
+    );
+    assert.deepEqual(c.regressions, []);
+    assert.deepEqual(c.onlyInOne, ["new: new", "new2: new"]);
+  });
+
+  it("names what moved: the instruction text, the server, both or neither; and lists a question in only one run", () => {
+    const base = report([result("a", "pass")]);
+    assert.equal(compareReports(base, report([result("a", "pass")], {}, { instructionsVersion: "bbbbbbbbbbbb" })).cause, "instructions");
+    assert.equal(compareReports(base, report([result("a", "pass")], {}, { serverVersion: "s2" })).cause, "server");
+    assert.equal(
+      compareReports(base, report([], {}, { instructionsVersion: "bbbbbbbbbbbb", serverVersion: "s2" })).cause,
+      "instructions+server"
+    );
+    assert.deepEqual(compareReports(base, report([result("z", "pass")])).onlyInOne, ["z: new", "a: gone"]);
+  });
+});
+
+describe("main --compare", () => {
+  const health = { version: "s1", instructionsVersion: "aaaaaaaaaaaa" };
+  const answering = (answer: string) =>
+    (async (url: string) =>
+      url.endsWith("/health")
+        ? new Response(JSON.stringify(health))
+        : new Response(JSON.stringify({ conversationId: "c", messageId: "m", answer, model: "gpt-5.1" }))) as unknown as typeof fetch;
+
+  it("refuses an unreadable previous report before any model call (exit 2)", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const dir = mkdtempSync(join(tmpdir(), "question-set-compare-"));
+    const lines: string[] = [];
+    const code = await main(
+      ["--url", "http://ai.test", "--out", join(dir, "r.json"), "--compare", join(dir, "missing.json")],
+      { AI_API_TOKEN: "t" },
+      { log: (l) => lines.push(l), fetchImpl }
+    );
+    assert.equal(code, 2);
+    assert.equal(calls, 0);
+    assert.match(lines[0]!, /cannot be read/);
+  });
+
+  it("exits 3 on a regression and writes the comparison; 0 when nothing got worse", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "question-set-compare-"));
+    const first = join(dir, "first.json");
+    // every machine-scored glossary question passes on a clean nitrate answer
+    assert.equal(await main(["--url", "http://ai.test", "--out", first], { AI_API_TOKEN: "t" }, { log: () => {}, fetchImpl: answering("A nitrátot hetente mérd.") }), 0);
+    const second = join(dir, "second.json");
+    const same = await main(
+      ["--url", "http://ai.test", "--out", second, "--compare", first],
+      { AI_API_TOKEN: "t" },
+      { log: () => {}, fetchImpl: answering("A nitrátot hetente mérd.") }
+    );
+    assert.equal(same, 0);
+    const third = join(dir, "third.json");
+    const lines: string[] = [];
+    const worse = await main(
+      ["--url", "http://ai.test", "--out", third, "--compare", first],
+      { AI_API_TOKEN: "t" },
+      { log: (l) => lines.push(l), fetchImpl: answering("A zátonyakváriumban a nitrátot hetente mérd.") }
+    );
+    assert.equal(worse, 3);
+    const report = JSON.parse(readFileSync(third, "utf8")) as RunReport;
+    assert.ok(report.comparison!.regressions.includes("glossary-not-forced: pass -> fail"));
+    assert.match(lines.at(-1)!, /REGRESSION/);
   });
 });

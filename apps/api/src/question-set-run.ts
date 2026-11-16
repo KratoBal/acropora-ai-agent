@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import {
   ABBREVIATIONS,
@@ -11,6 +11,7 @@ import {
   QUESTION_SET_VERSION,
   type PinnedQuestion
 } from "./question-set.js";
+import { QUESTION_SET_CLIENT_KEY } from "./question-set-client.js";
 import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
 
 /**
@@ -191,6 +192,8 @@ export interface QuestionResult {
   source: AnswerSource | null;
   /** The guard that swapped the text, and its reason ("doseGuard: ..."); null when nothing was swapped. */
   replacedBy: string | null;
+  /** The sentence that set the dose guard off; the server names it only to the runner's own client key, else null. */
+  replacedSentence: string | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
   /**
@@ -217,10 +220,14 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
         measures: terms
       };
     }
+    // An avoided form is a glossary error anywhere: fail. A preferred form can be content, not decoration: the fourth
+    // run's nitrate answer split its measuring advice by "Induló friss tengeri akvárium" and "Beállt, vegyes korallos
+    // akvárium", which the criterion does not forbid; a count cannot tell the two apart, so it goes to a person
+    // (acrobot 53798). No form at all is a pass.
     case "glossary-not-forced": {
       const terms = countTerms(answer);
       return {
-        verdict: total(terms.avoided) + total(terms.preferred) === 0 ? "pass" : "fail",
+        verdict: total(terms.avoided) > 0 ? "fail" : total(terms.preferred) > 0 ? "human" : "pass",
         measures: terms
       };
     }
@@ -269,6 +276,7 @@ export type SendQuestion = (input: {
       answer: string;
       source: AnswerSource;
       replacedBy: string | null;
+      replacedSentence: string | null;
       instructionsVersion: string | null;
       productContext: string | null;
     }
@@ -317,6 +325,7 @@ export async function runQuestionSet(
       answer,
       source: reply.ok ? reply.source : null,
       replacedBy: reply.ok ? reply.replacedBy : null,
+      replacedSentence: reply.ok ? reply.replacedSentence : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
@@ -347,6 +356,90 @@ export interface RunReport {
     glossary: { answers: number; preferred: number; avoided: number };
   };
   results: QuestionResult[];
+  /** With `--compare <previous report>`: see `compareReports`. */
+  comparison?: Comparison;
+}
+
+/**
+ * TWO RUNS SIDE BY SIDE (t-20261116-kerdeskeszlet-or): what changed between them, and whether the machine verdicts got
+ * worse. The fleet's cron runs the set when the test AI's code or instruction text changes, and weekly; it speaks only
+ * on a regression, so this is the rule it speaks by.
+ *
+ * A REGRESSION is: a question that passed and now fails or is replaced; any failed call; more fails, more replaced
+ * answers or more avoided glossary forms than before, counted over the questions both runs asked. A `human` verdict is never compared: a person reads it. A question
+ * in only one of the two runs (the set changed) is listed, not judged.
+ *
+ * THE CAUSE names what moved between the runs: the instruction text, the server's code, both, or neither (the model
+ * itself, the weekly run). A regression with cause `none` is model drift.
+ */
+export interface Comparison {
+  previous: { startedAt: string | null; instructionsVersion: string | null; serverVersion: string | null };
+  cause: "instructions" | "server" | "instructions+server" | "none";
+  regressions: string[];
+  improvements: string[];
+  onlyInOne: string[];
+}
+
+const SCORED: readonly Verdict[] = ["pass", "fail", "replaced"];
+
+export function compareReports(previous: unknown, next: RunReport): Comparison {
+  const prev = (previous ?? {}) as Partial<RunReport>;
+  const prevResults = new Map(
+    (Array.isArray(prev.results) ? prev.results : []).map((r) => [r.id, r] as const)
+  );
+  const nextResults = new Map(next.results.map((r) => [r.id, r] as const));
+  const instructionsMoved = (prev.instructionsVersion ?? null) !== next.instructionsVersion;
+  const serverMoved = (prev.serverVersion ?? null) !== next.serverVersion;
+  const regressions: string[] = [];
+  const improvements: string[] = [];
+  for (const [id, now] of nextResults) {
+    const before = prevResults.get(id);
+    if (!before) continue;
+    if (before.verdict === "pass" && (now.verdict === "fail" || now.verdict === "replaced"))
+      regressions.push(`${id}: pass -> ${now.verdict}${now.replacedBy ? ` (${now.replacedBy})` : ""}`);
+    else if (SCORED.includes(before.verdict) && before.verdict !== "pass" && now.verdict === "pass")
+      improvements.push(`${id}: ${before.verdict} -> pass`);
+  }
+  // the three counts over the questions BOTH runs asked (barracuda, #103): a question the set gained is listed in
+  // `onlyInOne`, and its first fail must not read as a rise. An old report's result has no `source`: a replaced or
+  // local verdict says so, anything else is the model's answer.
+  const common = [...nextResults.keys()].filter((id) => prevResults.has(id));
+  const tally = (results: Map<string, QuestionResult>) => {
+    let fail = 0;
+    let replaced = 0;
+    let avoided = 0;
+    for (const id of common) {
+      const r = results.get(id)!;
+      if (r.verdict === "fail") fail++;
+      if (r.verdict === "replaced") replaced++;
+      const own = r.source ? r.source === "model" : r.verdict !== "replaced" && r.verdict !== "local";
+      if (own && typeof r.answer === "string") avoided += total(countTerms(r.answer).avoided);
+    }
+    return { fail, replaced, avoided };
+  };
+  const then = tally(prevResults);
+  const now = tally(nextResults);
+  for (const [name, a, b] of [
+    ["fail", then.fail, now.fail],
+    ["replaced", then.replaced, now.replaced],
+    ["avoided glossary forms", then.avoided, now.avoided]
+  ] as const)
+    if (b > a) regressions.push(`${name}: ${a} -> ${b}`);
+  if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
+  return {
+    previous: {
+      startedAt: typeof prev.startedAt === "string" ? prev.startedAt : null,
+      instructionsVersion: prev.instructionsVersion ?? null,
+      serverVersion: prev.serverVersion ?? null
+    },
+    cause: instructionsMoved && serverMoved ? "instructions+server" : instructionsMoved ? "instructions" : serverMoved ? "server" : "none",
+    regressions,
+    improvements,
+    onlyInOne: [
+      ...[...nextResults.keys()].filter((id) => !prevResults.has(id)).map((id) => `${id}: new`),
+      ...[...prevResults.keys()].filter((id) => !nextResults.has(id)).map((id) => `${id}: gone`)
+    ]
+  };
 }
 
 export function summarize(results: readonly QuestionResult[]): RunReport["summary"] {
@@ -421,6 +514,7 @@ export function httpSender(options: {
           : linkReplaced !== null
             ? `linkGuard: ${linkReplaced}`
             : null,
+      replacedSentence: typeof body.doseGuardSentence === "string" ? body.doseGuardSentence : null,
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
       productContext:
         typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"
@@ -431,14 +525,18 @@ export function httpSender(options: {
 }
 
 const USAGE =
-  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>]";
+  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>] [--compare <previous report.json>]";
 
 function argument(argv: readonly string[], name: string): string | undefined {
   const at = argv.indexOf(name);
   return at === -1 ? undefined : argv[at + 1];
 }
 
-/** The command. Exit 0 when every call answered, 1 when one failed, 2 on a usage error. Verdicts do not set the code. */
+/**
+ * The command. Exit 0 when every call answered, 1 when one failed, 2 on a usage error (an unreadable `--compare` report
+ * included: it is checked BEFORE any model call is spent), 3 when `--compare` found a regression and no call failed.
+ * Verdicts alone do not set the code.
+ */
 export async function main(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -451,13 +549,23 @@ export async function main(
     io.log(USAGE);
     return 2;
   }
+  const comparePath = argument(argv, "--compare");
+  let previous: unknown;
+  if (comparePath !== undefined) {
+    try {
+      previous = JSON.parse(readFileSync(comparePath, "utf8"));
+    } catch {
+      io.log(`the previous report cannot be read: ${comparePath}`);
+      return 2;
+    }
+  }
   const fetchImpl = io.fetchImpl ?? fetch;
   const health = (await fetchImpl(`${baseUrl.replace(/\/$/, "")}/health`)
     .then((r) => r.json())
     .catch(() => ({}))) as Record<string, unknown>;
   const startedAt = new Date().toISOString();
   const results = await runQuestionSet(
-    httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? "question-set-run", fetchImpl })
+    httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? QUESTION_SET_CLIENT_KEY, fetchImpl })
   );
   // the server's /health first; an older server without it still names the version on each model answer
   const fromAnswers = [...new Set(results.map((r) => r.instructionsVersion).filter((v): v is string => v !== null))];
@@ -475,6 +583,7 @@ export async function main(
     summary: summarize(results),
     results
   };
+  if (comparePath !== undefined) report.comparison = compareReports(previous, report);
   writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
   const s = report.summary;
   io.log(
@@ -482,5 +591,12 @@ export async function main(
       `pass ${s.pass}, fail ${s.fail}, human ${s.human}, replaced ${s.replaced}, local ${s.local}, errors ${s.errors}; ` +
       `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}`
   );
-  return s.errors > 0 ? 1 : 0;
+  const c = report.comparison;
+  if (c)
+    io.log(
+      `compared with ${c.previous.startedAt ?? "unknown"} (moved: ${c.cause}): ` +
+        (c.regressions.length > 0 ? `REGRESSION ${c.regressions.join("; ")}` : "no regression") +
+        (c.improvements.length > 0 ? `; improved ${c.improvements.join("; ")}` : "")
+    );
+  return s.errors > 0 ? 1 : c && c.regressions.length > 0 ? 3 : 0;
 }
