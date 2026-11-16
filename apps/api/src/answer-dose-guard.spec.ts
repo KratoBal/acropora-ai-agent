@@ -132,6 +132,11 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       ["Csepegtess naponta 3-4-et 100 literre.", "given-count"],
       ["Adagolj hetente 2-3-at.", "given-count"],
       ["Tegyél naponta 2 kupakot 100 literre.", "other-unit"],
+      // an amount per volume, with no verb and no unit (barracuda, #99)
+      ["Az adag 100 literenként napi 2.", "per-volume-count"],
+      ["Hetente 1 jut 100 literre.", "per-volume-count"],
+      // a bare count next to a volume that is no rate ("literes"): the bare-count-plus-volume reading
+      ["Az Ön 300 literes akváriumába napi 2.", "per-volume-count"],
       ["Naponta 2-3 ml-t adj.", "no-fixed-dose"]
     ] as const) {
       const result = guardAnswerDoses(answer, empty);
