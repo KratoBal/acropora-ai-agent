@@ -52,6 +52,18 @@ describe("buildVersion", () => {
   });
 });
 
+describe("buildVersion, the Coolify fallback", () => {
+  it("reads SOURCE_COMMIT when the workflow's variable is not set, with the same check; the workflow's wins", () => {
+    assert.equal(buildVersion({ SOURCE_COMMIT: "95B03477807D" }), "95b03477807d");
+    assert.equal(buildVersion({ SOURCE_COMMIT: "<script>" }), UNKNOWN_VERSION);
+    assert.equal(
+      buildVersion({ [BUILD_VERSION_ENV]: "982a33f", SOURCE_COMMIT: "95b0347" }),
+      "982a33f"
+    );
+    assert.equal(buildVersion({ [BUILD_VERSION_ENV]: "  ", SOURCE_COMMIT: "95b0347" }), "95b0347");
+  });
+});
+
 describe("buildTime", () => {
   it("reports the moment the image was assembled", () => {
     // Both spellings, because `date -u +%Y-%m-%dT%H:%M:%SZ` writes the short

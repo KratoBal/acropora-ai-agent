@@ -8,15 +8,25 @@
  * The variable is set by the deploy workflow from the sha it is deploying.
  * Anything that starts the container another way leaves it empty, and the
  * honest answer there is `unknown`.
+ *
+ * THE TEST INSTANCE IS BUILT BY COOLIFY, NOT BY THE WORKFLOW (acrobot 53709,
+ * 2026-11-16): deploy-stage.yml has not run since 10-31, and the Coolify build
+ * passes the sha as `SOURCE_COMMIT`. The first question-set run therefore read
+ * `unknown`, and could not say which code answered. `SOURCE_COMMIT` is the
+ * fallback, with the same check; the workflow's variable still wins when both
+ * are set.
  */
 export const BUILD_VERSION_ENV = "ACROPORA_AI_COMMIT";
+export const BUILD_VERSION_FALLBACK_ENV = "SOURCE_COMMIT";
 
 export const UNKNOWN_VERSION = "unknown";
 
 export function buildVersion(
   environment: NodeJS.ProcessEnv = process.env
 ): string {
-  const raw = environment[BUILD_VERSION_ENV]?.trim();
+  const raw =
+    environment[BUILD_VERSION_ENV]?.trim() ||
+    environment[BUILD_VERSION_FALLBACK_ENV]?.trim();
 
   if (!raw) return UNKNOWN_VERSION;
 
