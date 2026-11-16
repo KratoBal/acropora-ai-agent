@@ -9,6 +9,7 @@ import { ABBREVIATIONS } from "./glossary.js";
 import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
   checkAbbreviation,
+  compareReports,
   countTerms,
   httpSender,
   main,
@@ -32,7 +33,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "116fb9eccedc", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -199,7 +200,7 @@ describe("httpSender", () => {
     const waits: number[] = [];
     const responses = [
       new Response(JSON.stringify({ error: "rate limit exceeded" }), { status: 429, headers: { "retry-after": "2" } }),
-      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "valasz", model: "gpt-5.1", instructionsVersion: "116fb9eccedc" }), { status: 200 })
+      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "valasz", model: "gpt-5.1", instructionsVersion: "0123456789ab" }), { status: 200 })
     ];
     const send = httpSender({
       baseUrl: "http://ai.test/",
@@ -453,5 +454,114 @@ describe("main, with a server that predates the /health field", () => {
     const report = JSON.parse(readFileSync(out, "utf8")) as RunReport;
     assert.equal(report.instructionsVersion, "116fb9eccedc");
     assert.equal(report.serverVersion, "unknown");
+  });
+});
+
+describe("compareReports (t-20261116-kerdeskeszlet-or)", () => {
+  /*
+    What turns this red: a pass that became a fail or a replaced answer not called a regression; a human verdict
+    compared; a rise in fails, replaced answers or avoided forms missed; the cause naming the wrong thing that moved;
+    an older report shape (no replaced count) breaking the comparison.
+  */
+  const result = (id: string, verdict: string, extra: Record<string, unknown> = {}) =>
+    ({ id, verdict, replacedBy: null, ...extra }) as never;
+  const report = (results: unknown[], summary: Partial<Record<string, unknown>> = {}, versions: Record<string, unknown> = {}) =>
+    ({
+      questionSetVersion: "1.2.0",
+      instructionsVersion: "aaaaaaaaaaaa",
+      serverVersion: "s1",
+      startedAt: "2026-11-16T08:00:00.000Z",
+      finishedAt: "2026-11-16T08:05:00.000Z",
+      summary: { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, errors: 0, glossary: { answers: 1, preferred: 1, avoided: 0 }, ...summary },
+      results,
+      ...versions
+    }) as never;
+
+  it("calls a pass turned fail or replaced a regression, a fail turned pass an improvement, and ignores human", () => {
+    const c = compareReports(
+      report([result("a", "pass"), result("b", "pass"), result("c", "fail"), result("d", "human")]),
+      report([
+        result("a", "fail"),
+        result("b", "replaced", { replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)" }),
+        result("c", "pass"),
+        result("d", "fail")
+      ])
+    );
+    assert.deepEqual(c.regressions, ["a: pass -> fail", "b: pass -> replaced (doseGuard: DOSE_NOT_IN_CATALOGUE (given-count))"]);
+    assert.deepEqual(c.improvements, ["c: fail -> pass"]);
+    assert.equal(c.cause, "none");
+  });
+
+  it("counts a rise in fails, replaced answers, avoided forms and any error; an old report without counts is no rise", () => {
+    const c = compareReports(
+      report([], { fail: 1, replaced: 1, glossary: { answers: 1, preferred: 1, avoided: 0 } }),
+      report([], { fail: 2, replaced: 3, errors: 1, glossary: { answers: 1, preferred: 1, avoided: 2 } })
+    );
+    assert.deepEqual(c.regressions, ["fail: 1 -> 2", "replaced: 1 -> 3", "avoided glossary forms: 0 -> 2", "errors: 1"]);
+    const old = { summary: { pass: 1, fail: 0, human: 0, errors: 0, glossary: { answers: 1, preferred: 1, avoided: 0 } }, results: [] };
+    assert.deepEqual(compareReports(old, report([], { replaced: 2 })).regressions, []);
+  });
+
+  it("names what moved: the instruction text, the server, both or neither; and lists a question in only one run", () => {
+    const base = report([result("a", "pass")]);
+    assert.equal(compareReports(base, report([result("a", "pass")], {}, { instructionsVersion: "bbbbbbbbbbbb" })).cause, "instructions");
+    assert.equal(compareReports(base, report([result("a", "pass")], {}, { serverVersion: "s2" })).cause, "server");
+    assert.equal(
+      compareReports(base, report([], {}, { instructionsVersion: "bbbbbbbbbbbb", serverVersion: "s2" })).cause,
+      "instructions+server"
+    );
+    assert.deepEqual(compareReports(base, report([result("z", "pass")])).onlyInOne, ["z: new", "a: gone"]);
+  });
+});
+
+describe("main --compare", () => {
+  const health = { version: "s1", instructionsVersion: "aaaaaaaaaaaa" };
+  const answering = (answer: string) =>
+    (async (url: string) =>
+      url.endsWith("/health")
+        ? new Response(JSON.stringify(health))
+        : new Response(JSON.stringify({ conversationId: "c", messageId: "m", answer, model: "gpt-5.1" }))) as unknown as typeof fetch;
+
+  it("refuses an unreadable previous report before any model call (exit 2)", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const dir = mkdtempSync(join(tmpdir(), "question-set-compare-"));
+    const lines: string[] = [];
+    const code = await main(
+      ["--url", "http://ai.test", "--out", join(dir, "r.json"), "--compare", join(dir, "missing.json")],
+      { AI_API_TOKEN: "t" },
+      { log: (l) => lines.push(l), fetchImpl }
+    );
+    assert.equal(code, 2);
+    assert.equal(calls, 0);
+    assert.match(lines[0]!, /cannot be read/);
+  });
+
+  it("exits 3 on a regression and writes the comparison; 0 when nothing got worse", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "question-set-compare-"));
+    const first = join(dir, "first.json");
+    // every machine-scored glossary question passes on a clean nitrate answer
+    assert.equal(await main(["--url", "http://ai.test", "--out", first], { AI_API_TOKEN: "t" }, { log: () => {}, fetchImpl: answering("A nitrátot hetente mérd.") }), 0);
+    const second = join(dir, "second.json");
+    const same = await main(
+      ["--url", "http://ai.test", "--out", second, "--compare", first],
+      { AI_API_TOKEN: "t" },
+      { log: () => {}, fetchImpl: answering("A nitrátot hetente mérd.") }
+    );
+    assert.equal(same, 0);
+    const third = join(dir, "third.json");
+    const lines: string[] = [];
+    const worse = await main(
+      ["--url", "http://ai.test", "--out", third, "--compare", first],
+      { AI_API_TOKEN: "t" },
+      { log: (l) => lines.push(l), fetchImpl: answering("A korallos akváriumban a nitrátot hetente mérd.") }
+    );
+    assert.equal(worse, 3);
+    const report = JSON.parse(readFileSync(third, "utf8")) as RunReport;
+    assert.ok(report.comparison!.regressions.includes("glossary-not-forced: pass -> fail"));
+    assert.match(lines.at(-1)!, /REGRESSION/);
   });
 });

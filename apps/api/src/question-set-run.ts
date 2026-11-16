@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 import {
   ABBREVIATIONS,
@@ -347,6 +347,73 @@ export interface RunReport {
     glossary: { answers: number; preferred: number; avoided: number };
   };
   results: QuestionResult[];
+  /** With `--compare <previous report>`: see `compareReports`. */
+  comparison?: Comparison;
+}
+
+/**
+ * TWO RUNS SIDE BY SIDE (t-20261116-kerdeskeszlet-or): what changed between them, and whether the machine verdicts got
+ * worse. The fleet's cron runs the set when the test AI's code or instruction text changes, and weekly; it speaks only
+ * on a regression, so this is the rule it speaks by.
+ *
+ * A REGRESSION is: a question that passed and now fails or is replaced; any failed call; more fails, more replaced
+ * answers or more avoided glossary forms than before. A `human` verdict is never compared: a person reads it. A question
+ * in only one of the two runs (the set changed) is listed, not judged.
+ *
+ * THE CAUSE names what moved between the runs: the instruction text, the server's code, both, or neither (the model
+ * itself, the weekly run). A regression with cause `none` is model drift.
+ */
+export interface Comparison {
+  previous: { startedAt: string | null; instructionsVersion: string | null; serverVersion: string | null };
+  cause: "instructions" | "server" | "instructions+server" | "none";
+  regressions: string[];
+  improvements: string[];
+  onlyInOne: string[];
+}
+
+const SCORED: readonly Verdict[] = ["pass", "fail", "replaced"];
+
+export function compareReports(previous: unknown, next: RunReport): Comparison {
+  const prev = (previous ?? {}) as Partial<RunReport>;
+  const prevResults = new Map(
+    (Array.isArray(prev.results) ? prev.results : []).map((r) => [r.id, r] as const)
+  );
+  const nextResults = new Map(next.results.map((r) => [r.id, r] as const));
+  const instructionsMoved = (prev.instructionsVersion ?? null) !== next.instructionsVersion;
+  const serverMoved = (prev.serverVersion ?? null) !== next.serverVersion;
+  const regressions: string[] = [];
+  const improvements: string[] = [];
+  for (const [id, now] of nextResults) {
+    const before = prevResults.get(id);
+    if (!before) continue;
+    if (before.verdict === "pass" && (now.verdict === "fail" || now.verdict === "replaced"))
+      regressions.push(`${id}: pass -> ${now.verdict}${now.replacedBy ? ` (${now.replacedBy})` : ""}`);
+    else if (SCORED.includes(before.verdict) && before.verdict !== "pass" && now.verdict === "pass")
+      improvements.push(`${id}: ${before.verdict} -> pass`);
+  }
+  const before = prev.summary;
+  const counts: [string, number, number | undefined][] = [
+    ["fail", next.summary.fail, before?.fail],
+    ["replaced", next.summary.replaced, before?.replaced],
+    ["avoided glossary forms", next.summary.glossary.avoided, before?.glossary?.avoided]
+  ];
+  for (const [name, now, then] of counts)
+    if (typeof then === "number" && now > then) regressions.push(`${name}: ${then} -> ${now}`);
+  if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
+  return {
+    previous: {
+      startedAt: typeof prev.startedAt === "string" ? prev.startedAt : null,
+      instructionsVersion: prev.instructionsVersion ?? null,
+      serverVersion: prev.serverVersion ?? null
+    },
+    cause: instructionsMoved && serverMoved ? "instructions+server" : instructionsMoved ? "instructions" : serverMoved ? "server" : "none",
+    regressions,
+    improvements,
+    onlyInOne: [
+      ...[...nextResults.keys()].filter((id) => !prevResults.has(id)).map((id) => `${id}: new`),
+      ...[...prevResults.keys()].filter((id) => !nextResults.has(id)).map((id) => `${id}: gone`)
+    ]
+  };
 }
 
 export function summarize(results: readonly QuestionResult[]): RunReport["summary"] {
@@ -431,14 +498,18 @@ export function httpSender(options: {
 }
 
 const USAGE =
-  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>]";
+  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>] [--compare <previous report.json>]";
 
 function argument(argv: readonly string[], name: string): string | undefined {
   const at = argv.indexOf(name);
   return at === -1 ? undefined : argv[at + 1];
 }
 
-/** The command. Exit 0 when every call answered, 1 when one failed, 2 on a usage error. Verdicts do not set the code. */
+/**
+ * The command. Exit 0 when every call answered, 1 when one failed, 2 on a usage error (an unreadable `--compare` report
+ * included: it is checked BEFORE any model call is spent), 3 when `--compare` found a regression and no call failed.
+ * Verdicts alone do not set the code.
+ */
 export async function main(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -450,6 +521,16 @@ export async function main(
   if (!baseUrl || !out || !token) {
     io.log(USAGE);
     return 2;
+  }
+  const comparePath = argument(argv, "--compare");
+  let previous: unknown;
+  if (comparePath !== undefined) {
+    try {
+      previous = JSON.parse(readFileSync(comparePath, "utf8"));
+    } catch {
+      io.log(`the previous report cannot be read: ${comparePath}`);
+      return 2;
+    }
   }
   const fetchImpl = io.fetchImpl ?? fetch;
   const health = (await fetchImpl(`${baseUrl.replace(/\/$/, "")}/health`)
@@ -475,6 +556,7 @@ export async function main(
     summary: summarize(results),
     results
   };
+  if (comparePath !== undefined) report.comparison = compareReports(previous, report);
   writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
   const s = report.summary;
   io.log(
@@ -482,5 +564,12 @@ export async function main(
       `pass ${s.pass}, fail ${s.fail}, human ${s.human}, replaced ${s.replaced}, local ${s.local}, errors ${s.errors}; ` +
       `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}`
   );
-  return s.errors > 0 ? 1 : 0;
+  const c = report.comparison;
+  if (c)
+    io.log(
+      `compared with ${c.previous.startedAt ?? "unknown"} (moved: ${c.cause}): ` +
+        (c.regressions.length > 0 ? `REGRESSION ${c.regressions.join("; ")}` : "no regression") +
+        (c.improvements.length > 0 ? `; improved ${c.improvements.join("; ")}` : "")
+    );
+  return s.errors > 0 ? 1 : c && c.regressions.length > 0 ? 3 : 0;
 }
