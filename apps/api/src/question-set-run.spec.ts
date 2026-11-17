@@ -955,6 +955,14 @@ describe("a follow-up of a parent answer that is not the model's is void", () =>
     assert.deepEqual(results.map((r) => r.verdict), ["replaced", "void", "void"]);
   });
 
+  it("two follow-ups of ONE parent share its conversation: when the first one's answer is swapped, the second one is void too (barracuda on #120)", async () => {
+    // a is a model answer, b follows a and is swapped, c follows a too and is asked after b: its conversation holds b's swapped answer
+    const send: SendQuestion = async (input) =>
+      input.message === "b" ? swapped("c1", "csere") : modelReply("c1", `m-${input.message}`, "valasz");
+    const results = await runQuestionSet(send, [q("a"), q("b", "a"), q("c", "a")]);
+    assert.deepEqual(results.map((r) => r.verdict), ["human", "replaced", "void"]);
+  });
+
   it("CONTROL: a follow-up of a MODEL answer is scored as before (the expansion still fails it)", async () => {
     const send: SendQuestion = async (input) =>
       input.message === "abbreviation-expanded" ? modelReply("c1", "m1", expandedAgain) : modelReply("c1", "m2", expandedAgain);

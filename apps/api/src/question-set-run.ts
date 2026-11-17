@@ -322,12 +322,12 @@ export async function runQuestionSet(
     }
   }
   const results = new Map<string, QuestionResult>();
-  // the questions whose conversation holds an answer that is not the model's, an ancestor's included
+  // the CONVERSATIONS that hold an answer that is not the model's (not the parent chain: two follow-ups of one parent share the
+  // conversation, so the second one sees the first one's swapped answer too; barracuda on #120)
   const notTheModels = new Set<string>();
   for (const question of ordered) {
-    const parent = question.followsUp ? results.get(question.followsUp) : undefined;
-    const parentIsNotTheModels = parent !== undefined && notTheModels.has(parent.id);
     const conversationId = question.followsUp ? conversationOf.get(question.followsUp) : undefined;
+    const parentIsNotTheModels = conversationId !== undefined && notTheModels.has(conversationId);
     const askedAt = Date.now();
     // a sender that throws (the run's own bug, or a stand-in) is one question's error too, never the end of the run
     const reply =
@@ -360,7 +360,7 @@ export async function runQuestionSet(
           ? { verdict: "void" as const, measures: { voidBecause: VOID_BECAUSE } }
           : score(question, answer))
     });
-    if (parentIsNotTheModels || (reply.ok && reply.source !== "model")) notTheModels.add(question.id);
+    if (reply.ok && reply.source !== "model") notTheModels.add(reply.conversationId);
   }
   return questions.map((question) => results.get(question.id)!);
 }
