@@ -249,3 +249,37 @@ describe("a chat útja: a válasz-őr be van kötve", () => {
     assert.deepEqual([body.answer, body.doseGuard], ["Előbb mérje a KH-t.", null]);
   });
 });
+
+/*
+  THE PUMP AS A NOUN (card 15e38019, task t-20261117-ai-dose-guard-pumpa; acrobot 55013). The question-set run of 2026-11-17 17:45 UTC lost
+  an answer on "... 150-300 liter, ez mar logisztikai kerdes (hordok, pumpak, keverotartaly)": "pumpak" (the plural noun, water pumps) was read as a
+  dosing-pump unit next to a volume. WHAT TURNS IT RED: the plural noun next to a volume or a period replacing the answer; a pump DOSE
+  (a number or a word number with "pumpa", "pumpat", "pumpaval") leaving.
+*/
+describe("a pumpa mint főnév nem adagolási egység, a pumpa mint adag igen", () => {
+  const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("a többes számú főnév (pumpák) egy felsorolásban vagy egy gyakoriság mellett nem adag", () => {
+    for (const answer of [
+      "- **Részleges vízcsere:** 3000 liternél még egy 5–10%-os vízcsere is 150–300 liter, ez már logisztikai kérdés (hordók, pumpák, keverőtartály)",
+      "A pumpák naponta kétszer indulnak a 200 literes medencében."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a pumpa adagként (számmal, szám-szóval, ragozva) továbbra is fennakad", () => {
+    for (const [answer, rule] of [
+      ["Egy pumpa naponta elég 100 literre.", "no-fixed-dose"],
+      ["Adj naponta két pumpát 100 literre.", "no-fixed-dose"],
+      ["Nyomj egy pumpával naponta 100 literre.", "no-fixed-dose"],
+      ["Adj naponta 2 pumpát 100 literre.", "other-unit"],
+      ["Naponta 2 pumpa 100 literhez.", "other-unit"],
+      // the plural ACCUSATIVE is something given, so it stays a dose word
+      ["Naponta két pumpákat adj 100 literre.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, empty);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+});
