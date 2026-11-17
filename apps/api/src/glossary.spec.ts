@@ -79,6 +79,9 @@ describe("a szójegyzék a promptban", () => {
     assert.match(GLOSSARY_INSTRUCTIONS, /SOHA\s+ne\s+bontsd\s+ki\s+újra/);
     assert.match(GLOSSARY_INSTRUCTIONS, /az\s+előbb\s+említett\s+ATO/i);
     assert.match(GLOSSARY_INSTRUCTIONS, /nyitómondatát\s+ne\s+másold/i);
+    // the headline rule is for the FIRST expansion only (barracuda on #118): a heading in a follow-up answer holds the bare abbreviation
+    assert.match(GLOSSARY_INSTRUCTIONS, /csak\s+ha\s+ebben\s+a\s+beszélgetésben\s+még\s+nem\s+bontottad\s+ki/i);
+    assert.match(GLOSSARY_INSTRUCTIONS, /követő\s+válasz\s+címében/i);
   });
 
   it("mind a három kerülendő alakot megnevezi, amit a brief előír", () => {
