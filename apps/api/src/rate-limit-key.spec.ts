@@ -62,4 +62,23 @@ describe("the chat's rate limit, per client key", () => {
       await a.close();
     }
   });
+
+  // barracuda on #109: with keys the address no longer capped the OS as a whole; 120 a minute per address stays as a ceiling
+  it("with keys, the address still has a ceiling of 120 a minute, and a request refused by its key does not spend it", async () => {
+    const a = app();
+    try {
+      const statuses: number[] = [];
+      // one key: 20 up, then 10 refused by the key's own limit (they must not count against the ceiling)
+      for (let i = 0; i < 30; i++) statuses.push((await ask(a, "os-user:sok")).statusCode);
+      // five more keys, 20 each: with the first key's 20 that is exactly 120
+      for (let k = 0; k < 5; k++) for (let i = 0; i < 20; i++) statuses.push((await ask(a, `os-user:${k}`)).statusCode);
+      const over = (await ask(a, "os-user:uj")).statusCode;
+      assert.deepEqual(
+        [statuses.slice(0, 20).every((s) => s === 200), statuses.slice(20, 30).every((s) => s === 429), statuses.slice(30).every((s) => s === 200), over],
+        [true, true, true, 429]
+      );
+    } finally {
+      await a.close();
+    }
+  });
 });
