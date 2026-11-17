@@ -600,7 +600,10 @@ export function buildApp(dependencies: AppDependencies = {}) {
    * of 120 a minute (its own, apart from the chat's, so a batch run cannot refuse a chat). No caller change is needed: the
    * extractors send no client key.
    */
-  function routeRateBuckets(route: string, request: { ip: string }): [string, number][] {
+  function routeRateBuckets(request: { ip: string; routeOptions: { url?: string } }): [string, number][] {
+    // The name comes from the route the request MATCHED, not from a literal at the call site: two names swapped between handlers
+    // (barracuda on #114) cannot happen, and a new endpoint gets its own bucket by calling this and nothing else.
+    const route = request.routeOptions.url ?? "unrouted";
     return [
       [`route:${route}:${request.ip}`, rateLimitPerMinute],
       [`ceiling:routes:${request.ip}`, addressCeilingPerMinute]
@@ -1250,7 +1253,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/measurement-recommendations", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1340,7 +1343,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/dosing-extractions", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1428,7 +1431,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/product-field-extractions", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1521,7 +1524,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/claim-extractions", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1622,7 +1625,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/ticket-drafts", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1727,7 +1730,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         });
       }
 
-      if (!consumeRateLimits(routeRateBuckets("/v1/figure-claim-extractions", request))) {
+      if (!consumeRateLimits(routeRateBuckets(request))) {
         return reply
           .code(429)
           .header("Retry-After", "60")
@@ -1831,7 +1834,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/knowledge-answers", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1918,7 +1921,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/research-queries", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -2000,7 +2003,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimits(routeRateBuckets("/v1/research-summaries", request))) {
+    if (!consumeRateLimits(routeRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
