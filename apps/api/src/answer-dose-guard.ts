@@ -121,11 +121,13 @@ const isGivenCount = (s: string) => DOSING_VERB.test(s) || ACCUSATIVE_COUNT.test
 const PER_VOLUME = new RegExp(`${NUM}\\s*(?:l|ltr|liter|litre)-?(?:enkent|re|ra|hez)\\b`);
 
 /**
- * A SUM OF PURE NUMBERS IS ARITHMETIC, NOT A DOSE ("2,5 × 7 = 17,5 liter", "2,5 x 7 = 17,5"): three numbers, a multiplication sign and an equals sign, nothing
- * between them. Its operands are taken out, so the "7" is no count. A number with a UNIT stays (an amount): "3 × 2 ml" and "2 × 5 ml" have no equals sign, and
- * "2 × 5 = 10 csepp" leaves the unit word, which still makes the sentence a dose statement (card 89a6ba86).
+ * THE OPERANDS OF A SUM OF PURE NUMBERS ARE ARITHMETIC, NOT A DOSE ("2,5 × 7 = 17,5 liter", "2,5 x 7 = 17,5"): two numbers and a multiplication sign that
+ * an equals sign and a number follow. ONLY THE LEFT SIDE IS TAKEN OUT, the result stays (barracuda on #122): "2 × 5 = 10-et" is still a dose, its "10-et" is a
+ * counted thing given, and a first version that took the result too let it through. A result with a unit ("= 10 csepp") keeps its unit word and amount;
+ * a result followed by a volume ("= 17,5 liter") is a volume and no count. A number with a UNIT on the left has no equals sign after it and is untouched
+ * ("3 × 2 ml", "2 × 5 ml") (card 89a6ba86).
  */
-const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?\s*=\s*\d+(?:[.,]\d+)?/g;
+const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?(?=\s*=\s*\d)/g;
 
 /**
  * A NUMBER RANGE IS ONE NUMBER: "8-10 órás", "1-2 alkalommal", "5–10 ppm". Read as it stands, the range's first number

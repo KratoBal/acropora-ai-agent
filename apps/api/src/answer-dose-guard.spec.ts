@@ -196,6 +196,9 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       ["A NO3-PO4 csökkentéséhez adj naponta 5-öt a készítményből.", "given-count"],
       ["Adjon naponta 3-at, ha a PO4 magas.", "given-count"],
       ["Adagolj naponta 2 × 5 = 10 csepp készítményt 100 literre.", "no-fixed-dose"],
+      // barracuda on #122: the RESULT of an equation is not taken out, so a counted thing given still blocks
+      ["Adj naponta 2 × 5 = 10-et.", "given-count"],
+      ["Naponta 2 x 3 = 6-ot adj belőle.", "given-count"],
       ["Adj naponta 3 × 2 ml-t 100 literre.", "no-fixed-dose"],
       ["Adj naponta 2 × 5 ml készítményt.", "no-fixed-dose"],
       // a number with a unit next to a formula is still an amount
