@@ -47,7 +47,12 @@ import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
  * gives the same two counts, so the two can stand side by side.
  */
 
-export type Verdict = "pass" | "fail" | "human" | "replaced" | "local";
+/**
+ * `void`: the question could not measure the model. A FOLLOW-UP is asked in its parent's conversation, so the model is shown the parent's
+ * answer; when that answer is not the model's (the dose guard swapped it, or it was local), the follow-up's rule ("do not expand again")
+ * was tested against a history that never held the first expansion. Not a fail, not a pass, never compared (t-20261117-kerdeskeszlet-void).
+ */
+export type Verdict = "pass" | "fail" | "human" | "replaced" | "local" | "void";
 
 /** Who wrote the answer: the model, the model but a guard swapped the text, or local logic with no model call. */
 export type AnswerSource = "model" | "replaced" | "local";
@@ -178,6 +183,7 @@ export type Measures =
   | { temperatures: string[] }
   | { limitationSentences: string[] }
   | { firstSentence: string }
+  | { voidBecause: string }
   | Record<string, never>;
 
 export interface QuestionResult {
@@ -289,6 +295,9 @@ export type SendQuestion = (input: {
   | { ok: false; error: string }
 >;
 
+/** Why a follow-up reads void; the report carries the words. */
+const VOID_BECAUSE = "the conversation holds an answer that is not the model's";
+
 /**
  * Asks the set in order; a question with `followsUp` goes into the conversation of the question it follows, after it.
  * A failed call is written down and the run goes on: one 502 must not cost the other fifteen answers.
@@ -313,8 +322,12 @@ export async function runQuestionSet(
     }
   }
   const results = new Map<string, QuestionResult>();
+  // the CONVERSATIONS that hold an answer that is not the model's (not the parent chain: two follow-ups of one parent share the
+  // conversation, so the second one sees the first one's swapped answer too; barracuda on #120)
+  const notTheModels = new Set<string>();
   for (const question of ordered) {
     const conversationId = question.followsUp ? conversationOf.get(question.followsUp) : undefined;
+    const parentIsNotTheModels = conversationId !== undefined && notTheModels.has(conversationId);
     const askedAt = Date.now();
     // a sender that throws (the run's own bug, or a stand-in) is one question's error too, never the end of the run
     const reply =
@@ -343,8 +356,11 @@ export async function runQuestionSet(
       elapsedMs,
       ...(reply.ok && reply.source !== "model"
         ? { verdict: reply.source, measures: {} }
-        : score(question, answer))
+        : reply.ok && parentIsNotTheModels
+          ? { verdict: "void" as const, measures: { voidBecause: VOID_BECAUSE } }
+          : score(question, answer))
     });
+    if (reply.ok && reply.source !== "model") notTheModels.add(reply.conversationId);
   }
   return questions.map((question) => results.get(question.id)!);
 }
@@ -363,6 +379,8 @@ export interface RunReport {
     /** Answers a guard swapped, and local answers: not scored, not in the glossary totals. */
     replaced: number;
     local: number;
+    /** Follow-ups whose history held an answer that is not the model's: not scored. */
+    void: number;
     errors: number;
     /** Over the model's own answers, to stand next to the 2026-08-28 baseline (preferred 11, avoided 26 on 18). */
     glossary: { answers: number; preferred: number; avoided: number };
@@ -469,6 +487,7 @@ export function summarize(results: readonly QuestionResult[]): RunReport["summar
     human: results.filter((r) => r.verdict === "human").length,
     replaced: results.filter((r) => r.verdict === "replaced").length,
     local: results.filter((r) => r.verdict === "local").length,
+    void: results.filter((r) => r.verdict === "void").length,
     errors: results.filter((r) => r.error !== null).length,
     glossary: {
       answers: answered.length,
@@ -594,7 +613,7 @@ export function tallyRepeats(runs: readonly (readonly QuestionResult[])[]): Reco
   const out: Record<string, Record<Verdict | "error", number>> = {};
   for (const run of runs)
     for (const r of run) {
-      const row = (out[r.id] ??= { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, error: 0 });
+      const row = (out[r.id] ??= { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, void: 0, error: 0 });
       if (r.error !== null) row.error += 1;
       else row[r.verdict] += 1;
     }
