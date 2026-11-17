@@ -92,7 +92,8 @@ describe("the chat deadline over a real socket", () => {
       assert.equal(response.status, 504);
       const body = (await response.json()) as { error: string; waitedMs: number };
       assert.equal(body.error, CHAT_DEADLINE_ERROR);
-      assert.ok(body.waitedMs >= 500 && body.waitedMs < 1000, `waitedMs ${body.waitedMs}`);
+      // the timer can fire a millisecond before Date.now() says 500 (CI measured 499, 2026-11-17): the bound is the net
+      assert.ok(body.waitedMs >= 450 && body.waitedMs < 1000, `waitedMs ${body.waitedMs}`);
       assert.equal(signal?.aborted, true);
       await settle(1200);
       assert.deepEqual(s.saved, ["user"]);

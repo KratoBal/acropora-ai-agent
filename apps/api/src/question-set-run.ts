@@ -649,6 +649,11 @@ export async function main(
       io.log(`the previous report cannot be read: ${comparePath}`);
       return 2;
     }
+    // a partial run's report is not a baseline either (barracuda on #111): the questions it lacks would read as regressions
+    if (previous !== null && typeof previous === "object" && "repeat" in previous) {
+      io.log(`the previous report is a partial run (--only/--repeat), not a baseline: ${comparePath}`);
+      return 2;
+    }
   }
   const fetchImpl = io.fetchImpl ?? fetch;
   const health = (await fetchImpl(`${baseUrl.replace(/\/$/, "")}/health`)
