@@ -90,9 +90,10 @@ const OTHER_UNIT =
  * (barracuda, #101 v2). The third question-set run lost the ATO answer to exactly this: "-szor" passed as a
  * bare count, and "pótolja" (the evaporated water) as a dosing verb. ONLY this suffix: "-ra/-re" (a target, "napi
  * 3-ra") and "-val/-vel/-mal/-mel" (a difference, "2-vel többet") carry an amount and stay counts (barracuda, #101).
- * After `fold` the suffix reads "-szor" or "-szer".
+ * After `fold` the suffix reads "-szor" or "-szer". THE TIMES SIGN "×" ("naponta 1-2× pótolsz") is the same frequency written as a symbol: "2x"
+ * and "2-szor" were never a bare count, "2×" was, and the question-set run of 2026-11-17 18:00 UTC lost an answer to it (card 15e38019).
  */
-const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0]|-sz[eo]r(?![eo]s)))`);
+const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0\u00d7]|-sz[eo]r(?![eo]s)))`);
 
 /**
  * THE KIND OF THE SENTENCE, NOT THE PRODUCT IN IT (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719).
@@ -142,6 +143,14 @@ const UNIT_WORD =
 const REACH =
   /\b(?:bottles?|flasche|flakon\w*|uveg\w*|kiszereles\w*|tartalom|inhalt|contents?)\b/;
 
+/**
+ * A LIST NUMBER AT A LINE'S START IS NO AMOUNT ("1. Egy hétig kézzel pótold ...", "2) Hetente ..."): a number of one or two digits, a point or
+ * a bracket, a space and then a LETTER (or the bold mark), after the bullet if there is one. A decimal point has no space after it ("1.5 ml"),
+ * and a number followed by another digit or a unit is no marker, so an amount or a given count stays what it was. Measured on the main: the
+ * marker counted as the bare count of the sentence and, next to "naponta" and "pótol-", made a given-count (card 15e38019).
+ */
+const LIST_MARKER = /^\s*(?:[-*\u2022]\s*)*\d{1,2}[.)]\s+(?=[a-z*_])/;
+
 /** The answer's sentences; a decimal point is no end. */
 function sentences(text: string): string[] {
   return text.split(/(?<!\d)[.!?;](?!\d)|\n/).filter((s) => s.trim() !== "");
@@ -171,7 +180,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw).replace(RANGE, "");
+    const s = fold(raw).replace(LIST_MARKER, "").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
