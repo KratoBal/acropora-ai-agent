@@ -7,7 +7,7 @@ import { buildApp, type AppDependencies, type ConversationStore } from "./app.js
   THE NINE MODEL ENDPOINTS' OWN BUCKETS (card 41e81901, t-20261117-ai-rate-limit-maradek). After #109 and #110 only the chat and
   the rating were keyed per caller; the other nine POST endpoints spent ONE bucket keyed by the address, so one batch
   extractor run from the OS's host used up the live ticket draft's allowance too. WHAT TURNS IT RED: a burst on one of
-  these endpoints refusing another; one endpoint allowing more than 20 a minute; the family having no address ceiling;
+  these endpoints refusing another; one endpoint allowing more than 20 a minute; the family having no address ceiling; an endpoint sharing or lacking its own bucket;
   the family's ceiling reaching into the chat's.
 */
 const TOKEN = "kulcs-teszt";
@@ -44,14 +44,30 @@ const hit = (a: ReturnType<typeof app>, url: string) =>
   a.inject({ method: "POST", url, headers: { authorization: `Bearer ${TOKEN}` }, payload: {} });
 
 describe("the model endpoints' rate limit, per endpoint", () => {
-  it("lists every address-keyed endpoint in app.ts, so a new one cannot skip the buckets", async () => {
+  it("every one of the nine endpoints has a bucket of its own, named by the route it matched", async () => {
+    // a fresh app per endpoint: its own 20 end in a 429 on the 21st, and another endpoint is not refused by it. An endpoint without the call, or
+    // one sharing a bucket with another, fails here by name.
+    for (const [index, route] of ROUTES.entries()) {
+      const a = app();
+      try {
+        const burst: number[] = [];
+        for (let i = 0; i < 21; i++) burst.push((await hit(a, route)).statusCode);
+        const other = ROUTES[(index + 1) % ROUTES.length];
+        const next = (await hit(a, other)).statusCode;
+        assert.deepEqual([route, burst.slice(0, 20).every((s) => s !== 429), burst[20], next !== 429], [route, true, 429, true]);
+      } finally {
+        await a.close();
+      }
+    }
+  });
+
+  it("no call site keeps the address as its bucket, and the nine sites are the helper's", async () => {
     const { readFile } = await import("node:fs/promises");
     const source = await readFile(new URL("../../../apps/api/src/app.ts", import.meta.url), "utf8").catch(() =>
       readFile("apps/api/src/app.ts", "utf8")
     );
-    const routes = [...source.matchAll(/consumeRateLimits\(routeRateBuckets\("([^"]+)"/g)].map((m) => m[1]);
-    assert.deepEqual([...routes].sort(), [...ROUTES].sort());
     assert.equal(/consumeRateLimit\(request\.ip\)/.test(source), false);
+    assert.equal([...source.matchAll(/consumeRateLimits\(routeRateBuckets\(request\)\)/g)].length, ROUTES.length);
   });
 
   it("a burst on one endpoint does not refuse another, and each has its own 20 a minute", async () => {
