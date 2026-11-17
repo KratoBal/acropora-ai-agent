@@ -502,10 +502,18 @@ describe("compareReports (t-20261116-kerdeskeszlet-or)", () => {
       serverVersion: "s1",
       startedAt: "2026-11-16T08:00:00.000Z",
       finishedAt: "2026-11-16T08:05:00.000Z",
-      summary: { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, errors: 0, glossary: { answers: 1, preferred: 1, avoided: 0 }, ...summary },
+      summary: { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, void: 0, errors: 0, glossary: { answers: 1, preferred: 1, avoided: 0 }, ...summary },
       results,
       ...versions
     }) as never;
+
+  it("a void is never compared: pass to void is no regression, void to pass or fail to void is no improvement (t-20261117-kerdeskeszlet-void)", () => {
+    const c = compareReports(
+      report([result("a", "pass"), result("b", "void"), result("c", "fail"), result("d", "void")]),
+      report([result("a", "void"), result("b", "pass"), result("c", "void"), result("d", "fail")]) as never
+    );
+    assert.deepEqual([c.regressions, c.improvements], [[], []]);
+  });
 
   it("calls a pass turned fail or replaced a regression, a fail turned pass an improvement, and ignores human", () => {
     const c = compareReports(
@@ -825,6 +833,87 @@ describe("--only and --repeat", () => {
       [{ ...base, id: "x", error: null, verdict: "fail" }],
       [{ ...base, id: "x", error: "network: x", verdict: "human" }]
     ] as unknown as Parameters<typeof tallyRepeats>[0];
-    assert.deepEqual(tallyRepeats(runs).x, { pass: 0, fail: 1, human: 0, replaced: 0, local: 0, error: 1 });
+    assert.deepEqual(tallyRepeats(runs).x, { pass: 0, fail: 1, human: 0, replaced: 0, local: 0, void: 0, error: 1 });
+  });
+});
+
+/*
+  A FOLLOW-UP WHOSE HISTORY IS NOT THE MODEL'S IS VOID (task t-20261117-kerdeskeszlet-void; acrobot 55132). In the 2026-11-17 09:30 UTC run the
+  parent answer (abbreviation-expanded) was swapped by the dose guard, so the conversation held the fallback sentence and no expansion, and the
+  follow-up (abbreviation-not-repeated) was scored FAIL for expanding the abbreviation: a verdict about the model that the model could not have
+  earned. WHAT TURNS IT RED: such a follow-up scored pass/fail; a follow-up of a MODEL answer no longer scored; a follow-up whose OWN answer is
+  swapped no longer reading "replaced"; a void counted as a failure, a regression or an improvement.
+*/
+describe("a follow-up of a parent answer that is not the model's is void", () => {
+  const q = (id: string, followsUp?: string): PinnedQuestion => ({
+    id,
+    probe: "abbreviation",
+    polarity: "must-not-apply",
+    question: id,
+    criterion: "x".repeat(40),
+    axis: "language",
+    ...(followsUp ? { followsUp } : {})
+  });
+  const swapped = (conversationId: string, answer: string) =>
+    ({ ok: true, conversationId, messageId: "m", answer, source: "replaced", replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)", replacedSentence: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+  const local = (conversationId: string, answer: string) =>
+    ({ ok: true, conversationId, messageId: "m", answer, source: "local", replacedBy: null, replacedSentence: null, instructionsVersion: null, productContext: null }) as const;
+  // the real abbreviation probe, so the score() branch that failed on 09:30 is the one that would run
+  const expandedAgain = "Az ATO (Automatic Top Off – automatikus párolgás-utántöltő rendszer) tartálya 10 literes.";
+
+  it("a follow-up after a SWAPPED parent is void, and says why, instead of failing for an expansion the history never held", async () => {
+    const send: SendQuestion = async (input) =>
+      input.message === "abbreviation-expanded"
+        ? swapped("c1", "Erre a termékre a pontos adagolást most nem tudom biztonsággal megadni.")
+        : modelReply("c1", "m2", expandedAgain);
+    const results = await runQuestionSet(send, [
+      { ...question("abbreviation-expanded"), question: "abbreviation-expanded" },
+      { ...question("abbreviation-not-repeated"), question: "abbreviation-not-repeated" }
+    ]);
+    const second = results.find((r) => r.id === "abbreviation-not-repeated")!;
+    assert.equal(second.verdict, "void");
+    assert.deepEqual(second.measures, { voidBecause: "the conversation holds an answer that is not the model's" });
+  });
+
+  it("a follow-up after a LOCAL parent is void too", async () => {
+    const send: SendQuestion = async (input) =>
+      input.message === "a" ? local("c1", "helyi válasz") : modelReply("c1", "m2", expandedAgain);
+    const results = await runQuestionSet(send, [q("a"), q("b", "a")]);
+    assert.equal(results.find((r) => r.id === "b")!.verdict, "void");
+  });
+
+  it("the void reaches down the chain: a follow-up of a follow-up of a swapped answer is void as well", async () => {
+    const send: SendQuestion = async (input) =>
+      input.message === "a" ? swapped("c1", "csere") : modelReply("c1", `m-${input.message}`, "valasz");
+    const results = await runQuestionSet(send, [q("a"), q("b", "a"), q("c", "b")]);
+    assert.deepEqual(results.map((r) => r.verdict), ["replaced", "void", "void"]);
+  });
+
+  it("CONTROL: a follow-up of a MODEL answer is scored as before (the expansion still fails it)", async () => {
+    const send: SendQuestion = async (input) =>
+      input.message === "abbreviation-expanded" ? modelReply("c1", "m1", expandedAgain) : modelReply("c1", "m2", expandedAgain);
+    const results = await runQuestionSet(send, [
+      { ...question("abbreviation-expanded"), question: "abbreviation-expanded" },
+      { ...question("abbreviation-not-repeated"), question: "abbreviation-not-repeated" }
+    ]);
+    assert.equal(results.find((r) => r.id === "abbreviation-not-repeated")!.verdict, "fail");
+  });
+
+  it("CONTROL: a follow-up whose OWN answer is swapped stays replaced, not void; a follow-up of a failed call keeps its error", async () => {
+    const send: SendQuestion = async (input) =>
+      input.message === "a" ? swapped("c1", "csere") : swapped("c1", "a követő válasz is csere");
+    const results = await runQuestionSet(send, [q("a"), q("b", "a")]);
+    assert.equal(results.find((r) => r.id === "b")!.verdict, "replaced");
+    const failed: SendQuestion = async (input) => (input.message === "a" ? { ok: false, error: "HTTP 502" } : modelReply("c", "m", "x"));
+    const noParent = await runQuestionSet(failed, [q("a"), q("b", "a")]);
+    assert.match(noParent.find((r) => r.id === "b")!.error ?? "", /has no conversation/);
+  });
+
+  it("a void is counted apart in the summary and the repeat tally, never as a fail, and never compared", async () => {
+    const send: SendQuestion = async (input) => (input.message === "a" ? swapped("c1", "csere") : modelReply("c1", "m2", "valasz"));
+    const results = await runQuestionSet(send, [q("a"), q("b", "a")]);
+    const summary = summarize(results);
+    assert.deepEqual([summary.fail, summary.replaced, summary.void], [0, 1, 1]);
+    assert.deepEqual(tallyRepeats([results]).b, { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, void: 1, error: 0 });
   });
 });
