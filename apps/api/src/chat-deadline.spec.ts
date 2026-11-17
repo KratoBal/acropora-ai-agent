@@ -49,7 +49,7 @@ async function serve(
   });
   await app.listen({ host: "127.0.0.1", port: 0 });
   const address = app.server.address() as { port: number };
-  const ask = () =>
+  const ask = (message = "Hogyan mérjem a nitrátot?") =>
     fetch(`http://127.0.0.1:${address.port}/v1/chat`, {
       method: "POST",
       headers: {
@@ -57,7 +57,7 @@ async function serve(
         "x-client-key": "question-set-run",
         "content-type": "application/json"
       },
-      body: JSON.stringify({ message: "Hogyan mérjem a nitrátot?" })
+      body: JSON.stringify({ message })
     });
   return { app, ask };
 }
@@ -122,6 +122,30 @@ describe("the chat deadline over a real socket", () => {
       assert.deepEqual(s.outcomes, [CHAT_DEADLINE_ERROR]);
     } finally {
       delete process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS;
+      await app.close();
+    }
+  });
+
+  it("a local answer past the deadline (the pre-filter's block) is not stored either", async () => {
+    process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS = "1000";
+    process.env.AI_CHAT_PREFILTER = "true";
+    const s = store();
+    s.slowReads(900);
+    let calls = 0;
+    const { app, ask } = await serve(s.conversations, async () => {
+      calls += 1;
+      return { output_text: "valasz" };
+    });
+    try {
+      const response = await ask("Hány fok volt ma Budapesten?");
+      assert.equal(response.status, 504);
+      await settle(700);
+      assert.equal(calls, 0);
+      assert.deepEqual(s.saved, ["user"]);
+      assert.deepEqual(s.outcomes, [CHAT_DEADLINE_ERROR]);
+    } finally {
+      delete process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS;
+      delete process.env.AI_CHAT_PREFILTER;
       await app.close();
     }
   });
