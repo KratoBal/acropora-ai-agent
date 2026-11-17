@@ -535,6 +535,18 @@ export function buildApp(dependencies: AppDependencies = {}) {
       : null;
   }
 
+  /**
+   * WHOSE ALLOWANCE A CHAT OR A RATING SPENDS: the caller's client key when it sends a valid one, the address only
+   * without it (acrobot 54567, t-20261117-ai-rate-limit-kulcs). The live OS and the fleet reach this service from the same
+   * host, so per address every OS user and the question-set runner shared one 20 a minute: the runner's morning run of
+   * 2026-11-17 waited out two 429s while sending four or five questions a minute. A client key is one caller (an OS user is
+   * `os-user:<id>`, the runner `question-set-run`); the prefixes keep a key from ever naming an address's bucket.
+   */
+  function rateKeyOf(request: { ip: string; headers: Record<string, unknown> }): string {
+    const key = clientKeyOf(request.headers["x-client-key"]);
+    return key === null ? `ip:${request.ip}` : `client:${key}`;
+  }
+
   /** Which of the two 400s: the header is missing, or it is there and not a key. */
   function clientKeyRefusal(header: unknown): string {
     return header === undefined ? MISSING_CLIENT_KEY : INVALID_CLIENT_KEY;
@@ -606,7 +618,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimit(rateKeyOf(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -2031,7 +2043,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(`rating:${request.ip}`, ratingLimitPerMinute)) {
+    if (!consumeRateLimit(`rating:${rateKeyOf(request)}`, ratingLimitPerMinute)) {
       return reply
         .code(429)
         .header("Retry-After", "60")
