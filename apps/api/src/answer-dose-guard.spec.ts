@@ -172,6 +172,44 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
     }
   });
 
+  /*
+    THE QUESTION-SET RUN OF 2026-11-17 21:15 UTC (card 89a6ba86, task t-20261117-ai-dose-guard-kepletek; acrobot 55223): two more whole answers were swapped
+    (4469 characters and 3042 lost, measured by the size field): "Heti 1-2x meres ... (szenforras-adagolas, biopellet, NO3-PO4 redukalo rendszerek)" and
+    "atlagosan 2,5 liter parolog el naponta -> 2,5 x 7 = 17,5 liter". Measured on the main: the first passes WITHOUT "NO3-PO4" (the range and the times sign are
+    already handled), so the digit of the formula was read as a bare count next to "heti" and "adagolas"; the second is arithmetic on a volume, its "7" read as
+    the count. WHAT TURNS IT RED: either sentence swapped; a formula's digit or an equation's operand hiding a REAL given count, or an amount with a unit.
+  */
+  it("a képlet számjegye (NO3, PO4) és a puszta számokból álló egyenlet nem puszta szám", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const answer of [
+      "- **Heti 1–2×** mérés javasolt, főleg, ha tápanyagszabályzást használsz (szénforrás-adagolás, biopellet, NO3-PO4 redukáló rendszerek)",
+      "Naponta mérd a CO2-t, ha szénforrás-adagolást használsz.",
+      "- Ha azt látod, hogy átlagosan 2,5 liter párolog el naponta → 2,5 × 7 = 17,5 liter → egy **kb. 20 literes tartály elég",
+      "Átlagosan 2,5 liter párolog el naponta, vagyis 2,5 x 7 = 17,5 liter hetente."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a képlet és az egyenlet mellett a valódi adag továbbra is fennakad: tárgyragos szám, egység, mennyiség egységgel", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const [answer, rule] of [
+      ["A NO3-PO4 csökkentéséhez adj naponta 5-öt a készítményből.", "given-count"],
+      ["Adjon naponta 3-at, ha a PO4 magas.", "given-count"],
+      ["Adagolj naponta 2 × 5 = 10 csepp készítményt 100 literre.", "no-fixed-dose"],
+      // barracuda on #122: the RESULT of an equation is not taken out, so a counted thing given still blocks
+      ["Adj naponta 2 × 5 = 10-et.", "given-count"],
+      ["Naponta 2 x 3 = 6-ot adj belőle.", "given-count"],
+      ["Adj naponta 3 × 2 ml-t 100 literre.", "no-fixed-dose"],
+      ["Adj naponta 2 × 5 ml készítményt.", "no-fixed-dose"],
+      // a number with a unit next to a formula is still an amount
+      ["A NO3 miatt adj 2 ml-t 100 literre naponta.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, empty);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+
   it("a név nélküli adag igével, tárgyraggal vagy egységgel továbbra is fennakad, és a szabály neve a válaszban", () => {
     const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
     for (const [answer, rule] of [

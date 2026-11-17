@@ -92,8 +92,10 @@ const OTHER_UNIT =
  * 3-ra") and "-val/-vel/-mal/-mel" (a difference, "2-vel többet") carry an amount and stay counts (barracuda, #101).
  * After `fold` the suffix reads "-szor" or "-szer". THE TIMES SIGN "×" ("naponta 1-2× pótolsz") is the same frequency written as a symbol: "2x"
  * and "2-szor" were never a bare count, "2×" was, and the question-set run of 2026-11-17 18:00 UTC lost an answer to it (card 15e38019).
+ * A DIGIT THAT STANDS AFTER A LETTER IS PART OF A NAME, NOT A COUNT: "NO3-PO4", "CO2", "PO4" (the lookbehind `(?<![a-z])`, after `fold`). The 21:15 UTC run
+ * lost an answer to "NO3-PO4" next to "heti" and "szénforrás-adagolás": the formula's "3" was a bare count and "adagolás" a dosing verb (card 89a6ba86).
  */
-const BARE_COUNT = new RegExp(`${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0\u00d7]|-sz[eo]r(?![eo]s)))`);
+const BARE_COUNT = new RegExp(`(?<![a-z])${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b|(?!\\s*[a-z%\u00b0\u00d7]|-sz[eo]r(?![eo]s)))`);
 
 /**
  * THE KIND OF THE SENTENCE, NOT THE PRODUCT IN IT (t-20261116-adagolasi-or-szukites; barracuda 53718, acrobot 53719).
@@ -117,6 +119,15 @@ const isGivenCount = (s: string) => DOSING_VERB.test(s) || ACCUSATIVE_COUNT.test
  * rate and stays out.
  */
 const PER_VOLUME = new RegExp(`${NUM}\\s*(?:l|ltr|liter|litre)-?(?:enkent|re|ra|hez)\\b`);
+
+/**
+ * THE OPERANDS OF A SUM OF PURE NUMBERS ARE ARITHMETIC, NOT A DOSE ("2,5 × 7 = 17,5 liter", "2,5 x 7 = 17,5"): two numbers and a multiplication sign that
+ * an equals sign and a number follow. ONLY THE LEFT SIDE IS TAKEN OUT, the result stays (barracuda on #122): "2 × 5 = 10-et" is still a dose, its "10-et" is a
+ * counted thing given, and a first version that took the result too let it through. A result with a unit ("= 10 csepp") keeps its unit word and amount;
+ * a result followed by a volume ("= 17,5 liter") is a volume and no count. A number with a UNIT on the left has no equals sign after it and is untouched
+ * ("3 × 2 ml", "2 × 5 ml") (card 89a6ba86).
+ */
+const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?(?=\s*=\s*\d)/g;
 
 /**
  * A NUMBER RANGE IS ONE NUMBER: "8-10 órás", "1-2 alkalommal", "5–10 ppm". Read as it stands, the range's first number
@@ -191,7 +202,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw).replace(LIST_MARKER, "").replace(RANGE, "");
+    const s = fold(raw).replace(LIST_MARKER, "").replace(EQUATION, " ").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
