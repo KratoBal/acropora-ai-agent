@@ -82,6 +82,10 @@ describe("a szójegyzék a promptban", () => {
     // the headline rule is for the FIRST expansion only (barracuda on #118): a heading in a follow-up answer holds the bare abbreviation
     assert.match(GLOSSARY_INSTRUCTIONS, /csak\s+ha\s+ebben\s+a\s+beszélgetésben\s+még\s+nem\s+bontottad\s+ki/i);
     assert.match(GLOSSARY_INSTRUCTIONS, /követő\s+válasz\s+címében/i);
+    // each paragraph stands EXACTLY ONCE: a squash merge on top of a branch that already held it left the paragraph twice, and the checks above
+    // look at presence only (barracuda on #119)
+    for (const marker of ["BESZÉLGETÉSENKÉNT EGYSZER", "A CÍMSOR IS ELŐFORDULÁS"])
+      assert.equal(GLOSSARY_INSTRUCTIONS.split(marker).length - 1, 1, marker);
   });
 
   it("mind a három kerülendő alakot megnevezi, amit a brief előír", () => {
