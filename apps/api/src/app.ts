@@ -593,6 +593,20 @@ export function buildApp(dependencies: AppDependencies = {}) {
       : [[own, rateLimitPerMinute]];
   }
 
+  /**
+   * THE BUCKETS OF THE NINE MODEL ENDPOINTS BESIDES THE CHAT AND THE RATING (card 41e81901, t-20261117-ai-rate-limit-maradek).
+   * They used to spend ONE bucket keyed by the address, so a batch extractor run from the OS's host used up the live ticket
+   * draft's allowance too. Now each endpoint has its own 20 a minute per address, and the family keeps one address ceiling
+   * of 120 a minute (its own, apart from the chat's, so a batch run cannot refuse a chat). No caller change is needed: the
+   * extractors send no client key.
+   */
+  function routeRateBuckets(route: string, request: { ip: string }): [string, number][] {
+    return [
+      [`route:${route}:${request.ip}`, rateLimitPerMinute],
+      [`ceiling:routes:${request.ip}`, addressCeilingPerMinute]
+    ];
+  }
+
   /** Which of the two 400s: the header is missing, or it is there and not a key. */
   function clientKeyRefusal(header: unknown): string {
     return header === undefined ? MISSING_CLIENT_KEY : INVALID_CLIENT_KEY;
@@ -1236,7 +1250,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/measurement-recommendations", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1326,7 +1340,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/dosing-extractions", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1414,7 +1428,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/product-field-extractions", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1507,7 +1521,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/claim-extractions", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1608,7 +1622,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/ticket-drafts", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1713,7 +1727,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         });
       }
 
-      if (!consumeRateLimit(request.ip)) {
+      if (!consumeRateLimits(routeRateBuckets("/v1/figure-claim-extractions", request))) {
         return reply
           .code(429)
           .header("Retry-After", "60")
@@ -1817,7 +1831,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/knowledge-answers", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1904,7 +1918,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/research-queries", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
@@ -1986,7 +2000,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(request.ip)) {
+    if (!consumeRateLimits(routeRateBuckets("/v1/research-summaries", request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
