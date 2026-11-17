@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,7 +20,9 @@ import {
   score,
   scoreLiveData,
   summarize,
+  tallyRepeats,
   temperaturesIn,
+  withAncestors,
   type RunReport,
   type SendQuestion
 } from "./question-set-run.js";
@@ -742,5 +744,72 @@ describe("network failures on a real socket", () => {
     assert.equal(results.length, QUESTION_SET.length);
     assert.ok(results.every((r) => typeof r.elapsedMs === "number" && r.elapsedMs >= 0));
     assert.equal(errorText(new Error("plain")), "plain");
+  });
+});
+
+/*
+  A PART OF THE SET, ASKED MORE THAN ONCE (acrobot 54588/54589): "abbreviation-not-repeated" failed once, on its first
+  real measurement, and one answer cannot tell the model's spread from a weak instruction. WHAT TURNS IT RED: a follow-up
+  run without the question it follows; a repeat that is not counted per question; a partial run compared as a baseline;
+  a repeat outside 1..20 accepted.
+*/
+describe("--only and --repeat", () => {
+  it("a follow-up comes with the question it follows, in the set's order; an unknown id is null", () => {
+    assert.deepEqual(withAncestors(QUESTION_SET, "abbreviation-not-repeated")?.map((q) => q.id), ["abbreviation-expanded", "abbreviation-not-repeated"]);
+    assert.equal(withAncestors(QUESTION_SET, "nincs-ilyen"), null);
+  });
+
+  it("asks the pair three times, each time in a new conversation, and counts the verdicts per question", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "question-set-repeat-"));
+    const out = join(dir, "report.json");
+    const asked: { message: string; conversationId?: string }[] = [];
+    let n = 0;
+    const fetchImpl = (async (url: string, init?: { body?: string }) => {
+      if (url.endsWith("/health")) return new Response(JSON.stringify({ version: "v1", instructionsVersion: "i1" }));
+      const body = JSON.parse(init?.body ?? "{}") as { message: string; conversationId?: string };
+      asked.push(body);
+      n += 1;
+      return new Response(JSON.stringify({ conversationId: body.conversationId ?? `c${n}`, messageId: `m${n}`, answer: "Az ATO (Automatic Top Off - automatikus párolgás-utántöltő rendszer) hasznos.", model: "gpt-5.1" }));
+    }) as unknown as typeof fetch;
+    const lines: string[] = [];
+    const code = await main(["--url", "http://ai.test", "--out", out, "--only", "abbreviation-not-repeated", "--repeat", "3"], { AI_API_TOKEN: "t" }, { log: (l) => lines.push(l), fetchImpl });
+    const report = JSON.parse(readFileSync(out, "utf8")) as RunReport;
+    assert.equal(code, 0);
+    assert.equal(asked.length, 6);
+    // every follow-up goes into its own repetition's conversation, never a fresh one or another repetition's
+    assert.deepEqual(asked.filter((_, i) => i % 2 === 1).map((b) => b.conversationId), ["c1", "c3", "c5"]);
+    assert.equal(report.repeat?.times, 3);
+    assert.equal(report.repeat?.only, "abbreviation-not-repeated");
+    const t = report.repeat?.byQuestion["abbreviation-not-repeated"];
+    assert.equal((t?.pass ?? 0) + (t?.fail ?? 0) + (t?.human ?? 0) + (t?.replaced ?? 0) + (t?.local ?? 0) + (t?.error ?? 0), 3);
+    assert.ok(lines.some((l) => /^abbreviation-not-repeated over 3: /.test(l)));
+  });
+
+  it("refuses a partial run with --compare, an unknown id and a repeat outside 1..20, before any call", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const dir = mkdtempSync(join(tmpdir(), "question-set-repeat-"));
+    const out = join(dir, "r.json");
+    // a readable previous report: the refusal must come from the partial run, not from an unreadable file
+    const previous = join(dir, "previous.json");
+    writeFileSync(previous, JSON.stringify({ startedAt: "2026-11-17T08:15:00Z", results: [] }));
+    const run = (extra: string[]) => main(["--url", "http://ai.test", "--out", out, ...extra], { AI_API_TOKEN: "t" }, { log: () => {}, fetchImpl });
+    assert.deepEqual(
+      [await run(["--only", "abbreviation-not-repeated", "--compare", previous]), await run(["--only", "nincs-ilyen"]), await run(["--repeat", "0"]), await run(["--repeat", "21"]), await run(["--repeat", "x"])],
+      [2, 2, 2, 2, 2]
+    );
+    assert.equal(calls, 0);
+  });
+
+  it("tallies an error apart from the verdicts", () => {
+    const base = { probe: "p", polarity: "positive", axis: "a", conversationId: null, messageId: null, answer: null, source: null, replacedBy: null, replacedSentence: null, instructionsVersion: null, productContext: null, elapsedMs: 0, measures: {} };
+    const runs = [
+      [{ ...base, id: "x", error: null, verdict: "fail" }],
+      [{ ...base, id: "x", error: "network: x", verdict: "human" }]
+    ] as unknown as Parameters<typeof tallyRepeats>[0];
+    assert.deepEqual(tallyRepeats(runs).x, { pass: 0, fail: 1, human: 0, replaced: 0, local: 0, error: 1 });
   });
 });
