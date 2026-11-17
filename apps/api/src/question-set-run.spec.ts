@@ -804,6 +804,21 @@ describe("--only and --repeat", () => {
     assert.equal(calls, 0);
   });
 
+  it("refuses a partial run's report as the previous one of a whole run, before any call (barracuda on #111)", async () => {
+    let calls = 0;
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response("{}");
+    }) as unknown as typeof fetch;
+    const dir = mkdtempSync(join(tmpdir(), "question-set-repeat-"));
+    const partial = join(dir, "partial.json");
+    writeFileSync(partial, JSON.stringify({ startedAt: "2026-11-17T10:00:00Z", results: [], repeat: { only: "abbreviation-not-repeated", times: 5, byQuestion: {} } }));
+    const lines: string[] = [];
+    const code = await main(["--url", "http://ai.test", "--out", join(dir, "r.json"), "--compare", partial], { AI_API_TOKEN: "t" }, { log: (l) => lines.push(l), fetchImpl });
+    assert.deepEqual([code, calls], [2, 0]);
+    assert.match(lines[0]!, /partial run/);
+  });
+
   it("tallies an error apart from the verdicts", () => {
     const base = { probe: "p", polarity: "positive", axis: "a", conversationId: null, messageId: null, answer: null, source: null, replacedBy: null, replacedSentence: null, instructionsVersion: null, productContext: null, elapsedMs: 0, measures: {} };
     const runs = [
