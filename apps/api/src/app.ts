@@ -111,7 +111,7 @@ import {
   withColleagueOffer
 } from "./request-prefilter-turns.js";
 import { safeErrorSummary } from "./redact.js";
-import { DOSE_GUARD_FALLBACK, guardAnswerDoses } from "./answer-dose-guard.js";
+import { DOSE_GUARD_FALLBACK, guardAnswerDoses, answerSize } from "./answer-dose-guard.js";
 import {
   LINK_GUARD_FALLBACK,
   LINK_RULE_INSTRUCTIONS,
@@ -1184,6 +1184,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
          * (`os-user:<id>`) never gets the field, switch or no switch.
          */
         ...(namesDoseSentenceTo(clientKey) && !doseGuard.ok ? { doseGuardSentence: doseGuard.sentence } : {}),
+        /**
+         * HOW BIG THE ANSWER WAS BEFORE A GUARD REPLACED IT: two numbers, never text (task t-20261117-csere-elotti-meret; acrobot 55186). Only to the
+         * question-set runner (the same gate as the sentence above: its own client key AND the instance switch), only in this response, not in
+         * the log and not in the stored row. It measures how much safe content a replacement throws away.
+         */
+        ...(namesDoseSentenceTo(clientKey) && (!doseGuard.ok || (linkRule === "enforce" && linkGuard && !linkGuard.ok))
+          ? { replacedOriginalSize: answerSize(response.output_text) }
+          : {}),
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
         linkGuard:
           linkGuard === null

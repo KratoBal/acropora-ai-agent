@@ -200,6 +200,8 @@ export interface QuestionResult {
   replacedBy: string | null;
   /** The sentence that set the dose guard off; the server names it only to the runner's own client key, else null. */
   replacedSentence: string | null;
+  /** How big the answer was before a guard replaced it (chars, sentences): numbers only, from the server's runner-only field; null otherwise. */
+  replacedOriginalSize: { chars: number; sentences: number } | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
   /**
@@ -289,6 +291,7 @@ export type SendQuestion = (input: {
       source: AnswerSource;
       replacedBy: string | null;
       replacedSentence: string | null;
+      replacedOriginalSize: { chars: number; sentences: number } | null;
       instructionsVersion: string | null;
       productContext: string | null;
     }
@@ -350,6 +353,7 @@ export async function runQuestionSet(
       source: reply.ok ? reply.source : null,
       replacedBy: reply.ok ? reply.replacedBy : null,
       replacedSentence: reply.ok ? reply.replacedSentence : null,
+      replacedOriginalSize: reply.ok ? reply.replacedOriginalSize : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
@@ -478,6 +482,14 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
   };
 }
 
+/** The server's size field as two finite non-negative whole numbers, or null (anything else, text included, is dropped). */
+function originalSizeOf(value: unknown): { chars: number; sentences: number } | null {
+  if (!value || typeof value !== "object") return null;
+  const { chars, sentences } = value as { chars?: unknown; sentences?: unknown };
+  const whole = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0;
+  return whole(chars) && whole(sentences) ? { chars, sentences } : null;
+}
+
 export function summarize(results: readonly QuestionResult[]): RunReport["summary"] {
   const answered = results.filter((result) => result.answer !== null && result.source === "model");
   const terms = answered.map((result) => countTerms(result.answer!));
@@ -584,6 +596,7 @@ export function httpSender(options: {
             ? `linkGuard: ${linkReplaced}`
             : null,
       replacedSentence: typeof body.doseGuardSentence === "string" ? body.doseGuardSentence : null,
+      replacedOriginalSize: originalSizeOf(body.replacedOriginalSize),
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
       productContext:
         typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"
