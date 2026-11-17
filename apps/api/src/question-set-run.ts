@@ -368,6 +368,12 @@ export interface RunReport {
     glossary: { answers: number; preferred: number; avoided: number };
   };
   results: QuestionResult[];
+  /**
+   * A PART OF THE SET, ASKED MORE THAN ONCE (`--only <id>`, `--repeat <n>`; acrobot 54588/54589): one answer cannot tell
+   * the model's spread from a weak instruction. Present only on such a run; such a report is not a baseline for the
+   * whole set, so `--compare` refuses it, and the cron guard's report folder is not the place for it.
+   */
+  repeat?: { only: string | null; times: number; byQuestion: Record<string, Record<Verdict | "error", number>> };
   /** With `--compare <previous report>`: see `compareReports`. */
   comparison?: Comparison;
 }
@@ -569,7 +575,31 @@ export function httpSender(options: {
 }
 
 const USAGE =
-  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>] [--compare <previous report.json>]";
+  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>] [--compare <previous report.json>] [--only <question id>] [--repeat <1-20>]";
+
+/**
+ * The question and every question it follows, in the set's order: a follow-up is asked in its parent's conversation, so
+ * it cannot run alone. `null` for an id the set does not have.
+ */
+export function withAncestors(questions: readonly PinnedQuestion[], id: string): PinnedQuestion[] | null {
+  const byId = new Map(questions.map((q) => [q.id, q]));
+  if (!byId.has(id)) return null;
+  const wanted = new Set<string>();
+  for (let q = byId.get(id); q; q = q.followsUp === undefined ? undefined : byId.get(q.followsUp)) wanted.add(q.id);
+  return questions.filter((q) => wanted.has(q.id));
+}
+
+/** Per question over the repetitions: how many times each verdict, and how many errors. */
+export function tallyRepeats(runs: readonly (readonly QuestionResult[])[]): Record<string, Record<Verdict | "error", number>> {
+  const out: Record<string, Record<Verdict | "error", number>> = {};
+  for (const run of runs)
+    for (const r of run) {
+      const row = (out[r.id] ??= { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, error: 0 });
+      if (r.error !== null) row.error += 1;
+      else row[r.verdict] += 1;
+    }
+  return out;
+}
 
 function argument(argv: readonly string[], name: string): string | undefined {
   const at = argv.indexOf(name);
@@ -594,6 +624,23 @@ export async function main(
     return 2;
   }
   const comparePath = argument(argv, "--compare");
+  const only = argument(argv, "--only");
+  const repeatRaw = argument(argv, "--repeat");
+  const repeat = repeatRaw === undefined ? 1 : Number(repeatRaw);
+  if (!Number.isInteger(repeat) || repeat < 1 || repeat > 20) {
+    io.log(`--repeat takes a whole number from 1 to 20, not ${repeatRaw}. ${USAGE}`);
+    return 2;
+  }
+  const questions = only === undefined ? QUESTION_SET : withAncestors(QUESTION_SET, only);
+  if (questions === null) {
+    io.log(`the question set has no question ${only}`);
+    return 2;
+  }
+  const partial = only !== undefined || repeat > 1;
+  if (partial && comparePath !== undefined) {
+    io.log("--compare is for a whole run: a run with --only or --repeat is not compared");
+    return 2;
+  }
   let previous: unknown;
   if (comparePath !== undefined) {
     try {
@@ -608,9 +655,10 @@ export async function main(
     .then((r) => r.json())
     .catch(() => ({}))) as Record<string, unknown>;
   const startedAt = new Date().toISOString();
-  const results = await runQuestionSet(
-    httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? QUESTION_SET_CLIENT_KEY, fetchImpl })
-  );
+  const sender = httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? QUESTION_SET_CLIENT_KEY, fetchImpl });
+  const runs: QuestionResult[][] = [];
+  for (let i = 0; i < repeat; i++) runs.push(await runQuestionSet(sender, questions));
+  const results = runs.flat();
   // the server's /health first; an older server without it still names the version on each model answer
   const fromAnswers = [...new Set(results.map((r) => r.instructionsVersion).filter((v): v is string => v !== null))];
   const report: RunReport = {
@@ -625,7 +673,8 @@ export async function main(
     startedAt,
     finishedAt: new Date().toISOString(),
     summary: summarize(results),
-    results
+    results,
+    ...(partial ? { repeat: { only: only ?? null, times: repeat, byQuestion: tallyRepeats(runs) } } : {})
   };
   if (comparePath !== undefined) report.comparison = compareReports(previous, report);
   writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
@@ -635,6 +684,11 @@ export async function main(
       `pass ${s.pass}, fail ${s.fail}, human ${s.human}, replaced ${s.replaced}, local ${s.local}, errors ${s.errors}; ` +
       `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}`
   );
+  if (report.repeat)
+    for (const [id, t] of Object.entries(report.repeat.byQuestion))
+      io.log(
+        `${id} over ${report.repeat.times}: pass ${t.pass}, fail ${t.fail}, human ${t.human}, replaced ${t.replaced}, local ${t.local}, errors ${t.error}`
+      );
   const c = report.comparison;
   if (c)
     io.log(
