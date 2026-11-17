@@ -65,6 +65,22 @@ describe("a szójegyzék a promptban", () => {
     assert.match(GLOSSARY_INSTRUCTIONS, /másodszor már/i);
   });
 
+  /*
+    THE FOLLOW-UP THAT EXPANDS AGAIN (card 660258d8, task t-20261117-ai-roviditesi-szabaly; acrobot 55049). The question-set follow-up
+    "Az előbb említett ATO-nál mekkora tartály elég egy hétre?" got its ATO expanded a second time in both genuine runs (09:15 and 18:30 UTC,
+    the 09:30 one followed a doseGuard replacement, so the history held no expansion): the answer opened with the same
+    "Az ATO (Automatic Top Off – ...)" as the previous one. The model receives the whole history, so the rule is about WHAT it is told. THIS TEST
+    SAYS THE SENTENCES ARE IN THE INSTRUCTION; it cannot say the model obeys them: that is the next question-set run's measure (the
+    instruction's version changes with its text). WHAT TURNS IT RED: a sentence going missing.
+  */
+  it("a kibontás beszélgetésenként egyszer történik: a korábbi válaszokat nézi, a kérdés említése és a nyitómondat másolása nem számít újabb első előfordulásnak", () => {
+    assert.match(GLOSSARY_INSTRUCTIONS, /beszélgetésenként\s+egyszer/i);
+    assert.match(GLOSSARY_INSTRUCTIONS, /korábbi\s+válaszaidat/i);
+    assert.match(GLOSSARY_INSTRUCTIONS, /SOHA\s+ne\s+bontsd\s+ki\s+újra/);
+    assert.match(GLOSSARY_INSTRUCTIONS, /az\s+előbb\s+említett\s+ATO/i);
+    assert.match(GLOSSARY_INSTRUCTIONS, /nyitómondatát\s+ne\s+másold/i);
+  });
+
   it("mind a három kerülendő alakot megnevezi, amit a brief előír", () => {
     for (const term of [
       "zátonyakvárium",
