@@ -791,6 +791,11 @@ export function buildApp(dependencies: AppDependencies = {}) {
       const contactAnswer = receipt.ok
         ? CONTACT_FORWARDED_ANSWER
         : CONTACT_NOT_FORWARDED_ANSWER;
+      // after the 504 the local answer is not stored; the hand-over above did happen, so its outcome is kept (barracuda #105)
+      if (deadline.expired()) {
+        await noteOutcome(receipt.ok ? "contact_forwarded" : "contact_not_forwarded");
+        return reply;
+      }
       const contactMessageId = await conversations.saveMessage({
         conversationId: activeConversationId,
         role: "assistant",
@@ -861,6 +866,11 @@ export function buildApp(dependencies: AppDependencies = {}) {
           "the local pre-filter answered; no model call"
         );
         const localAnswer = localAnswerFor(verdict.decision, series, firmAt);
+        // the same rule for a local answer: after the 504 it is not stored (barracuda #105 point 2)
+        if (deadline.expired()) {
+          await noteOutcome(CHAT_DEADLINE_ERROR);
+          return reply;
+        }
         const localMessageId = await conversations.saveMessage({
           conversationId: activeConversationId,
           role: "assistant",
@@ -977,13 +987,6 @@ export function buildApp(dependencies: AppDependencies = {}) {
         store: false
       }, { signal: deadline.signal });
 
-      // The answer came after the 504 went out: it is not stored, the person never saw it, and the next turn's history
-      // must not hold an answer to a question they were told timed out.
-      if (deadline.expired()) {
-        await noteOutcome(CHAT_DEADLINE_ERROR);
-        return reply;
-      }
-
       // NO DOSE LEAVES THAT THE MANUFACTURER DID NOT GIVE (Acropora OS card
       // 85c38ab1): every dose statement must be a FIXED dose of a hit; else the
       // customer gets the label-or-colleague sentence. The reason is logged,
@@ -1057,6 +1060,13 @@ export function buildApp(dependencies: AppDependencies = {}) {
           "the answer linked our own domain"
         );
 
+      // THE ANSWER CAME AFTER THE 504 WENT OUT: it is not stored, the person never saw it, and the next turn's history must
+      // not hold an answer to a question they were told timed out. Right before the save, after every await on the way
+      // (the link sources are awaited after the model; barracuda #105 point 1).
+      if (deadline.expired()) {
+        await noteOutcome(CHAT_DEADLINE_ERROR);
+        return reply;
+      }
       const answerMessageId = await conversations.saveMessage({
         conversationId: activeConversationId,
         role: "assistant",
