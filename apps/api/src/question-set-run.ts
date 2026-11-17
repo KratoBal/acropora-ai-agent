@@ -516,7 +516,22 @@ export function httpSender(options: {
     } catch (error) {
       return { ok: false, error: `network: ${errorText(error)}` };
     }
-    const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    // THE BODY IS READ IN TWO STEPS (barracuda #104): a socket closed while the body streams in is a network failure,
+    // like one before the headers; a body that arrived whole but is not JSON (a proxy's HTML page) is not, and stays an
+    // HTTP or malformed-response error below.
+    let text: string;
+    try {
+      text = await response.text();
+    } catch (error) {
+      return { ok: false, error: `network: ${errorText(error)}` };
+    }
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+    } catch {
+      body = {};
+    }
     if (!response.ok)
       return { ok: false, error: `HTTP ${response.status}${typeof body.error === "string" ? ` ${body.error}` : ""}` };
     // a 200 without the three fields is a failed call, not an answer: "undefined" read as the answer would pass the

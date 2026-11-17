@@ -662,6 +662,43 @@ describe("network failures on a real socket", () => {
     }
   });
 
+  it("a socket closed while the body streams in is a network error too, not a malformed response (barracuda #104)", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.write('{"conversationId":"c1","messageId":');
+      setTimeout(() => response.socket?.destroy(), 20);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    try {
+      const reply = await httpSender({ baseUrl: `http://127.0.0.1:${address.port}`, token: TOKEN, clientKey: "question-set-run" })({
+        message: "Hogyan mérjem a nitrátot?"
+      });
+      assert.equal(reply.ok, false);
+      assert.match(!reply.ok ? reply.error : "", /^network: /);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it("a whole body that is not JSON (a proxy's page) stays an HTTP error, not a network one", async () => {
+    const server = createServer((_request, response) => {
+      response.writeHead(502, { "content-type": "text/html" });
+      response.end("<html>Bad Gateway</html>");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    try {
+      const reply = await httpSender({ baseUrl: `http://127.0.0.1:${address.port}`, token: TOKEN, clientKey: "question-set-run" })({
+        message: "Hogyan mérjem a nitrátot?"
+      });
+      assert.equal(reply.ok, false);
+      assert.equal(!reply.ok ? reply.error : "", "HTTP 502");
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   it("a slow handler on our server: the runner gets the named 504 of the chat deadline, not a closed socket", async () => {
     process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS = "1000";
     const { app, base } = await serve(
