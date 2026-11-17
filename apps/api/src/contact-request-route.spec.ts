@@ -414,6 +414,39 @@ describe("the customer who is asked for the contact again (barracuda on #80): th
   });
 });
 
+/*
+  THE DEADLINE DURING THE HAND-OVER (card 2f6adcd2). The card feared that a 504 after the OS recorded the request makes the customer
+  send the contact again, and that the new message, with its new key, becomes a second request. Measured: it does not. The 504 path
+  stores no answer, so the customer's first message stands between the offer and the retry; the retry is read as an ordinary
+  message, and only an offer or ask row opens the reading. WHAT TURNS IT RED: the contact branch reading past the customer's own
+  previous message, or a local answer stored after the 504 that flags the next message.
+*/
+describe("the chat deadline fires during the hand-over (card 2f6adcd2)", () => {
+  it("504 to the customer, the request is recorded once and masked; the same contact sent again is no second request", async () => {
+    process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS = "1000";
+    try {
+      const fx = fixture(seedAfterOffer());
+      // the OS answers after the deadline (the floor, 500 ms): the hand-over completes while the customer already has the 504
+      os.contact = () => new Promise((resolve) => setTimeout(() => resolve(receipt()), 700));
+      const first = await ask(fx, `a számom: ${PHONE}`);
+      assert.equal(first.status, 504);
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      assert.equal(contactCalls.length, 1);
+      assert.deepEqual(fx.outcomes.map((o) => o.outcome), ["contact_forwarded"]);
+      assert.equal(fx.messages.at(-1)?.role, "user", "no answer is stored after the 504");
+      assert.equal(fx.messages.at(-1)?.content, `a számom: ${CONTACT_PLACEHOLDER}`);
+      os.contact = receipt;
+      const again = await ask(fx, `a számom: ${PHONE}`);
+      assert.equal(again.status, 200);
+      assert.equal(contactCalls.length, 1, "the retry became a second contact request");
+      assert.equal(again.body.answer, "A modell válasza.");
+      assert.ok(!fx.modelInputs.some((input) => input.includes("30 123")), "the model saw the contact value");
+    } finally {
+      delete process.env.ACROPORA_AI_CONNECTION_TIMEOUT_MS;
+    }
+  });
+});
+
 describe("the gates: any one off, and the route is what it was (no hand-over, the old offer text and instruction)", () => {
   const gates: Array<[string, () => void]> = [
     ["the contact switch off", () => delete process.env[CONTACT_REQUEST_ENV]],
