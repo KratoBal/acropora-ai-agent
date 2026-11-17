@@ -599,6 +599,72 @@ describe("main --compare", () => {
     assert.match(lines[0]!, /cannot be read/);
   });
 
+  /*
+    AN OLD REPORT, ONE WITHOUT `summary.void` AND WITHOUT A VOID VERDICT (acrobot 55134: the fleet's runner compares its next run with the
+    18:30 report, written before this change). Reading it must be neither an error nor a regression. WHAT TURNS IT RED: a throw on the missing
+    field, a regression named because of a void, the exit code 3 or 1 for an old file.
+  */
+  it("an OLD report (no summary.void, no source, no void verdict) compares with a new one holding a void: no error, no regression, exit 0", async () => {
+    const oldReport = {
+      questionSetVersion: "1.2.0",
+      instructionsVersion: "5789d9bc8eb1",
+      serverVersion: "6af2534b",
+      startedAt: "2026-11-17T18:30:00.000Z",
+      finishedAt: "2026-11-17T18:40:00.000Z",
+      summary: { pass: 1, fail: 1, human: 0, replaced: 0, local: 0, errors: 0, glossary: { answers: 2, preferred: 0, avoided: 0 } },
+      results: [
+        { id: "abbreviation-expanded", verdict: "pass", answer: "ATO (Automatic Top Off) jó.", replacedBy: null },
+        { id: "abbreviation-not-repeated", verdict: "fail", answer: "Az ATO (Automatic Top Off) tartálya.", replacedBy: null }
+      ]
+    };
+    const send: SendQuestion = async (input) =>
+      input.message === question("abbreviation-expanded").question
+        ? ({ ok: true, conversationId: "c1", messageId: "m1", answer: "csere", source: "replaced", replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)", replacedSentence: null, instructionsVersion: "0123456789ab", productContext: null } as const)
+        : modelReply("c1", "m2", "A tartály 10 literes.");
+    const results = await runQuestionSet(send, [question("abbreviation-expanded"), question("abbreviation-not-repeated")]);
+    assert.equal(results[1]!.verdict, "void");
+    const next = {
+      questionSetVersion: "1.3.0",
+      instructionsVersion: "bbbbbbbbbbbb",
+      serverVersion: "s2",
+      startedAt: "x",
+      finishedAt: "y",
+      summary: summarize(results),
+      results
+    } as unknown as RunReport;
+    const c = compareReports(oldReport, next);
+    // the swapped parent counts as a rise in replaced (that is true, and says so); the void follow-up is neither a regression nor an improvement
+    assert.deepEqual(c.improvements, []);
+    assert.equal(c.regressions.some((line) => line.startsWith("abbreviation-not-repeated")), false);
+    assert.equal(c.regressions.some((line) => line.includes("void")), false);
+  });
+
+  it("main: an old report file on --compare is read without error, and a run with no regression exits 0 (not 1, not 3)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "question-set-oldreport-"));
+    const first = join(dir, "old.json");
+    writeFileSync(
+      first,
+      JSON.stringify({
+        questionSetVersion: "1.2.0",
+        instructionsVersion: "5789d9bc8eb1",
+        serverVersion: "6af2534b",
+        startedAt: "a",
+        finishedAt: "b",
+        summary: { pass: 0, fail: 0, human: 0, replaced: 0, local: 0, errors: 0, glossary: { answers: 0, preferred: 0, avoided: 0 } },
+        results: [{ id: "abbreviation-not-repeated", verdict: "fail", answer: "ATO (Automatic Top Off)", replacedBy: null }]
+      })
+    );
+    const lines: string[] = [];
+    const code = await main(
+      ["--url", "http://ai.test", "--out", join(dir, "new.json"), "--compare", first],
+      { AI_API_TOKEN: "t" },
+      { log: (l) => lines.push(l), fetchImpl: answering("A nitrátot hetente mérd.") }
+    );
+    assert.equal(code, 0, lines.join("\n"));
+    const written = JSON.parse(readFileSync(join(dir, "new.json"), "utf8")) as { summary: { void: number } };
+    assert.equal(written.summary.void, 0);
+  });
+
   it("exits 3 on a regression and writes the comparison; 0 when nothing got worse", async () => {
     const dir = mkdtempSync(join(tmpdir(), "question-set-compare-"));
     const first = join(dir, "first.json");
