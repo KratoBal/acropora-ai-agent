@@ -135,6 +135,43 @@ describe("a válasz adagjai a katalógushoz mérve", () => {
       assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
   });
 
+  /*
+    THE QUESTION-SET RUN OF 2026-11-17 18:00 UTC (card 15e38019, task t-20261117-ai-dose-guard-gyakorisag; acrobot 55011): two of its three
+    swapped answers were no dose, and the guard read a FREQUENCY and a LIST NUMBER as a bare count next to "naponta" and "pótol-".
+    Measured on the main before the change: the times sign "×" blocked (given-count) while "x" and "-szor" passed, and a list marker
+    ("1.", "1)") at a line's start counted as the number. WHAT TURNS IT RED: either sentence leaving the answer replaced; a list marker or
+    the times sign hiding a REAL given count or an amount with a unit.
+  */
+  it("a × gyakoriság-jel és a listajel nem puszta szám (a -szor és az x már így van)", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const answer of [
+      "- nem tudod vállalni, hogy **naponta 1–2× kézzel pótolsz RO‑vizet** mindig azonos időben",
+      "Az ATO helyett naponta 2× kézzel pótold a párolgást.",
+      "1. Egy hétig kézzel pótold az RO‑vizet, és **írd fel naponta, mennyi fogy**",
+      "2) Hetente egyszer pótold az RO-vizet, és írd fel naponta, mennyi fogy"
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a listajel és a × jel nem rejt el valódi adagot: a tárgyragos szám és a mennyiség egységgel továbbra is fennakad", () => {
+    const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+    for (const [answer, rule] of [
+      ["1. Adjon 3-at naponta.", "given-count"],
+      ["2) Adj naponta 2-t.", "given-count"],
+      // a number that opens the sentence with no point or bracket is the sentence's own count, not a list marker
+      ["3-at adjon naponta.", "given-count"],
+      ["- 1. Adagolj naponta 3-at.", "given-count"],
+      ["1. Adj naponta 3 csepp készítményt.", "no-fixed-dose"],
+      ["Adagolj naponta 3× 2 ml-t 100 literre.", "no-fixed-dose"],
+      // a decimal point is no list marker: "1.5 ml" is an amount
+      ["1.5 ml naponta 100 literre.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, empty);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+
   it("a név nélküli adag igével, tárgyraggal vagy egységgel továbbra is fennakad, és a szabály neve a válaszban", () => {
     const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
     for (const [answer, rule] of [
