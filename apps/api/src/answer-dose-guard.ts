@@ -159,6 +159,14 @@ function sentences(text: string): string[] {
   return text.split(/(?<!\d)[.!?;](?!\d)|\n/).filter((s) => s.trim() !== "");
 }
 
+/**
+ * THE SIZE OF AN ANSWER, TWO NUMBERS AND NO TEXT (task t-20261117-csere-elotti-meret; acrobot 55186): how long it was and how many sentences it had,
+ * counted the way the guard counts them. For the question-set report only, to measure how much a replacement throws away.
+ */
+export function answerSize(answer: string): { chars: number; sentences: number } {
+  return { chars: answer.length, sentences: sentences(answer).length };
+}
+
 /** Which rule refused the answer: the reason says what is wrong, the rule says which reading found it. */
 export type DoseGuardRule =
   | "other-unit"
