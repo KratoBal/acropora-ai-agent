@@ -476,11 +476,49 @@ export function buildApp(dependencies: AppDependencies = {}) {
     { startedAt: number; count: number }
   >();
 
+  /**
+   * THE ADDRESS'S CEILING OVER THE PER-KEY ALLOWANCE (barracuda on #109, acrobot 54577). Per client key a caller has 20 a
+   * minute; until #109 the address's 20 was also the whole OS's cap towards the model, and with keys it is gone. A
+   * caller that goes wrong (a loop, or one calling in many users' names, the key being the token holder's word) would
+   * spend the model's budget times the number of keys. 120 a minute per address is well above today's peak and
+   * still catches a runaway caller.
+   */
+  const addressCeilingPerMinute = 120;
+  let lastSweep = 0;
+
+  /**
+   * THE BUCKETS EXPIRE (barracuda on #109): per key the map grows with every new caller, and a bucket's window
+   * restarted but its entry stayed. Once a window, the buckets whose window has ended are dropped.
+   */
+  function sweepRateBuckets(now: number): void {
+    if (now - lastSweep < rateWindowMs) return;
+    lastSweep = now;
+    for (const [key, bucket] of rateBuckets) if (now - bucket.startedAt >= rateWindowMs) rateBuckets.delete(key);
+  }
+
+  /** Whether `key` has room for one more within its window, without spending it. */
+  function hasRoom(key: string, limit: number, now: number): boolean {
+    const current = rateBuckets.get(key);
+    return !current || now - current.startedAt >= rateWindowMs || current.count < limit;
+  }
+
+  /**
+   * Spends one from every bucket, or from none: a request refused by one limit does not use up another's room.
+   */
+  function consumeRateLimits(entries: readonly (readonly [key: string, limit: number])[]): boolean {
+    const now = Date.now();
+    sweepRateBuckets(now);
+    if (!entries.every(([key, limit]) => hasRoom(key, limit, now))) return false;
+    for (const [key, limit] of entries) consumeRateLimit(key, limit);
+    return true;
+  }
+
   function consumeRateLimit(
     key: string,
     limit = rateLimitPerMinute
   ): boolean {
     const now = Date.now();
+    sweepRateBuckets(now);
     const current = rateBuckets.get(key);
 
     if (!current || now - current.startedAt >= rateWindowMs) {
@@ -545,6 +583,14 @@ export function buildApp(dependencies: AppDependencies = {}) {
   function rateKeyOf(request: { ip: string; headers: Record<string, unknown> }): string {
     const key = clientKeyOf(request.headers["x-client-key"]);
     return key === null ? `ip:${request.ip}` : `client:${key}`;
+  }
+
+  /** The buckets a chat spends: its own (key or address) and, with a key, its address's ceiling as well. */
+  function chatRateBuckets(request: { ip: string; headers: Record<string, unknown> }): [string, number][] {
+    const own = rateKeyOf(request);
+    return own.startsWith("client:")
+      ? [[own, rateLimitPerMinute], [`ceiling:${request.ip}`, addressCeilingPerMinute]]
+      : [[own, rateLimitPerMinute]];
   }
 
   /** Which of the two 400s: the header is missing, or it is there and not a key. */
@@ -618,7 +664,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
       });
     }
 
-    if (!consumeRateLimit(rateKeyOf(request))) {
+    if (!consumeRateLimits(chatRateBuckets(request))) {
       return reply
         .code(429)
         .header("Retry-After", "60")
