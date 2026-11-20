@@ -1188,12 +1188,13 @@ export function buildApp(dependencies: AppDependencies = {}) {
          */
         ...(namesDoseSentenceTo(clientKey) && !doseGuard.ok ? { doseGuardSentence: doseGuard.sentence } : {}),
         /**
-         * HOW BIG THE ANSWER WAS BEFORE A GUARD REPLACED IT: two numbers, never text (task t-20261117-csere-elotti-meret; acrobot 55186). Only to the
-         * question-set runner (the same gate as the sentence above: its own client key AND the instance switch), only in this response, not in
-         * the log and not in the stored row. It measures how much safe content a replacement throws away.
+         * THE ANSWER BEFORE A GUARD REPLACED IT: its size (two numbers, task t-20261117-csere-elotti-meret; acrobot 55186) and, since acrobot 58812,
+         * its full text, so a false replacement can be measured on the whole answer (the size alone could not say WHICH sentence set the guard
+         * off, and the guard stops at the first). Only to the question-set runner (the same gate as the sentence above: its own client key AND the
+         * instance switch, so the text goes where the refused sentence already goes), only in this response, not in the log and not in the stored row.
          */
         ...(namesDoseSentenceTo(clientKey) && (!doseGuard.ok || (linkRule === "enforce" && linkGuard && !linkGuard.ok))
-          ? { replacedOriginalSize: answerSize(response.output_text) }
+          ? { replacedOriginalSize: answerSize(response.output_text), replacedOriginal: response.output_text }
           : {}),
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
         linkGuard:

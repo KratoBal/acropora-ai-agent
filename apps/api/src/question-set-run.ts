@@ -240,6 +240,11 @@ export interface QuestionResult {
   replacedSentence: string | null;
   /** How big the answer was before a guard replaced it (chars, sentences): numbers only, from the server's runner-only field; null otherwise. */
   replacedOriginalSize: { chars: number; sentences: number } | null;
+  /**
+   * The model's whole answer before a guard replaced it (acrobot 58812): the guard stops at the first failing sentence, so a false
+   * replacement is only measurable on the full text. Same server gate as the sentence; null otherwise.
+   */
+  replacedOriginal: string | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
   /**
@@ -346,6 +351,7 @@ export type SendQuestion = (input: {
       replacedBy: string | null;
       replacedSentence: string | null;
       replacedOriginalSize: { chars: number; sentences: number } | null;
+      replacedOriginal: string | null;
       instructionsVersion: string | null;
       productContext: string | null;
     }
@@ -408,6 +414,7 @@ export async function runQuestionSet(
       replacedBy: reply.ok ? reply.replacedBy : null,
       replacedSentence: reply.ok ? reply.replacedSentence : null,
       replacedOriginalSize: reply.ok ? reply.replacedOriginalSize : null,
+      replacedOriginal: reply.ok ? reply.replacedOriginal : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
@@ -664,6 +671,7 @@ export function httpSender(options: {
             : null,
       replacedSentence: typeof body.doseGuardSentence === "string" ? body.doseGuardSentence : null,
       replacedOriginalSize: originalSizeOf(body.replacedOriginalSize),
+      replacedOriginal: typeof body.replacedOriginal === "string" && body.replacedOriginal !== "" ? body.replacedOriginal : null,
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
       productContext:
         typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"
