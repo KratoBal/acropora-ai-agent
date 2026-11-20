@@ -456,3 +456,70 @@ describe("a teszt mintatérfogata nem adag", () => {
     }
   });
 });
+
+/*
+  THE CRON GUARD'S RUN OF 2026-11-20 21:45 UTC (server 45c97c50, acrobot 58977): two false replacements, and a litre dose main let through.
+  WHAT TURNS IT RED: the vessel missed inside a compound ("Mérőfiolába"); the operands of a sum that comes out in litres read as a bare
+  count ("14 + tartalék = 18–20 liter"); a litre dose with a strong dosing verb let through; the water, the evaporation, a tank's size or
+  the dosing device read as a litre dose; "Kalkwasser" read as water.
+*/
+describe("összetett mintaedény, literben kijövő összeg, literes adag", () => {
+  const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("a cron-futás két mondata nem csere", () => {
+    for (const answer of [
+      "1. Mérőfiolába pontosan kimérsz egy adott mennyiségű akváriumvizet (pl. 5 vagy 10 ml)",
+      "- Ha napi 2 liter jön ki, akkor már **kb. 14 + tartalék = 18–20 liter** lenne a kényelmes heti méret",
+      "Hetente 14 + 2 = 16 liter vizet pótolj.",
+      "Töltsd a mérőküvettát 10 ml-ig.",
+      "A tesztkémcsőbe 5 ml kell."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a víz, a párolgás, a medence mérete és az adagoló eszköz nem literes adag", () => {
+    for (const answer of [
+      "Az ATO adagolja a napi 2 liter vizet.",
+      "Az ATO adagolja a napi 2 liter párolgást.",
+      "Napi 2 liter RO-vizet adagol a rendszer.",
+      "The ATO doses 2 liters of RO water a day.",
+      "Ha napi 3 litert pótolsz, a sótartalom stabil marad.",
+      "Egy 3000 literes rendszert automata adagolókkal napi fél óra alatt el lehet látni.",
+      "Az automata adagolók a heti 20 liter cserénél is működnek.",
+      "Egy 3000 literes rendszerben naponta adagolj a címke szerint.",
+      "Napi 2 liter desztillált vizet adagol az ATO.",
+      // "kalkul-" is no additive: a calculation next to the ATO's water
+      "Kalkulálj napi 2 liter párolgással, ezt adagolja az ATO."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("egy valódi literes adag csere, és az összeg mellett adott darab is az marad", () => {
+    for (const [answer, rule] of [
+      ["Napi 2 liter kalkwasser-oldatot adagolj.", "litre-dose"],
+      ["Adagolj naponta 2 liter kalkwassert.", "litre-dose"],
+      ["Napi 2 liter kalkwassert adagolj a feltöltővízbe.", "litre-dose"],
+      ["Dose 2 liters of kalkwasser daily.", "litre-dose"],
+      ["Adagolj naponta 2 litert.", "litre-dose"],
+      // barracuda on #134: "mészvíz" is Kalkwasser, a target is no volume noun, and a named additive opens the rule to a weak verb
+      ["Adagolj naponta 2 liter mészvizet.", "litre-dose"],
+      ["Adagolj naponta 2 liter kalkwasseres vizet.", "litre-dose"],
+      ["Adagolj naponta 2 liter kalkwasser-vizet.", "litre-dose"],
+      ["Napi 2 liter kalkwassert a vízbe adagolj.", "litre-dose"],
+      ["Adj naponta 2 liter kalkwassert.", "litre-dose"],
+      ["Pótolj naponta 2 liter mészvizet.", "litre-dose"],
+      // with no additive named: only plain water is water, and a target is no volume noun
+      ["Adagolj naponta 2 liter jódvizet.", "litre-dose"],
+      ["Napi 2 litert a vízbe adagolj.", "litre-dose"],
+      ["Adagolj naponta 2 liter Seewasser-Konzentrat.", "litre-dose"],
+      // the sum is taken out only when it comes out in litres, and only its left side
+      ["Hetente 2 + 1-et adj, ez 100 literre = 3 liter.", "given-count"],
+      ["Hetente 14 + 2 = 16 liter vízhez adj 3-at.", "given-count"],
+      ["Naponta 2 + 1 = 3 cseppet adj 100 literre.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, none);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+});

@@ -109,6 +109,31 @@ const BARE_COUNT = new RegExp(`(?<![a-z])${NUM}(?!\\d|[.,]\\d)(?:-(?:a|e|o)?t\\b
  */
 const DOSING_VERB =
   /\b(?:adagol\w*|adj(?:on|al|alok|atok|anak|a)?|add|tegy\w*|tegyen|csepegtes\w*|cseppents\w*|onts\w*|ontsd|potol\w*|potold|dose|dosing|give|gib|geben|dosier\w*)\b/;
+/**
+ * A DOSE IN LITRES (acrobot 58977): "Napi 2 liter kalkwasser-oldatot adagolj" carries no ml or drop and no bare count, and main let it through. A litre
+ * amount is never a catalogue dose (the OS doses are ml or drops per litres), so a water volume with a period and a STRONG dosing verb (adagol-,
+ * csepegtet-, cseppent-, dose, dosier-) is a dose that does not match. The weak verbs stay out: "pótol" is how the evaporated water is replaced
+ * ("ha napi 3 litert pótolsz"), and "add"/"tegyél" name the top-off and the water change. THE WATER ITSELF IS NO DOSE: a volume whose noun, right
+ * after it (or after one or two words: "2 liters of RO water"), is water or evaporation ("napi 2 liter vizet adagol az ATO", "2 liter RO-vizet", "párolgást") stays out. "water" and "wasser" only as a
+ * whole word: "Kalkwasser" or "Seewasser-Konzentrat" is the dose, not the water. THE SIZE OF A TANK IS NO AMOUNT: the adjective "3000 literes rendszer" is not read as a litre
+ * amount here, and "adagoló" (the device, "automata adagolók") is no verb; the first version stopped one stored answer on exactly these two. NOR IS
+ * THE VOLUME A DOSE IS FOR: "100 literre", "100 literhez", "100 literenként" is a rate's water volume, read by `PER_VOLUME`, not a litre amount. Measured before the change on
+ * the 254 stored question-set answers (12 274 sentences): one sentence met volume, period and a strong verb, and its volume was water.
+ * THE WATER IS ONLY PLAIN WATER, AND A NAMED ADDITIVE OPENS THE RULE (barracuda on #134): the first water noun was "[a-z-]*viz", so "mészvizet" (the
+ * Hungarian name of Kalkwasser) passed as water, and the two-word window read a target as the volume's noun ("2 liter kalkwassert a vízbe adagolj").
+ * The water noun is now "víz" at the word's start or after a plain-water prefix (RO, ozmózis, desztillált, csap, édes, tiszta, feltöltő), and NOT a
+ * target ("vízbe", "vízhez", "vízben", "vízre"). And a sentence that names an ADDITIVE (kalk-, but not "kalkul-"; mészvíz; -oldat-; adalék) is a dose with
+ * a weak verb too ("Adj naponta 2 liter kalkwassert", "Pótolj naponta 2 liter mészvizet"), and no water noun takes it out ("2 liter kalkwasseres vizet").
+ */
+const STRONG_DOSING_VERB = /\b(?:adagol(?!o)\w*|csepegtet\w*|cseppents?\w*|dose[sd]?|dosing|dosier\w*)\b/;
+const LITRE_AMOUNT = new RegExp(
+  `${NUM}\\s*(?!(?:l|ltr|liter|litre)-?(?:es|re|ra|hez|enkent)\\b)(?:l|ltr|liter\\w*|litre\\w*)(?![a-z])`
+);
+const WATER_VOLUME = new RegExp(
+  `${NUM}\\s*(?:l|ltr|liter\\w*|litre\\w*)\\s+(?:[a-z-]+\\s+){0,2}` +
+    `(?:(?:ro-?|ozmozis-?|desztillalt-?|csap|edes|tiszta|feltolto-?)?viz(?!(?:be|hez|ben|re|ra)\\b)[a-z]*|parolg\\w*|evapora\\w*|(?:ro-?)?(?:water|wasser)\\b)`
+);
+const ADDITIVE = /\b(?:kalk(?!ul)\w*|\w*meszviz\w*|\w*oldat\w*|adalek\w*)/;
 const ACCUSATIVE_COUNT = new RegExp(`${NUM}-(?:a|e|o)?t\\b`);
 const isGivenCount = (s: string) => DOSING_VERB.test(s) || ACCUSATIVE_COUNT.test(s);
 
@@ -128,6 +153,16 @@ const PER_VOLUME = new RegExp(`${NUM}\\s*(?:l|ltr|liter|litre)-?(?:enkent|re|ra|
  * ("3 × 2 ml", "2 × 5 ml") (card 89a6ba86).
  */
 const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?(?=\s*=\s*\d)/g;
+
+/**
+ * THE OPERANDS OF A SUM THAT COMES OUT IN LITRES ARE WATER VOLUMES, NOT A COUNT ("kb. 14 + tartalék = 18–20 liter lenne a kényelmes heti méret"): the cron
+ * guard's run of 2026-11-20 21:45 UTC lost an answer on the size of a top-off reservoir to it, the "14" read as a bare count next to "napi 2 liter" and "heti"
+ * (acrobot 58977). A number followed by one or more "+ <number or word>" or "× <number>" terms and then "= <number or range> liter" is taken out; the
+ * RESULT stays, and it is a volume. A sum that comes out in anything else ("2 + 1 = 3 csepp", "= 10-et") is untouched, and so is a counted thing given
+ * elsewhere in the sentence ("adj 3-at").
+ */
+const VOLUME_SUM =
+  /(?<![\d.,])\d+(?:[.,]\d+)?(?:\s*(?:\+\s*(?:\d+(?:[.,]\d+)?|[a-z]+)|[\u00d7x*]\s*\d+(?:[.,]\d+)?))+(?=\s*=\s*\d+(?:[.,]\d+)?(?:\s*[-\u2013\u2014]\s*\d+(?:[.,]\d+)?)?\s*(?:l|ltr|liter\w*|litre\w*)(?![a-z]))/g;
 
 /**
  * A NUMBER RANGE IS ONE NUMBER: "8-10 órás", "1-2 alkalommal", "5–10 ppm". Read as it stands, the range's first number
@@ -203,9 +238,12 @@ function sentences(text: string): string[] {
  * the last four) is the measurement, not something the aquarium gets. A dose
  * sentence cannot meet it: it says when (a period) or how much water (a volume) or where (the aquarium); "Tegyél 5 ml-t a mintavétel után az akváriumba"
  * names the aquarium and stays a dose. The words are read after `fold` (no accents).
+ * THE VESSEL IS OFTEN THE SECOND HALF OF A COMPOUND: "Mérőfiolába pontosan kimérsz egy adott mennyiségű akváriumvizet (pl. 5 vagy 10 ml)" lost an answer in
+ * the cron guard's run of 2026-11-20 21:45 UTC (acrobot 58977), the word boundary before "fiol" missing inside "merofiolaba". The vessel words (fiola, küvetta,
+ * kémcső) match INSIDE a word too; the sample words stay whole words, and the syringe and the measuring cup stay off the list (they dose).
  */
 const TEST_VESSEL =
-  /\b(?:fiol\w*|kuvett\w*|kemcso\w*|kemcsov\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
+  /\b(?:[a-z]*(?:fiol|kuvett|kemcso)\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
 const AQUARIUM_TARGET =
   /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|s[uz]ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
 const isTestStep = (s: string, volumes: number, periods: number) =>
@@ -224,6 +262,7 @@ export type DoseGuardRule =
   | "other-unit"
   | "given-count"
   | "per-volume-count"
+  | "litre-dose"
   | "no-fixed-dose"
   | "not-in-catalogue";
 
@@ -243,7 +282,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw).replace(LIST_MARKER, "").replace(EQUATION, " ").replace(RANGE, "");
+    const s = fold(raw).replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
@@ -259,6 +298,13 @@ export function guardAnswerDoses(
         return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "given-count", sentence: raw.trim() };
       if ((BARE_COUNT.test(rest) && volumes.length > 0) || (PER_VOLUME.test(s) && /\d/.test(rest)))
         return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "per-volume-count", sentence: raw.trim() };
+      const additive = ADDITIVE.test(s);
+      if (
+        LITRE_AMOUNT.test(s) &&
+        (STRONG_DOSING_VERB.test(s) || (additive && DOSING_VERB.test(s))) &&
+        (additive || !WATER_VOLUME.test(s))
+      )
+        return { ok: false, reason: "DOSE_NOT_IN_CATALOGUE", rule: "litre-dose", sentence: raw.trim() };
     }
     // a pack's reach stands without a period; with one ("elég naponta 3 csepp")
     // the sentence is a dose and needs the full match (barracuda, #43)
