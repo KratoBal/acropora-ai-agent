@@ -358,3 +358,44 @@ describe("a pumpa mint főnév nem adagolási egység, a pumpa mint adag igen", 
     }
   });
 });
+
+/*
+  THE PUMP AS THE DEVICE IN ONE SINGULAR NOMINATIVE (card 89a6ba86; acrobot 58779). The question-set run of 2026-11-20 20:15 UTC lost a 5467-character answer about
+  the daily work of an automated tank to "Ha automatizálsz (ATO, adagoló pumpa, vezérlő, ...), a napi manuális munka nem feltétlen sok": "pumpa" next to "napi". WHAT TURNS
+  IT RED: the device sentence replacing the answer; a pump DOSE leaving (a quantity word within three words before the nominative, or the case forms), the plural accusative
+  and the numbers with "pumpa" among them.
+*/
+describe("az eszköz-pumpa (egyes szám alanyeset) nem adagolási egység", () => {
+  const empty: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("az automatizálás mondata és az eszközt nevező mondatok egy gyakoriság mellett nem adagok", () => {
+    for (const answer of [
+      "Ha automatizálsz (ATO, adagoló pumpa, vezérlő, esetleg automata vízcsere\u2011rendszer), a **napi manuális munka nem feltétlen sok** – de:",
+      "Az ATO pumpa naponta kétszer indul.",
+      "A keringető pumpa napi 24 órában megy egy 200 literes medencében.",
+      "Heti egy ellenőrzés elég a pumpa és a szenzor állapotára."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a mennyiség után álló pumpa továbbra is adag, minden alakjában", () => {
+    for (const [answer, rule] of [
+      ["Egy pumpa naponta elég 100 literre.", "no-fixed-dose"],
+      ["Naponta egy kis pumpa 100 literre.", "no-fixed-dose"],
+      ["Naponta két adagoló pumpa 100 literre.", "no-fixed-dose"],
+      ["Adj naponta két pumpát 100 literre.", "no-fixed-dose"],
+      ["Nyomj egy pumpával naponta 100 literre.", "no-fixed-dose"],
+      ["Naponta két pumpákat adj 100 literre.", "no-fixed-dose"],
+      ["Adj naponta 2 pumpát 100 literre.", "other-unit"],
+      ["Naponta 2 pumpa 100 literhez.", "other-unit"],
+      // THE CASE FORMS WITH NO QUANTITY WORD stay unit words too: only the bare nominative is the device
+      ["Nyomj naponta pumpát 100 literre.", "no-fixed-dose"],
+      ["Pumpával adagolj naponta 100 literre.", "no-fixed-dose"],
+      ["Naponta pumpákat adj 100 literre.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, empty);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+});
