@@ -78,6 +78,20 @@ describe("a vásárlási javaslat szabálya a promptban", () => {
     assert.match(flat, /itt egyetlen márka sem szerepel/);
   });
 
+  it("a gyártó műszaki adatát megengedi, a gyártó célcsoport-, terhelés- és elterjedtség-besorolását nem (4. mérés, 65e0242f)", () => {
+    assert.match(flat, /a gyártó MŰSZAKI ADATAI \(literadat, méret, teljesítmény, működési elv, zajszint/);
+    assert.match(flat, /A GYÁRTÓ CÉLCSOPORT-ÁLLÍTÁSA, a TERHELÉS-BESOROLÁS és az ELTERJEDTSÉG ugyanaz a helyzet-termék megfeleltetés/);
+    assert.match(flat, /csak a gyártó vagy a piac szájába adva/);
+    // a FAIL-t és a rést adó alakok név szerint tiltva
+    assert.match(flat, /inkább közepes terhelésre hangolták/);
+    assert.match(flat, /erősebb terhelésre/);
+    assert.match(flat, /kezdőknek tervezve/);
+    assert.match(flat, /a hobbi kategóriában elterjedt/);
+    // a szám, a méret, a literadat, a teljesítmény leírható, de nem mondja meg, milyen vevőnek való
+    assert.match(flat, /A számot, a méretet, a literadatot, a teljesítményt leírhatod/);
+    assert.match(flat, /milyen terhelésű, tapasztalatú vagy méretű vevőnek való, nem/);
+  });
+
   it("a közvélemény- és minősítés-alakot, a vevői kört és a kezdő-előnyt is tiltja (3. mérés: sokan választják, sokaknál bevált, kezdőknek előny)", () => {
     assert.match(flat, /nincs benne közvélemény vagy minősítés \(»sokan választják«, »sokaknál bevált«, »népszerű«, »ajánlott«, »előny«/);
     assert.match(flat, /szűkebb keretnél sokan az X-et választják/);
@@ -89,7 +103,7 @@ describe("a vásárlási javaslat szabálya a promptban", () => {
   });
 
   it("a leírást, a szempontokat és a szempontokról szóló kérdés teljes válaszát megengedi", () => {
-    assert.match(flat, /mi az, miről ismert, mit állít a gyártó, milyen típusai vannak, miben erős, miben gyengébb/);
+    assert.match(flat, /mi az, miről ismert, milyen típusai vannak, miben erős, miben gyengébb, és a gyártó MŰSZAKI ADATAI/);
     assert.match(flat, /térfogat, terhelés, zajszint, hely, ár/);
     assert.match(flat, /teljes, érdemi választ adsz/);
     assert.match(flat, /nem a tanácsról/);
