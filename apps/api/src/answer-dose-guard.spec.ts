@@ -362,7 +362,7 @@ describe("a pumpa mint főnév nem adagolási egység, a pumpa mint adag igen", 
 /*
   THE PUMP AS THE DEVICE IN ONE SINGULAR NOMINATIVE (card 89a6ba86; acrobot 58779). The question-set run of 2026-11-20 20:15 UTC lost a 5467-character answer about
   the daily work of an automated tank to "Ha automatizálsz (ATO, adagoló pumpa, vezérlő, ...), a napi manuális munka nem feltétlen sok": "pumpa" next to "napi". WHAT TURNS
-  IT RED: the device sentence replacing the answer; a pump DOSE leaving (a quantity word within three words before the nominative, or the case forms), the plural accusative
+  IT RED: the device sentence replacing the answer; a pump DOSE leaving (a quantity word ANYWHERE earlier in the sentence than the nominative, or the case forms), the plural accusative
   and the numbers with "pumpa" among them.
 */
 describe("az eszköz-pumpa (egyes szám alanyeset) nem adagolási egység", () => {
