@@ -486,7 +486,10 @@ describe("összetett mintaedény, literben kijövő összeg, literes adag", () =
       "Ha napi 3 litert pótolsz, a sótartalom stabil marad.",
       "Egy 3000 literes rendszert automata adagolókkal napi fél óra alatt el lehet látni.",
       "Az automata adagolók a heti 20 liter cserénél is működnek.",
-      "Egy 3000 literes rendszerben naponta adagolj a címke szerint."
+      "Egy 3000 literes rendszerben naponta adagolj a címke szerint.",
+      "Napi 2 liter desztillált vizet adagol az ATO.",
+      // "kalkul-" is no additive: a calculation next to the ATO's water
+      "Kalkulálj napi 2 liter párolgással, ezt adagolja az ATO."
     ])
       assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
   });
@@ -498,6 +501,17 @@ describe("összetett mintaedény, literben kijövő összeg, literes adag", () =
       ["Napi 2 liter kalkwassert adagolj a feltöltővízbe.", "litre-dose"],
       ["Dose 2 liters of kalkwasser daily.", "litre-dose"],
       ["Adagolj naponta 2 litert.", "litre-dose"],
+      // barracuda on #134: "mészvíz" is Kalkwasser, a target is no volume noun, and a named additive opens the rule to a weak verb
+      ["Adagolj naponta 2 liter mészvizet.", "litre-dose"],
+      ["Adagolj naponta 2 liter kalkwasseres vizet.", "litre-dose"],
+      ["Adagolj naponta 2 liter kalkwasser-vizet.", "litre-dose"],
+      ["Napi 2 liter kalkwassert a vízbe adagolj.", "litre-dose"],
+      ["Adj naponta 2 liter kalkwassert.", "litre-dose"],
+      ["Pótolj naponta 2 liter mészvizet.", "litre-dose"],
+      // with no additive named: only plain water is water, and a target is no volume noun
+      ["Adagolj naponta 2 liter jódvizet.", "litre-dose"],
+      ["Napi 2 litert a vízbe adagolj.", "litre-dose"],
+      ["Adagolj naponta 2 liter Seewasser-Konzentrat.", "litre-dose"],
       // the sum is taken out only when it comes out in litres, and only its left side
       ["Hetente 2 + 1-et adj, ez 100 literre = 3 liter.", "given-count"],
       ["Hetente 14 + 2 = 16 liter vízhez adj 3-at.", "given-count"],
