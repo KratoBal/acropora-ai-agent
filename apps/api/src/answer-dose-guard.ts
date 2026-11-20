@@ -150,6 +150,20 @@ const UNIT_WORD =
   /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa(?!k\b)\w*|tablet\w*|kapszul\w*)\b/;
 
 /**
+ * THE PUMP AS EQUIPMENT IS NO UNIT WORD (card 89a6ba86; acrobot 58779, the question-set run of 2026-11-20 20:15 UTC). "Ha automatizálsz (ATO, adagoló pumpa,
+ * vezérlő, ...), a napi manuális munka nem feltétlen sok" lost a 5467-character answer: "pumpa" (the singular NOMINATIVE, the device) stood next to "napi" and was
+ * read as a dosing-pump unit. The singular nominative is the unit of a dose only after a QUANTITY: "egy pumpa", "két kis pumpa" ("Egy pumpa naponta elég 100
+ * literre"). With none of the quantity words (egy, két, három ... fél, pár, több, néhány) ANYWHERE EARLIER IN THE SENTENCE it is the device, and a sentence that
+ * names a device next to a period ("az ATO pumpa naponta kétszer indul") is no dose. THE BOUNDARY IS THE START OF THE SENTENCE, NOT A WINDOW (barracuda, #125): a window of
+ * a few words let "Naponta egy jó nagy kézi pumpa 100 literre" through, three adjectives between the quantity and the pump, and a tolerance on the pass side opens to a leaking dose.
+ * The price is on the stop side: a sentence with a quantity word before a device-pump ("Több eszköz van, az ATO pumpa naponta kétszer indul") still stops. ONLY the bare nominative `pumpa`: "pumpát", "pumpával", "pumpákat" and the
+ * plural accusative stay unit words (something given), and a number with "pumpa" is `OTHER_UNIT`'s and is not touched. A dose sentence cannot meet this exception:
+ * it needs a quantity before the pump, and then the exception does not apply.
+ */
+const QUANTITY_WORD = "(?:egy|ket|ketto|harom|negy|ot|hat|het|nyolc|kilenc|tiz|fel|par|tobb|nehany)";
+const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bpumpa\\b`, "g");
+
+/**
  * The pack's reach or content, not a dose: a PACK NOUN only. "elég", "enough",
  * "reicht" are measure words a dose sentence uses too ("3 csepp elég";
  * barracuda, #43 v4), so they let nothing through.
@@ -223,7 +237,7 @@ export function guardAnswerDoses(
     // the sentence is a dose and needs the full match (barracuda, #43)
     const dose =
       amounts.length > 0 ||
-      (UNIT_WORD.test(s) && (volumes.length > 0 || periods.length > 0));
+      (UNIT_WORD.test(s.replace(EQUIPMENT_PUMP, " ")) && (volumes.length > 0 || periods.length > 0));
     if (!dose || (REACH.test(s) && periods.length === 0)) continue;
     statements++;
     if (facts.length === 0)
