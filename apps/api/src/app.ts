@@ -34,6 +34,7 @@ import { ANSWER_ORDER_INSTRUCTIONS } from "./answer-order.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
 import { instructionsVersion } from "./instructions-version.js";
 import { LIVE_DATA_INSTRUCTIONS } from "./live-data.js";
+import { FALSE_PREMISE_INSTRUCTIONS } from "./answer-false-premise.js";
 import { RECOMMENDATION_INSTRUCTIONS } from "./answer-recommendation.js";
 import { doseGuardDebugOn, namesDoseSentenceTo } from "./question-set-client.js";
 import { NO_PRODUCT_CONTEXT_INSTRUCTIONS } from "./no-product-context.js";
@@ -157,7 +158,7 @@ const ASSISTANT_INSTRUCTIONS =
 /**
  * The fixed part of the instructions, in the order the model gets it: the base, the answer order (in every product
  * context branch, t-20261116-ai-utasitas-hangolas), the live-data rule (card 7a5ea203), the glossary and the
- * purchase-recommendation rule (card 355f7286). All unconditional; the version stored with each model answer is
+ * purchase-recommendation rule (card 355f7286) and the non-existent-product rule (cards c3f7aa01, 48d8229a, e2a5c8e6). All unconditional; the version stored with each model answer is
  * taken from exactly these.
  */
 const FIXED_INSTRUCTIONS = [
@@ -165,7 +166,8 @@ const FIXED_INSTRUCTIONS = [
   ANSWER_ORDER_INSTRUCTIONS,
   LIVE_DATA_INSTRUCTIONS,
   GLOSSARY_INSTRUCTIONS,
-  RECOMMENDATION_INSTRUCTIONS
+  RECOMMENDATION_INSTRUCTIONS,
+  FALSE_PREMISE_INSTRUCTIONS
 ] as const;
 
 /** Stored with every model answer (`messages.instructions_version`), see instructions-version.ts. */
