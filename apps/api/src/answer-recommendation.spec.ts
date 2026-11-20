@@ -53,6 +53,18 @@ describe("a vásárlási javaslat szabálya a promptban", () => {
     assert.match(RECOMMENDATION_INSTRUCTIONS, /Azt sem ajánlod fel, hogy te mondod meg a választ/);
   });
 
+  it("a vevő helyzetét a szempontok részben sem köti megnevezett termékhez, és a szempont irányát a márkák neve nélkül mondja (2. mérés, 608f797b)", () => {
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /a termékek és márkák NEVE NÉLKÜL/);
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /A szempont irányát\s+ne kösd a termékek tulajdonságaihoz/);
+    // a két mondatra bontott megfeleltetés ugyanaz, mint az egy mondatos
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /két egymás utáni\s+mondatban/);
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /NEM kötöd egy megnevezett termékhez vagy\s+márkához sem a »Konkrét szempontok«/);
+    // a FAIL-t kapott három alak név szerint tiltva
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /kisebb,\s+visszafogottan terhelt medencénél gyakran elég egy X/);
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /sok halas\s+rendszernél az Y modelljei erősek/);
+    assert.match(RECOMMENDATION_INSTRUCTIONS, /kompaktat találni/);
+  });
+
   it("a leírást, a szempontokat és a szempontokról szóló kérdés teljes válaszát megengedi", () => {
     assert.match(RECOMMENDATION_INSTRUCTIONS, /Leírhatod mindegyiket általánosságban/);
     assert.match(RECOMMENDATION_INSTRUCTIONS, /Elmondhatod, milyen szempontok döntenek/);
