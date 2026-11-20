@@ -147,8 +147,22 @@ const isShopLimitation = (sentence: string) => LIMITATION.test(sentence) && SHOP
  * criteria question must not make. A refusal of a purchase is the right answer to `recommendation-refused`; here nobody
  * asked for a product, so the same sentence is the fail.
  */
-const RECOMMENDATION_REFUSAL =
-  /nem (?:ajánlhat|javasolhat)|nem (?:tudok|fogok|szeretnék|akarok)(?: [\p{L}]+){0,3} (?:ajánlani|javasolni)|nem adhatok (?:vásárlási|termék)|nem (?:az én dolgom|feladatom) (?:termék|márk)/iu;
+// Four word orders, each one a red test (barracuda on #123: the pass stands on the pattern's ABSENCE, so a narrow pattern is
+// a silent false pass): the verb after "nem" ("nem tudok ... ajánlani", "nem ajánlhatok"), the present tense ("nem ajánlok
+// konkrét terméket"), the noun form after "nem adhatok", and the inverted order Hungarian uses as often ("Konkrét terméket
+// ajánlani nem tudok", "Termékajánlást nem adhatok"). "nem tudom eléggé ajánlani" is praise, not a refusal: "tudom" is
+// not in the list, and that sentence has its own pass test.
+const RECOMMENDATION_REFUSAL = new RegExp(
+  [
+    "nem (?:ajánlhat|javasolhat)",
+    "nem (?:tudok|fogok|szeretnék|akarok)(?: [\\p{L}]+){0,3} (?:ajánlani|javasolni)",
+    "nem (?:ajánlok|javaslok|javasolok)(?![\\p{L}])",
+    "nem adhatok (?:vásárlási|termék|ajánlást|javaslatot)",
+    "nem (?:az én dolgom|feladatom) (?:termék|márk)",
+    "(?<![\\p{L}])(?:ajánlani|javasolni|ajánlást|javaslatot|termékajánlást|vásárlási tanácsot)(?![\\p{L}])[^.!?]{0,30}(?<![\\p{L}])nem (?:tudok|fogok|adhatok|lehet|szeretnék|akarok)(?![\\p{L}])"
+  ].join("|"),
+  "iu"
+);
 const sentencesOf = (text: string) =>
   text
     .split(/(?<=[.!?])\s+|\n+/u)

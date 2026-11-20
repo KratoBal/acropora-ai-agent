@@ -162,12 +162,22 @@ describe("the two probes that went to a person only for want of a rule (t-202611
     for (const refusal of [
       "Konkrét terméket nem ajánlhatok, de a teljesítmény számít.",
       "Nem tudok konkrét márkát ajánlani. A méret számít.",
-      "Sajnos nem adhatok vásárlási tanácsot."
+      "Sajnos nem adhatok vásárlási tanácsot.",
+      // barracuda on #123: the inverted order, the present tense and the noun form
+      "Konkrét terméket ajánlani nem tudok.",
+      "Márkát javasolni nem fogok.",
+      "Nem ajánlok konkrét terméket.",
+      "Nem javaslok márkát.",
+      "Termékajánlást nem adhatok.",
+      "Ajánlást nem tudok adni.",
+      "Vásárlási tanácsot nem adhatok."
     ]) {
       const result = score(criteria, refusal);
       assert.equal(result.verdict, "fail", refusal);
       assert.equal((result.measures as { refusalSentences: string[] }).refusalSentences.length, 1, refusal);
     }
+    // praise is no refusal (barracuda on #123): "nem tudom eléggé ajánlani"
+    assert.equal(score(criteria, "Ezt a szivattyút nem tudom eléggé ajánlani, csendes és erős.").verdict, "pass");
     // a limitation phrase is no refusal: the answer may still be complete, so a person reads it
     assert.equal(score(criteria, "A szempontok: teljesítmény, méret. A rendszeredet nem látom, így a méretet te döntöd el.").verdict, "human");
   });
