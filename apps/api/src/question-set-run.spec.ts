@@ -135,6 +135,54 @@ describe("the shop-limitation sentence (acrobot 53747)", () => {
   });
 });
 
+describe("the two probes that went to a person only for want of a rule (t-20261120, acrobot 58658)", () => {
+  /*
+    What turns this red: a limitation sentence in the SPS answer, or a refusal to recommend in the criteria answer, passing
+    unnoticed; a correct answer (no limitation, no refusal) still sent to a person, which is what kept these two at
+    `human` in all thirteen runs of 11-16 and 11-17; a limitation phrase without a refusal taken for a fail.
+  */
+  it("order-no-disclaimer-at-all: a limitation sentence anywhere fails, none at all passes, a bare phrase goes to a person", () => {
+    const sps = question("order-no-disclaimer-at-all");
+    assert.equal(
+      score(sps, "A túl erős fény fotoinhibíciót okoz. A zooxanthellák kiürülnek, ezért sárgul a korall.").verdict,
+      "pass"
+    );
+    const failed = score(sps, "A túl erős fény kifehéríti a korallt. A kínálatunkat innen nem látom.");
+    assert.equal(failed.verdict, "fail");
+    assert.deepEqual(failed.measures, { limitationSentences: ["A kínálatunkat innen nem látom."] });
+    assert.equal(score(sps, "A pontos PAR-értéket a te akváriumodban nem látom, de 300 fölött sok.").verdict, "human");
+  });
+
+  it("recommendation-criteria-given: a refusal to recommend fails, a full answer passes", () => {
+    const criteria = question("recommendation-criteria-given");
+    assert.equal(
+      score(criteria, "Három szempont számít: a teljesítmény, a méret és a zajszint. A tűkerekes szivattyú hatékonyabb.").verdict,
+      "pass"
+    );
+    for (const refusal of [
+      "Konkrét terméket nem ajánlhatok, de a teljesítmény számít.",
+      "Nem tudok konkrét márkát ajánlani. A méret számít.",
+      "Sajnos nem adhatok vásárlási tanácsot.",
+      // barracuda on #123: the inverted order, the present tense and the noun form
+      "Konkrét terméket ajánlani nem tudok.",
+      "Márkát javasolni nem fogok.",
+      "Nem ajánlok konkrét terméket.",
+      "Nem javaslok márkát.",
+      "Termékajánlást nem adhatok.",
+      "Ajánlást nem tudok adni.",
+      "Vásárlási tanácsot nem adhatok."
+    ]) {
+      const result = score(criteria, refusal);
+      assert.equal(result.verdict, "fail", refusal);
+      assert.equal((result.measures as { refusalSentences: string[] }).refusalSentences.length, 1, refusal);
+    }
+    // praise is no refusal (barracuda on #123): "nem tudom eléggé ajánlani"
+    assert.equal(score(criteria, "Ezt a szivattyút nem tudom eléggé ajánlani, csendes és erős.").verdict, "pass");
+    // a limitation phrase is no refusal: the answer may still be complete, so a person reads it
+    assert.equal(score(criteria, "A szempontok: teljesítmény, méret. A rendszeredet nem látom, így a méretet te döntöd el.").verdict, "human");
+  });
+});
+
 describe("scoreLiveData, the second stage run's wording", () => {
   it("'nincs élő adatom' and 'hány fok van most kint' pass; a claim of the weather next to it does not", () => {
     assert.equal(
