@@ -45,30 +45,53 @@ describe("a vásárlási javaslat szabálya a promptban", () => {
         );
   });
 
+  // a sortörések szóközzé hajtva: a szabály sorokra tördelt, a mondatai nem
+  const flat = RECOMMENDATION_INSTRUCTIONS.replace(/\s+/g, " ");
+
   it("a feltételes javaslatot és az ajánlatot, hogy megmondja a választ, is tiltja", () => {
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /Nem döntesz a vevő helyett, semmilyen formában/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /ha kicsi a medence, ezt vedd/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /nagy eséllyel az X/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /akármilyen óvatosan,\s+feltételesen/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /Azt sem ajánlod fel, hogy te mondod meg a választ/);
+    assert.match(flat, /Nem döntesz a vevő helyett, semmilyen formában/);
+    assert.match(flat, /ha kicsi a medence, ezt vedd/);
+    assert.match(flat, /nagy eséllyel az X/);
+    assert.match(flat, /akármilyen óvatosan, feltételesen, visszafogottan vagy mások tapasztalatára hivatkozva/);
+    assert.match(flat, /Azt sem ajánlod fel, hogy te mondod meg a választ/);
   });
 
-  it("a vevő helyzetét a szempontok részben sem köti megnevezett termékhez, és a szempont irányát a márkák neve nélkül mondja (2. mérés, 608f797b)", () => {
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /a termékek és márkák NEVE NÉLKÜL/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /A szempont irányát\s+ne kösd a termékek tulajdonságaihoz/);
+  it("a vevő helyzetét sehol nem köti megnevezett termékhez, és a szempont irányát a márkák neve nélkül mondja (2. mérés, 608f797b)", () => {
+    assert.match(flat, /a termékek és márkák NEVE NÉLKÜL/);
+    assert.match(flat, /A szempont irányát ne kösd a termékek tulajdonságaihoz/);
     // a két mondatra bontott megfeleltetés ugyanaz, mint az egy mondatos
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /két egymás utáni\s+mondatban/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /NEM kötöd egy megnevezett termékhez vagy\s+márkához sem a »Konkrét szempontok«/);
-    // a FAIL-t kapott három alak név szerint tiltva
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /kisebb,\s+visszafogottan terhelt medencénél gyakran elég egy X/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /sok halas\s+rendszernél az Y modelljei erősek/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /kompaktat találni/);
+    assert.match(flat, /két egymás utáni mondatban/);
+    assert.match(flat, /NEM kötöd egy megnevezett termékhez vagy márkához sehol a válaszban/);
+    // a 2. mérés FAIL-t kapott három alakja név szerint tiltva
+    assert.match(flat, /kisebb, visszafogottan terhelt medencénél gyakran elég egy X/);
+    assert.match(flat, /sok halas rendszernél az Y modelljei erősek/);
+    assert.match(flat, /kompaktat találni/);
+  });
+
+  it("a válasz két külön részből áll: a márkaleírás tény a termékről, a szempontok márkanév nélkül, és a záró döntési rész kérdés (3. mérés)", () => {
+    assert.match(flat, /KÉT KÜLÖN részből áll, és a kettőt nem kötöd össze/);
+    assert.match(flat, /1\. A MÁRKÁK LEÍRÁSA/);
+    assert.match(flat, /TÉNY A TERMÉKRŐL, nem a vevőről/);
+    assert.match(flat, /2\. A DÖNTÉS SZEMPONTJAI, a termékek és márkák NEVE NÉLKÜL/);
+    // a záró rész kérdés a vevőhöz, márka nélkül
+    assert.match(flat, /»hogyan döntsd el«, »hogyan mérlegelj« rész KÉRDÉSEK a vevőhöz/);
+    assert.match(flat, /itt egyetlen márka sem szerepel/);
+  });
+
+  it("a közvélemény- és minősítés-alakot, a vevői kört és a kezdő-előnyt is tiltja (3. mérés: sokan választják, sokaknál bevált, kezdőknek előny)", () => {
+    assert.match(flat, /nincs benne közvélemény vagy minősítés \(»sokan választják«, »sokaknál bevált«, »népszerű«, »ajánlott«, »előny«/);
+    assert.match(flat, /szűkebb keretnél sokan az X-et választják/);
+    assert.match(flat, /az Y sokaknál bevált/);
+    assert.match(flat, /kezdőknek az X halkabb működése sokszor előny/);
+    assert.match(flat, /vevői körhöz egy megnevezett terméket mutat meg vásárlásra, javaslat/);
+    // a tapasztalat és a költségkeret is a vevő helyzete
+    assert.match(flat, /a tapasztalat, a költségkeret\) NEM kötöd/);
   });
 
   it("a leírást, a szempontokat és a szempontokról szóló kérdés teljes válaszát megengedi", () => {
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /Leírhatod mindegyiket általánosságban/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /Elmondhatod, milyen szempontok döntenek/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /teljes, érdemi választ adsz/);
-    assert.match(RECOMMENDATION_INSTRUCTIONS, /nem a tanácsról/);
+    assert.match(flat, /mi az, miről ismert, mit állít a gyártó, milyen típusai vannak, miben erős, miben gyengébb/);
+    assert.match(flat, /térfogat, terhelés, zajszint, hely, ár/);
+    assert.match(flat, /teljes, érdemi választ adsz/);
+    assert.match(flat, /nem a tanácsról/);
   });
 });
