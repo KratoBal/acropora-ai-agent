@@ -537,7 +537,9 @@ describe("ragos rendszer-térfogat, edény nélküli tesztlépés, szót szorzó
     for (const answer of [
       "- **Automata adagolórendszer** (balling / Ca-reaktor, KH-stabilizálás): 3000 literen a kézi napi adagolás gyorsan vállalhatatlan.",
       "2. Felveszel pontosan annyi vizet, amennyit a teszt előír (pl. 5 vagy 10 ml)",
-      "3. Napi párolgás × 7 = a **minimális heti tartálytérfogat**, és ehhez adj még +20–30% tartalékot"
+      "3. Napi párolgás × 7 = a **minimális heti tartálytérfogat**, és ehhez adj még +20–30% tartalékot",
+      "Vegyél annyi akváriumvizet, amennyit a teszt kér (10 ml).",
+      "Az ATO naponta 2 literrel több vizet adagol nyáron."
     ])
       assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
   });
@@ -551,7 +553,14 @@ describe("ragos rendszer-térfogat, edény nélküli tesztlépés, szót szorzó
       ["Adagolj 5 ml-t, ha a teszt kéri, és cserélj vizet.", "no-fixed-dose"],
       ["Az adag 5 ml, amennyit a teszt ír.", "no-fixed-dose"],
       ["Hetente adj 3 × 2 = 6-ot.", "given-count"],
-      ["Hetente adj kupak × 2 = 6-ot.", "given-count"]
+      ["Hetente adj kupak × 2 = 6-ot.", "given-count"],
+      // barracuda on #135: the "-nyi" form and the instrumental are amounts; a named additive is never the test's water
+      ["Adagolj naponta 2 liternyi mészvizet.", "litre-dose"],
+      ["Adagolj naponta 2 literrel több kalkwassert.", "litre-dose"],
+      ["Ha a teszt alacsonyat ír, 200 ml mészvizet.", "no-fixed-dose"],
+      ["Ha a teszt alacsonyat ír, 200 ml oldatot és vizet.", "no-fixed-dose"],
+      // with no additive named: only plain or aquarium water is the test's water
+      ["Ha a teszt alacsonyat ír, 200 ml jódvizet.", "no-fixed-dose"]
     ] as const) {
       const result = guardAnswerDoses(answer, none);
       assert.equal(result.ok, false, answer);
