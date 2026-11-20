@@ -9,6 +9,7 @@ import {
   applyJudgements,
   effectiveVerdict,
   judgementSheet,
+  sheetKeys,
   type JudgeableResult
 } from "./question-set-judgement.js";
 import { compareReports, main, sheetPathOf, summarize, type QuestionResult, type RunReport } from "./question-set-run.js";
@@ -114,6 +115,12 @@ describe("an answer cannot smuggle a field or a section onto the sheet (barracud
     const outcome = applyJudgements(results, sheet, "barracuda");
     assert.deepEqual(outcome.applied, []);
     assert.match(outcome.refused.join(" "), /itelet mezo ketszer/);
+  });
+});
+
+describe("sheetKeys", () => {
+  it("is the id for a question asked once, id#1..#n for one asked n times, in order", () => {
+    assert.deepEqual(sheetKeys([{ id: "a" }, { id: "b" }, { id: "a" }, { id: "c" }, { id: "a" }]), ["a#1", "b", "a#2", "c", "a#3"]);
   });
 });
 
@@ -240,10 +247,33 @@ describe("main, a whole run", () => {
     assert.match(lines[0]!, /judgement sheet for the \d+ human answers: .*qs-run-itelet\.md/);
   });
 
-  it("a partial run (--only) writes no sheet: it is no baseline", async () => {
-    const out = join(mkdtempSync(join(tmpdir(), "question-set-sheet-")), "qs-part.json");
-    await main(["--url", "http://ai.test", "--out", out, "--only", "stock-claim-fires"], { AI_API_TOKEN: "t" }, { log: () => {}, fetchImpl });
-    assert.equal(existsSync(out), true);
-    assert.equal(existsSync(sheetPathOf(out)), false);
+  // acrobot 58852, 58864: a --repeat run is how one answer's spread is judged, so it gets a sheet too, its sections id#1..#n
+  it("a --repeat run writes a sheet with the repeated question keyed id#1..#n, and --itelet reads it back without --compare", async () => {
+    const out = join(mkdtempSync(join(tmpdir(), "question-set-sheet-")), "qs-rep.json");
+    await main(
+      ["--url", "http://ai.test", "--out", out, "--only", "stock-claim-fires", "--repeat", "3"],
+      { AI_API_TOKEN: "t" },
+      { log: () => {}, fetchImpl }
+    );
+    const sheetPath = sheetPathOf(out);
+    const sheet = readFileSync(sheetPath, "utf8");
+    assert.deepEqual([...sheet.matchAll(/^## (\S+)$/gmu)].map((m) => m[1]), [
+      "stock-claim-fires#1",
+      "stock-claim-fires#2",
+      "stock-claim-fires#3"
+    ]);
+    // the second repetition judged; the read-back takes the partial report
+    writeFileSync(sheetPath, fill(sheet, "stock-claim-fires#2", "fail", "Allit keszletet."));
+    const lines: string[] = [];
+    assert.equal(await main(["--itelet", sheetPath, "--report", out, "--biro", "barracuda"], {}, { log: (l) => lines.push(l) }), 0);
+    const written = JSON.parse(readFileSync(out, "utf8")) as RunReport;
+    assert.deepEqual(written.results.map((r) => r.judged?.verdict ?? null), [null, "fail", null]);
+    // a partial run is no baseline: with --compare it is refused, and nothing is written
+    const before = readFileSync(out, "utf8");
+    assert.equal(
+      await main(["--itelet", sheetPath, "--report", out, "--biro", "barracuda", "--compare", out], {}, { log: () => {} }),
+      2
+    );
+    assert.equal(readFileSync(out, "utf8"), before);
   });
 });

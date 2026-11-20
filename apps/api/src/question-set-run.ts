@@ -792,8 +792,9 @@ export async function main(
   };
   if (comparePath !== undefined) report.comparison = compareReports(previous, report);
   writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
-  // the answers a machine cannot score, for a person (not for a partial run: it is no baseline, nobody compares it)
-  const sheet = partial ? null : judgementSheet(report, basename(out));
+  // the answers a machine cannot score, for a person; a partial run too (acrobot 58852: a --repeat run is how the spread of
+  // one answer is judged), its repeated questions keyed id#1..#n (`sheetKeys`)
+  const sheet = judgementSheet(report, basename(out));
   const sheetPath = sheetPathOf(out);
   if (sheet !== null) writeFileSync(sheetPath, sheet);
   const s = report.summary;
@@ -848,8 +849,13 @@ async function judgeMain(argv: readonly string[], io: { log: (line: string) => v
     io.log(`a file cannot be read: ${[sheetPath, reportPath, comparePath].filter(Boolean).join(", ")}`);
     return 2;
   }
-  if (!Array.isArray(report.results) || report.repeat) {
-    io.log(`not a whole run's report: ${reportPath}`);
+  if (!Array.isArray(report.results)) {
+    io.log(`not a run's report: ${reportPath}`);
+    return 2;
+  }
+  // a partial run's sheet is read back like a whole one's; it is only never compared (it is no baseline)
+  if (report.repeat && comparePath !== undefined) {
+    io.log(`a partial run (--only/--repeat) is not compared: ${reportPath}`);
     return 2;
   }
   const outcome = applyJudgements(report.results, sheet, judge);
