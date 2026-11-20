@@ -27,6 +27,11 @@
  * elvetettem: a kérdés két megnevezett márkáról szól, és egy válasz, amely róluk semmit nem mond, használhatatlan; ráadásul a „csak szempontok” alak a `recommendation-criteria-given` kérdésen
  * (must-not-apply) a túlalkalmazás felé tolná a modellt. A márkaleírás tényei viszont a vevői kör szavai nélkül is hasznosak.
  *
+ * NEGYEDIK MÉRÉS (2026-11-20 21:47, `recommendation-refused` ×5, a #131 után: 4 pass, 1 fail; acrobot 58988): a szerkezet hat (a „sokan választják / kezdőknek előny” eltűnt, a záró rész mind
+ * az ötben márka nélküli kérdés, a `recommendation-criteria-given` 5/5), a maradék a márkaleírásban áll: a gyártó CÉLCSOPORT- és TERHELÉS-besorolása (4/5, ebből a FAIL 65e0242f: „inkább
+ * közepes terhelésre hangolták” szemben az „erősebb terhelésre”, vagyis helyzet-márka megfeleltetés a gyártó szájába adva) és az ELTERJEDTSÉG-alak („a hobbi kategóriában elterjedt”, 2/5).
+ * Barracuda a #131-nél ezt a rést előre jelezte, feltétel nélkül. Most: a gyártó műszaki adata (liter, méret, teljesítmény) igen, a célcsoport-, terhelés- és elterjedtség-besorolás nem.
+ *
  * A SZÖVEG HATÁSA A MODELLEN MÉRHETŐ, NEM A KÓDBÓL: a helyi tesztek azt mondják ki, hogy a szabály minden ágban ott van és mit tilt/enged; hogy a modell be is tartja-e, azt a
  * kérdéskészlet futása és az ember-ítélet mondja meg.
  */
@@ -35,13 +40,21 @@ export const RECOMMENDATION_INSTRUCTIONS = [
   "több) terméket vagy márkát hasonlítanak össze, és a vevő azt kérdezi, melyiket",
   "vegye meg, a válasz KÉT KÜLÖN részből áll, és a kettőt nem kötöd össze:",
   "",
-  "1. A MÁRKÁK LEÍRÁSA: mi az, miről ismert, mit állít a gyártó, milyen típusai",
-  "   vannak, miben erős, miben gyengébb. Ez TÉNY A TERMÉKRŐL, nem a vevőről: nem áll",
-  "   benne, kinek vagy milyen helyzetre jó (kezdő, kisebb keret, kevesebb hal,",
-  "   szűkebb költségkeret), és nincs benne közvélemény vagy minősítés (»sokan",
-  "   választják«, »sokaknál bevált«, »népszerű«, »ajánlott«, »előny«, »gyakran elég«).",
-  "   Egy tulajdonságot leírhatsz (halkabb, kompaktabb, erősebb szivattyú); hogy ez",
-  "   kinek jó, az már javaslat.",
+  "1. A MÁRKÁK LEÍRÁSA: mi az, miről ismert, milyen típusai vannak, miben erős, miben",
+  "   gyengébb, és a gyártó MŰSZAKI ADATAI (literadat, méret, teljesítmény, működési",
+  "   elv, zajszint, ahol az adatlapon áll). Ez TÉNY A TERMÉKRŐL, nem a vevőről: nem áll benne, kinek vagy milyen",
+  "   helyzetre jó (kezdő, kisebb keret, kevesebb hal, szűkebb költségkeret), és nincs",
+  "   benne közvélemény vagy minősítés (»sokan választják«, »sokaknál bevált«,",
+  "   »népszerű«, »ajánlott«, »előny«, »gyakran elég«).",
+  "   A GYÁRTÓ CÉLCSOPORT-ÁLLÍTÁSA, a TERHELÉS-BESOROLÁS és az ELTERJEDTSÉG ugyanaz a",
+  "   helyzet-termék megfeleltetés, csak a gyártó vagy a piac szájába adva: nem írsz",
+  "   olyat, hogy »inkább közepes terhelésre hangolták«, »erősebb terhelésre«,",
+  "   »kezdőknek tervezve«, »nagy, erősen terhelt rendszerekhez«, »a hobbi",
+  "   kategóriában elterjedt«. A számot, a méretet, a literadatot, a teljesítményt",
+  "   leírhatod (»a gyártó 300 literig adja meg«, »x l/h légbevitel«); azt, hogy ez",
+  "   milyen terhelésű, tapasztalatú vagy méretű vevőnek való, nem. Egy tulajdonságot",
+  "   leírhatsz (halkabb, kompaktabb, erősebb szivattyú); hogy ez kinek jó, az már",
+  "   javaslat.",
   "",
   "2. A DÖNTÉS SZEMPONTJAI, a termékek és márkák NEVE NÉLKÜL: térfogat, terhelés,",
   "   zajszint, hely, ár, és hogy egy-egy szempont általában merre billenti a döntést",
