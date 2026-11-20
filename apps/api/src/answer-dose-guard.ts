@@ -153,13 +153,15 @@ const UNIT_WORD =
  * THE PUMP AS EQUIPMENT IS NO UNIT WORD (card 89a6ba86; acrobot 58779, the question-set run of 2026-11-20 20:15 UTC). "Ha automatizálsz (ATO, adagoló pumpa,
  * vezérlő, ...), a napi manuális munka nem feltétlen sok" lost a 5467-character answer: "pumpa" (the singular NOMINATIVE, the device) stood next to "napi" and was
  * read as a dosing-pump unit. The singular nominative is the unit of a dose only after a QUANTITY: "egy pumpa", "két kis pumpa" ("Egy pumpa naponta elég 100
- * literre"). With none of the quantity words (egy, két, három ... fél, pár, több, néhány) in the three words before it, it is the device, and a sentence that
- * names a device next to a period ("az ATO pumpa naponta kétszer indul") is no dose. ONLY the bare nominative `pumpa`: "pumpát", "pumpával", "pumpákat" and the
+ * literre"). With none of the quantity words (egy, két, három ... fél, pár, több, néhány) ANYWHERE EARLIER IN THE SENTENCE it is the device, and a sentence that
+ * names a device next to a period ("az ATO pumpa naponta kétszer indul") is no dose. THE BOUNDARY IS THE START OF THE SENTENCE, NOT A WINDOW (barracuda, #125): a window of
+ * a few words let "Naponta egy jó nagy kézi pumpa 100 literre" through, three adjectives between the quantity and the pump, and a tolerance on the pass side opens to a leaking dose.
+ * The price is on the stop side: a sentence with a quantity word before a device-pump ("Több eszköz van, az ATO pumpa naponta kétszer indul") still stops. ONLY the bare nominative `pumpa`: "pumpát", "pumpával", "pumpákat" and the
  * plural accusative stay unit words (something given), and a number with "pumpa" is `OTHER_UNIT`'s and is not touched. A dose sentence cannot meet this exception:
  * it needs a quantity before the pump, and then the exception does not apply.
  */
 const QUANTITY_WORD = "(?:egy|ket|ketto|harom|negy|ot|hat|het|nyolc|kilenc|tiz|fel|par|tobb|nehany)";
-const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\s+(?:\\S+\\s+){0,2})\\bpumpa\\b`, "g");
+const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bpumpa\\b`, "g");
 
 /**
  * The pack's reach or content, not a dose: a PACK NOUN only. "elég", "enough",

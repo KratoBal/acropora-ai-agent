@@ -373,7 +373,7 @@ describe("az eszköz-pumpa (egyes szám alanyeset) nem adagolási egység", () =
       "Ha automatizálsz (ATO, adagoló pumpa, vezérlő, esetleg automata vízcsere\u2011rendszer), a **napi manuális munka nem feltétlen sok** – de:",
       "Az ATO pumpa naponta kétszer indul.",
       "A keringető pumpa napi 24 órában megy egy 200 literes medencében.",
-      "Heti egy ellenőrzés elég a pumpa és a szenzor állapotára."
+      "Heti ellenőrzés elég a pumpa és a szenzor állapotára."
     ])
       assert.deepEqual(guardAnswerDoses(answer, empty), { ok: true, doseStatements: 0 }, answer);
   });
@@ -383,6 +383,10 @@ describe("az eszköz-pumpa (egyes szám alanyeset) nem adagolási egység", () =
       ["Egy pumpa naponta elég 100 literre.", "no-fixed-dose"],
       ["Naponta egy kis pumpa 100 literre.", "no-fixed-dose"],
       ["Naponta két adagoló pumpa 100 literre.", "no-fixed-dose"],
+      // THE QUANTITY ANYWHERE EARLIER IN THE SENTENCE, however many words stand between it and the pump (barracuda, #125)
+      ["Naponta egy jó nagy kézi pumpa 100 literre.", "no-fixed-dose"],
+      ["Naponta egy teljes, lassan lenyomott pumpa elég.", "no-fixed-dose"],
+      ["Heti két alkalommal, egy nagyon óvatos, kis erővel lenyomott pumpa 100 literre.", "no-fixed-dose"],
       ["Adj naponta két pumpát 100 literre.", "no-fixed-dose"],
       ["Nyomj egy pumpával naponta 100 literre.", "no-fixed-dose"],
       ["Naponta két pumpákat adj 100 literre.", "no-fixed-dose"],
