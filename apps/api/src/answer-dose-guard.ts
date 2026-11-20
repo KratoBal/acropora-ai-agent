@@ -179,10 +179,37 @@ const REACH =
  */
 const LIST_MARKER = /^\s*(?:[-*\u2022]\s*)*\d{1,2}[.)]\s+(?=[a-z*_])/;
 
-/** The answer's sentences; a decimal point is no end. */
+/**
+ * The answer's sentences; a decimal point is no end, and neither is the point of a common abbreviation ("pl.", "kb.",
+ * "stb.", "ill.", "vö.", "ún.", "max.", "min.", "e.g.", "approx."). The cron guard's run of 2026-11-20 21:30 UTC lost a 4065-character nitrate
+ * answer to the split at "pl.": "Vegyél ki ... a teszt fiolájába (pl. 5 vagy 10 ml, amit a teszt ír)" reached the guard as "5 vagy 10 ml, amit a teszt
+ * ír)", the vial it is measured into cut away (acrobot 58933). A longer sentence only gives the guard more to read: a period or a volume earlier in it
+ * still counts.
+ */
+const ABBREVIATION_POINT = /(?<![\p{L}])(?:pl|kb|stb|ill|v\u00f6|\u00fan|max|min|approx|ca|e\.g|i\.e)\.(?=\s)/giu;
 function sentences(text: string): string[] {
-  return text.split(/(?<!\d)[.!?;](?!\d)|\n/).filter((s) => s.trim() !== "");
+  return text
+    .replace(ABBREVIATION_POINT, (m) => m.slice(0, -1) + "\u2024")
+    .split(/(?<!\d)[.!?;](?!\d)|\n/)
+    .map((s) => s.replace(/\u2024/g, "."))
+    .filter((s) => s.trim() !== "");
 }
+
+/**
+ * A TEST STEP'S AMOUNT IS NO DOSE (acrobot 58933): "Vegyél ki 5 vagy 10 ml akváriumvizet a teszt fiolájába", "Cseppents 5 cseppet a mintához", "Töltsd a
+ * küvettát 10 ml-ig". THE SYRINGE IS NO TEST VESSEL: it is the usual tool to dose a supplement ("Mérj ki fecskendővel 10 ml-t, és csepegtesd az
+ * áramlásba"; barracuda on #132), so it is not on the list. A sentence that names a TEST VESSEL or the SAMPLE (fiola, küvetta, kémcső, minta, mintavétel) and has NO period, NO water
+ * volume and NO aquarium as the target (akváriumba, medencébe, rendszerbe, sumpba/szumpba, tartályba, vízbe, áramlásba, technikába; barracuda on #132 for
+ * the last four) is the measurement, not something the aquarium gets. A dose
+ * sentence cannot meet it: it says when (a period) or how much water (a volume) or where (the aquarium); "Tegyél 5 ml-t a mintavétel után az akváriumba"
+ * names the aquarium and stays a dose. The words are read after `fold` (no accents).
+ */
+const TEST_VESSEL =
+  /\b(?:fiol\w*|kuvett\w*|kemcso\w*|kemcsov\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
+const AQUARIUM_TARGET =
+  /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|s[uz]ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
+const isTestStep = (s: string, volumes: number, periods: number) =>
+  TEST_VESSEL.test(s) && volumes === 0 && periods === 0 && !AQUARIUM_TARGET.test(s);
 
 /**
  * THE SIZE OF AN ANSWER, TWO NUMBERS AND NO TEXT (task t-20261117-csere-elotti-meret; acrobot 55186): how long it was and how many sentences it had,
@@ -238,7 +265,12 @@ export function guardAnswerDoses(
     const dose =
       amounts.length > 0 ||
       (UNIT_WORD.test(s.replace(EQUIPMENT_PUMP, " ")) && (volumes.length > 0 || periods.length > 0));
-    if (!dose || (REACH.test(s) && periods.length === 0)) continue;
+    if (
+      !dose ||
+      (REACH.test(s) && periods.length === 0) ||
+      isTestStep(s, volumes.length, periods.length)
+    )
+      continue;
     statements++;
     if (facts.length === 0)
       return { ok: false, reason: "NO_FIXED_DOSE", rule: "no-fixed-dose", sentence: raw.trim() };

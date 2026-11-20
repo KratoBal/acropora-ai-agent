@@ -403,3 +403,56 @@ describe("az eszköz-pumpa (egyes szám alanyeset) nem adagolási egység", () =
     }
   });
 });
+
+/*
+  A TEST STEP'S AMOUNT IS NO DOSE (acrobot 58933; the cron guard's run of 2026-11-20 21:30 UTC, server e867b6fe, lost a 4065-character nitrate
+  answer to "(pl. 5 vagy 10 ml, amit a teszt ír)"). WHAT TURNS IT RED: the sample volume in a test vial replaced; the sentence split at "pl.",
+  cutting the vial away; a real dose let through because the sentence names a test vessel too (with a period, a water volume or the aquarium
+  as the target it stays a dose); an abbreviation point hiding a dose.
+*/
+describe("a teszt mintatérfogata nem adag", () => {
+  const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("a nitrátmérés válaszának lépése (a cron-futás szövege) nem csere", () => {
+    const answer = [
+      "### 1. Csepegtetős (kolorimetriás) teszt",
+      "**Általános lépések (mindig a saját teszted leírása a mérvadó):**",
+      "1. **Mintavétel**  ",
+      "   - Vegyél ki adott mennyiségű akváriumvizet a teszt fiolájába (pl. 5 vagy 10 ml, amit a teszt ír).",
+      "   - Ügyelj, hogy a fiola tiszta, ne legyen benne vegyszer- vagy sómaradék."
+    ].join("\n");
+    assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 });
+  });
+
+  it("a mintához, fiolához, küvettához mért mennyiség tesztlépés", () => {
+    for (const answer of [
+      "Cseppents 5 cseppet a mintához.",
+      "Töltsd a küvettát 10 ml-ig a mintavízzel.",
+      "Fill the vial with 5 ml of tank water.",
+      "A fecskendővel szívj fel 2 ml mintát."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("egy valódi adag továbbra is fennakad: időszakkal, vízmennyiséggel, vagy ha az akvárium a célpont", () => {
+    for (const answer of [
+      "Adagolj naponta 5 ml-t.",
+      "Tegyél 5 ml-t a mintavétel után az akváriumba.",
+      "Cseppents a fiolába naponta 5 cseppet.",
+      "A mintához hasonlóan adj 10 ml-t 100 literre.",
+      // an abbreviation point hides nothing: the period earlier in the sentence still counts
+      "Add 5 ml of the sample water into the tank.",
+      // barracuda on #132: the syringe doses, and the target list reads "szump", "vízbe", "áramlásba", "technikába"
+      "A kezdő adag 5 ml, fecskendővel kimérve.",
+      "Mérj ki fecskendővel 10 ml-t, és csepegtesd lassan az áramlásba.",
+      "Fiolával mérj ki 5 ml-t, és öntsd a szumpba.",
+      "Mérj ki a fiolával 5 ml-t, és öntsd a vízbe.",
+      "A mintavétel után 5 ml-t tegyél a technikába.",
+      "Kb. 5 ml naponta elég.",
+      "Naponta adj kb. 5 ml-t."
+    ]) {
+      const result = guardAnswerDoses(answer, none);
+      assert.equal(result.ok, false, answer);
+    }
+  });
+});
