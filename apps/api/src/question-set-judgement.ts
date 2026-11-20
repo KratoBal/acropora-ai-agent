@@ -49,6 +49,24 @@ export function answerFingerprint(answer: string): string {
   return createHash("sha256").update(answer, "utf8").digest("hex").slice(0, 16);
 }
 
+/**
+ * THE SECTION KEY OF EACH RESULT (acrobot 58852, 58864): the question id, or `id#n` (the n-th time, from 1) when the id stands
+ * more than once in the results. A `--repeat 5` run asks the same question five times; with the bare id the five sections
+ * shared one heading, and the read-back refused the sheet as "twice on the sheet". A whole run asks each question once, so
+ * its keys are the ids, as on every sheet written before.
+ */
+export function sheetKeys(results: readonly { id: string }[]): string[] {
+  const total = new Map<string, number>();
+  for (const r of results) total.set(r.id, (total.get(r.id) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return results.map((r) => {
+    if (total.get(r.id) === 1) return r.id;
+    const n = (seen.get(r.id) ?? 0) + 1;
+    seen.set(r.id, n);
+    return `${r.id}#${n}`;
+  });
+}
+
 /** The results a person has to judge: a `human` verdict on an answer that exists and is not judged yet. */
 export function awaitingJudgement<T extends JudgeableResult>(results: readonly T[]): T[] {
   return results.filter((r) => r.verdict === "human" && typeof r.answer === "string" && !r.judged);
@@ -80,12 +98,15 @@ export function judgementSheet(
   },
   reportName: string
 ): string | null {
-  const waiting = awaitingJudgement(report.results);
+  const keys = sheetKeys(report.results);
+  const waiting = report.results
+    .map((result, index) => ({ result, key: keys[index]! }))
+    .filter(({ result }) => awaitingJudgement([result]).length === 1);
   if (waiting.length === 0) return null;
-  const sections = waiting.map((result) => {
+  const sections = waiting.map(({ result, key }) => {
     const question = QUESTION_SET.find((q) => q.id === result.id);
     return [
-      `## ${result.id}`,
+      `## ${key}`,
       "",
       question
         ? `proba: ${question.probe}, ${question.polarity}, tengely: ${question.axis}`
@@ -125,7 +146,8 @@ export function applyJudgements<T extends JudgeableResult>(
   sheet: string,
   judge: string
 ): ApplyOutcome<T> {
-  const byId = new Map(results.map((r) => [r.id, r] as const));
+  const keys = sheetKeys(results);
+  const byId = new Map(results.map((r, index) => [keys[index]!, r] as const));
   const verdicts = new Map<string, Judgement>();
   const refused: string[] = [];
   const seen = new Set<string>();
@@ -183,7 +205,7 @@ export function applyJudgements<T extends JudgeableResult>(
   }
   if (refused.length > 0) return { results: [...results], applied: [], refused };
   return {
-    results: results.map((r) => (verdicts.has(r.id) ? { ...r, judged: verdicts.get(r.id)! } : r)),
+    results: results.map((r, index) => (verdicts.has(keys[index]!) ? { ...r, judged: verdicts.get(keys[index]!)! } : r)),
     applied: [...verdicts.keys()],
     refused: []
   };
