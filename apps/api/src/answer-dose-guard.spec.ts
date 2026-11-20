@@ -442,6 +442,12 @@ describe("a teszt mintatérfogata nem adag", () => {
       "A mintához hasonlóan adj 10 ml-t 100 literre.",
       // an abbreviation point hides nothing: the period earlier in the sentence still counts
       "Add 5 ml of the sample water into the tank.",
+      // barracuda on #132: the syringe doses, and the target list reads "szump", "vízbe", "áramlásba", "technikába"
+      "A kezdő adag 5 ml, fecskendővel kimérve.",
+      "Mérj ki fecskendővel 10 ml-t, és csepegtesd lassan az áramlásba.",
+      "Fiolával mérj ki 5 ml-t, és öntsd a szumpba.",
+      "Mérj ki a fiolával 5 ml-t, és öntsd a vízbe.",
+      "A mintavétel után 5 ml-t tegyél a technikába.",
       "Kb. 5 ml naponta elég.",
       "Naponta adj kb. 5 ml-t."
     ]) {

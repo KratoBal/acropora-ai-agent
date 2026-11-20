@@ -197,15 +197,17 @@ function sentences(text: string): string[] {
 
 /**
  * A TEST STEP'S AMOUNT IS NO DOSE (acrobot 58933): "Vegyél ki 5 vagy 10 ml akváriumvizet a teszt fiolájába", "Cseppents 5 cseppet a mintához", "Töltsd a
- * küvettát 10 ml-ig". A sentence that names a TEST VESSEL or the SAMPLE (fiola, küvetta, kémcső, minta, mintavétel, fecskendő) and has NO period, NO water
- * volume and NO aquarium as the target (akváriumba, medencébe, rendszerbe, sumpba, tartályba) is the measurement, not something the aquarium gets. A dose
+ * küvettát 10 ml-ig". THE SYRINGE IS NO TEST VESSEL: it is the usual tool to dose a supplement ("Mérj ki fecskendővel 10 ml-t, és csepegtesd az
+ * áramlásba"; barracuda on #132), so it is not on the list. A sentence that names a TEST VESSEL or the SAMPLE (fiola, küvetta, kémcső, minta, mintavétel) and has NO period, NO water
+ * volume and NO aquarium as the target (akváriumba, medencébe, rendszerbe, sumpba/szumpba, tartályba, vízbe, áramlásba, technikába; barracuda on #132 for
+ * the last four) is the measurement, not something the aquarium gets. A dose
  * sentence cannot meet it: it says when (a period) or how much water (a volume) or where (the aquarium); "Tegyél 5 ml-t a mintavétel után az akváriumba"
  * names the aquarium and stays a dose. The words are read after `fold` (no accents).
  */
 const TEST_VESSEL =
-  /\b(?:fiol\w*|kuvett\w*|kemcso\w*|kemcsov\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|fecskendo\w*|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
+  /\b(?:fiol\w*|kuvett\w*|kemcso\w*|kemcsov\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
 const AQUARIUM_TARGET =
-  /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|sump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump))\b/;
+  /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|s[uz]ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
 const isTestStep = (s: string, volumes: number, periods: number) =>
   TEST_VESSEL.test(s) && volumes === 0 && periods === 0 && !AQUARIUM_TARGET.test(s);
 
