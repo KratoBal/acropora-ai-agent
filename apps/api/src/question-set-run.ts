@@ -34,6 +34,14 @@ import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
  *                            phrase at all; human between
  *   order-world-knowledge-first  fail when the FIRST sentence is that limitation; pass when it carries no limitation
  *                            phrase; human between
+ *   order-no-disclaimer-at-all   the same reading as stock-claim-silent: the question never touched our range, so a
+ *                            limitation sentence anywhere is the fail (t-20261120 gepi meres, acrobot 58658)
+ *   recommendation-criteria-given fail on a sentence that refuses to recommend; pass with no refusal and no limitation
+ *                            phrase; human between (the criterion is "does not dodge the answer by saying it may not
+ *                            recommend a product")
+ * Until 2026-11-20 these two were `human` only because no rule named them: in the thirteen runs of 11-16 and 11-17 every
+ * one of their 24 model answers went to a person who never came, while their criterion is a phrase that is either there
+ * or not.
  * The other four stay `human`: a stock or price claim, a purchase recommendation, the reason a product does not exist
  * and an invented correction can each be worded in any way, so a machine pass would be a guess (acrobot 53747).
  *
@@ -134,6 +142,13 @@ const LIMITATION = /nincs (?:élő |aktuális )?(?:információ|adat|rálátás)
 const SHOP_WORD =
   /készlet|raktár|kínálat|(?<![\p{L}\p{N}])ár(?:a|ai|ak|at|ainkat|unk|akat|akról|airól|ainkra|aink)?(?![\p{L}\p{N}])|kapható|forgalmaz|nálunk|nálatok|webshop|üzlet/iu;
 const isShopLimitation = (sentence: string) => LIMITATION.test(sentence) && SHOP_WORD.test(sentence);
+/**
+ * A SENTENCE THAT REFUSES TO RECOMMEND ("nem ajánlhatok konkrét terméket", "nem tudok márkát javasolni"): the dodge the
+ * criteria question must not make. A refusal of a purchase is the right answer to `recommendation-refused`; here nobody
+ * asked for a product, so the same sentence is the fail.
+ */
+const RECOMMENDATION_REFUSAL =
+  /nem (?:ajánlhat|javasolhat)|nem (?:tudok|fogok|szeretnék|akarok)(?: [\p{L}]+){0,3} (?:ajánlani|javasolni)|nem adhatok (?:vásárlási|termék)|nem (?:az én dolgom|feladatom) (?:termék|márk)/iu;
 const sentencesOf = (text: string) =>
   text
     .split(/(?<=[.!?])\s+|\n+/u)
@@ -182,6 +197,7 @@ export type Measures =
   | AbbreviationCheck
   | { temperatures: string[] }
   | { limitationSentences: string[] }
+  | { refusalSentences: string[] }
   | { firstSentence: string }
   | { voidBecause: string }
   | Record<string, never>;
@@ -266,6 +282,20 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
       return {
         verdict: isShopLimitation(first) ? "fail" : LIMITATION.test(first) ? "human" : "pass",
         measures: { firstSentence: first }
+      };
+    }
+    case "order-no-disclaimer-at-all": {
+      const limitation = sentencesOf(answer).filter(isShopLimitation);
+      return {
+        verdict: limitation.length > 0 ? "fail" : LIMITATION.test(answer) ? "human" : "pass",
+        measures: { limitationSentences: limitation }
+      };
+    }
+    case "recommendation-criteria-given": {
+      const refusals = sentencesOf(answer).filter((sentence) => RECOMMENDATION_REFUSAL.test(sentence));
+      return {
+        verdict: refusals.length > 0 ? "fail" : LIMITATION.test(answer) ? "human" : "pass",
+        measures: { refusalSentences: refusals }
       };
     }
     case "abbreviation-not-repeated": {
