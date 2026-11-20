@@ -15,6 +15,7 @@ import {
 import { QUESTION_SET_CLIENT_KEY } from "./question-set-client.js";
 import {
   applyJudgements,
+  awaitingJudgement,
   effectiveVerdict,
   judgementSheet,
   type Judgement
@@ -812,7 +813,8 @@ async function judgeMain(argv: readonly string[], io: { log: (line: string) => v
   const s = report.summary;
   io.log(
     `judged ${outcome.applied.length} (${judge}): pass ${s.judged.pass}, fail ${s.judged.fail}; ` +
-      `still unjudged ${s.human - s.judged.pass - s.judged.fail}. Report: ${reportPath}`
+      // the answers that can still be judged: a failed call is `human` too, but it has no answer to judge
+      `still unjudged ${awaitingJudgement(report.results).length}. Report: ${reportPath}`
   );
   const c = report.comparison;
   if (c && comparePath !== undefined)
