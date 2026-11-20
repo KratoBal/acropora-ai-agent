@@ -10,10 +10,10 @@ import { buildApp, type AppDependencies, type ConversationStore } from "./app.js
 import { httpSender, main, runQuestionSet, type RunReport, type SendQuestion } from "./question-set-run.js";
 
 /*
-  THE SIZE OF AN ANSWER BEFORE A GUARD REPLACED IT (task t-20261117-csere-elotti-meret; acrobot 55186). Two numbers, no text, only to the
-  question-set runner (its own client key AND the instance switch), only in the response it reads. WHAT TURNS IT RED: the field going to an OS key, to the
-  runner's key with the switch off, to an answer no guard replaced; any text of the model's answer travelling in it; the stored row changing; the
-  runner dropping the numbers, or reading a text or a negative number as a size.
+  THE ANSWER BEFORE A GUARD REPLACED IT (task t-20261117-csere-elotti-meret; acrobot 55186, 58812). Its size (two numbers, no text) and its full
+  text (`replacedOriginal`), only to the question-set runner (its own client key AND the instance switch), only in the response it reads.
+  WHAT TURNS IT RED: either field going to an OS key, to the runner's key with the switch off, to an answer no guard replaced; the text travelling
+  in the SIZE field; the stored row changing; the runner dropping the numbers or the text, or reading a text or a negative number as a size.
 */
 const API_TOKEN = "meret-teszt-kulcs";
 // the dose sentence is first; "Utána mérd a KH-t." is the SAFE rest that a replacement throws away: it must never travel in the response
@@ -77,7 +77,9 @@ describe("the size of an answer before a guard replaced it", () => {
     const { raw, body, stored } = await ask("question-set-run", DOSE_ANSWER);
     assert.deepEqual(body.replacedOriginalSize, { chars: DOSE_ANSWER.length, sentences: 2 });
     assert.equal(body.answer, DOSE_GUARD_FALLBACK);
-    assert.equal(raw.includes(SAFE_REST), false, "the safe sentence the replacement throws away must not travel");
+    assert.equal(body.replacedOriginal, DOSE_ANSWER, "the whole answer, the safe rest included, is what the runner measures a false replacement on");
+    assert.equal(JSON.stringify(body.replacedOriginalSize).includes(SAFE_REST), false, "the size field carries numbers only");
+    assert.equal(raw.includes(SAFE_REST), true);
     assert.deepEqual(stored, [DOSE_GUARD_FALLBACK], "the stored row is the replacement, unchanged");
   });
 
@@ -87,6 +89,7 @@ describe("the size of an answer before a guard replaced it", () => {
     const { body } = await ask("question-set-run", EXTERNAL);
     assert.equal(body.answer, LINK_GUARD_FALLBACK);
     assert.deepEqual(body.replacedOriginalSize, { chars: EXTERNAL.length, sentences: answerSize(EXTERNAL).sentences });
+    assert.equal(body.replacedOriginal, EXTERNAL);
   });
 
   it("an OS key, the runner key with the switch off or not exactly true, and a look-alike key never get it", async () => {
@@ -102,6 +105,7 @@ describe("the size of an answer before a guard replaced it", () => {
       const { body } = await ask(clientKey, DOSE_ANSWER);
       assert.equal(body.answer, DOSE_GUARD_FALLBACK, `${clientKey}/${enabled}`);
       assert.equal("replacedOriginalSize" in body, false, `${clientKey}/${enabled}`);
+      assert.equal("replacedOriginal" in body, false, `${clientKey}/${enabled}`);
     }
   });
 
@@ -109,10 +113,12 @@ describe("the size of an answer before a guard replaced it", () => {
     process.env.AI_DOSE_GUARD_DEBUG = "true";
     const clean = await ask("question-set-run", "A KH-t hetente mérd.");
     assert.equal("replacedOriginalSize" in clean.body, false);
+    assert.equal("replacedOriginal" in clean.body, false);
     process.env[LINK_RULE_ENV] = "log";
     const logged = await ask("question-set-run", EXTERNAL);
     assert.equal(logged.body.answer, EXTERNAL);
     assert.equal("replacedOriginalSize" in logged.body, false);
+    assert.equal("replacedOriginal" in logged.body, false);
   });
 });
 
@@ -142,6 +148,17 @@ describe("the runner reads the size", () => {
     assert.equal(none.ok && none.replacedOriginalSize, null);
   });
 
+  it("the original text is kept only as a non-empty string; anything else is dropped", async () => {
+    const ok = await send({ replacedOriginal: "Az eredeti válasz." });
+    assert.equal(ok.ok && ok.replacedOriginal, "Az eredeti válasz.");
+    for (const bad of ["", 42, { text: "x" }, null]) {
+      const dropped = await send({ replacedOriginal: bad });
+      assert.equal(dropped.ok && dropped.replacedOriginal, null, JSON.stringify(bad));
+    }
+    const none = await send({});
+    assert.equal(none.ok && none.replacedOriginal, null);
+  });
+
   it("the size is in the result and in the written report", async () => {
     const sender: SendQuestion = async () => ({
       ok: true,
@@ -152,21 +169,24 @@ describe("the runner reads the size", () => {
       replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)",
       replacedSentence: null,
       replacedOriginalSize: { chars: 120, sentences: 3 },
+      replacedOriginal: "Az eredeti, teljes válasz.",
       instructionsVersion: "0123456789ab",
       productContext: null
     });
     const results = await runQuestionSet(sender);
     assert.ok(results.every((r) => r.replacedOriginalSize?.chars === 120 && r.replacedOriginalSize.sentences === 3));
+    assert.ok(results.every((r) => r.replacedOriginal === "Az eredeti, teljes válasz."));
     const dir = mkdtempSync(join(tmpdir(), "question-set-size-"));
     const out = join(dir, "r.json");
     const fetchImpl = (async (url: string) =>
       url.endsWith("/health")
         ? new Response(JSON.stringify({ version: "s1" }))
         : new Response(
-            JSON.stringify({ conversationId: "c", messageId: "m", answer: "csere", model: "gpt-5.1", doseGuard: "DOSE_NOT_IN_CATALOGUE", doseGuardRule: "given-count", replacedOriginalSize: { chars: 77, sentences: 2 } })
+            JSON.stringify({ conversationId: "c", messageId: "m", answer: "csere", model: "gpt-5.1", doseGuard: "DOSE_NOT_IN_CATALOGUE", doseGuardRule: "given-count", replacedOriginalSize: { chars: 77, sentences: 2 }, replacedOriginal: "A teljes eredeti válasz." })
           )) as unknown as typeof fetch;
     await main(["--url", "http://ai.test", "--out", out], { AI_API_TOKEN: "t" }, { log: () => {}, fetchImpl });
     const report = JSON.parse(readFileSync(out, "utf8")) as RunReport;
     assert.ok(report.results.every((r) => r.replacedOriginalSize?.chars === 77));
+    assert.ok(report.results.every((r) => r.replacedOriginal === "A teljes eredeti válasz."));
   });
 });

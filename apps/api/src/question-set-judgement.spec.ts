@@ -34,6 +34,7 @@ const result = (id: string, verdict: string, answer: string | null): QuestionRes
     replacedBy: null,
     replacedSentence: null,
     replacedOriginalSize: null,
+    replacedOriginal: null,
     instructionsVersion: null,
     productContext: null,
     error: answer === null ? "boom" : null,

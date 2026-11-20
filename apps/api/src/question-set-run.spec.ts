@@ -38,7 +38,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -337,6 +337,7 @@ describe("httpSender against the real /v1/chat answer", () => {
         replacedBy: null,
         replacedSentence: null,
         replacedOriginalSize: null,
+        replacedOriginal: null,
         instructionsVersion: INSTRUCTIONS_VERSION,
         // no OS configured in the test: the route reports the branch the model had
         productContext: "not_configured"
@@ -668,7 +669,7 @@ describe("main --compare", () => {
     };
     const send: SendQuestion = async (input) =>
       input.message === question("abbreviation-expanded").question
-        ? ({ ok: true, conversationId: "c1", messageId: "m1", answer: "csere", source: "replaced", replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)", replacedSentence: null, replacedOriginalSize: null, instructionsVersion: "0123456789ab", productContext: null } as const)
+        ? ({ ok: true, conversationId: "c1", messageId: "m1", answer: "csere", source: "replaced", replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)", replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, instructionsVersion: "0123456789ab", productContext: null } as const)
         : modelReply("c1", "m2", "A tartály 10 literes.");
     const results = await runQuestionSet(send, [question("abbreviation-expanded"), question("abbreviation-not-repeated")]);
     assert.equal(results[1]!.verdict, "void");
@@ -970,9 +971,9 @@ describe("a follow-up of a parent answer that is not the model's is void", () =>
     ...(followsUp ? { followsUp } : {})
   });
   const swapped = (conversationId: string, answer: string) =>
-    ({ ok: true, conversationId, messageId: "m", answer, source: "replaced", replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)", replacedSentence: null, replacedOriginalSize: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+    ({ ok: true, conversationId, messageId: "m", answer, source: "replaced", replacedBy: "doseGuard: DOSE_NOT_IN_CATALOGUE (given-count)", replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
   const local = (conversationId: string, answer: string) =>
-    ({ ok: true, conversationId, messageId: "m", answer, source: "local", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, instructionsVersion: null, productContext: null }) as const;
+    ({ ok: true, conversationId, messageId: "m", answer, source: "local", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, instructionsVersion: null, productContext: null }) as const;
   // the real abbreviation probe, so the score() branch that failed on 09:30 is the one that would run
   const expandedAgain = "Az ATO (Automatic Top Off – automatikus párolgás-utántöltő rendszer) tartálya 10 literes.";
 
