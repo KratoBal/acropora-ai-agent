@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
+import { basename } from "node:path";
 
 import {
   ABBREVIATIONS,
@@ -12,6 +13,12 @@ import {
   type PinnedQuestion
 } from "./question-set.js";
 import { QUESTION_SET_CLIENT_KEY } from "./question-set-client.js";
+import {
+  applyJudgements,
+  effectiveVerdict,
+  judgementSheet,
+  type Judgement
+} from "./question-set-judgement.js";
 import { PREFILTER_MODEL_LABEL } from "./request-prefilter-answers.js";
 
 /**
@@ -219,6 +226,8 @@ export interface QuestionResult {
   elapsedMs: number;
   verdict: Verdict;
   measures: Measures;
+  /** A person's verdict on a `human` answer, read back from the judgement sheet (`--itelet`); absent until then. */
+  judged?: Judgement;
 }
 
 const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
@@ -386,6 +395,8 @@ export interface RunReport {
     /** Follow-ups whose history held an answer that is not the model's: not scored. */
     void: number;
     errors: number;
+    /** The `human` answers a person has judged (`--itelet`); `human` above still counts them, so old and new reports agree. */
+    judged: { pass: number; fail: number };
     /** Over the model's own answers, to stand next to the 2026-08-28 baseline (preferred 11, avoided 26 on 18). */
     glossary: { answers: number; preferred: number; avoided: number };
   };
@@ -406,7 +417,9 @@ export interface RunReport {
  * on a regression, so this is the rule it speaks by.
  *
  * A REGRESSION is: a question that passed and now fails or is replaced; any failed call; more fails, more replaced
- * answers or more avoided glossary forms than before, counted over the questions both runs asked. A `human` verdict is never compared: a person reads it. A question
+ * answers or more avoided glossary forms than before, counted over the questions both runs asked. An unjudged `human` verdict is never compared: a person reads it.
+ * A JUDGED one counts per question (a pass, machine or judged, that now fails is a regression), but not in the three counts:
+ * a question judged for the first time would read as a rise in fails that was always there (task ai-kerdeskeszlet-gepi-20261120). A question
  * in only one of the two runs (the set changed) is listed, not judged.
  *
  * THE CAUSE names what moved between the runs: the instruction text, the server's code, both, or neither (the model
@@ -432,13 +445,18 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
   const serverMoved = (prev.serverVersion ?? null) !== next.serverVersion;
   const regressions: string[] = [];
   const improvements: string[] = [];
-  for (const [id, now] of nextResults) {
-    const before = prevResults.get(id);
-    if (!before) continue;
-    if (before.verdict === "pass" && (now.verdict === "fail" || now.verdict === "replaced"))
-      regressions.push(`${id}: pass -> ${now.verdict}${now.replacedBy ? ` (${now.replacedBy})` : ""}`);
-    else if (SCORED.includes(before.verdict) && before.verdict !== "pass" && now.verdict === "pass")
-      improvements.push(`${id}: ${before.verdict} -> pass`);
+  for (const [id, nowResult] of nextResults) {
+    const beforeResult = prevResults.get(id);
+    if (!beforeResult) continue;
+    const before = effectiveVerdict(beforeResult) as Verdict;
+    const now = effectiveVerdict(nowResult) as Verdict;
+    const by = (r: QuestionResult) => (r.verdict === "human" && r.judged ? ` (${r.judged.judge})` : "");
+    if (before === "pass" && (now === "fail" || now === "replaced"))
+      regressions.push(
+        `${id}: pass -> ${now}${nowResult.replacedBy ? ` (${nowResult.replacedBy})` : by(nowResult)}`
+      );
+    else if (SCORED.includes(before) && before !== "pass" && now === "pass")
+      improvements.push(`${id}: ${before} -> pass${by(nowResult)}`);
   }
   // the three counts over the questions BOTH runs asked (barracuda, #103): a question the set gained is listed in
   // `onlyInOne`, and its first fail must not read as a rise. An old report's result has no `source`: a replaced or
@@ -501,6 +519,10 @@ export function summarize(results: readonly QuestionResult[]): RunReport["summar
     local: results.filter((r) => r.verdict === "local").length,
     void: results.filter((r) => r.verdict === "void").length,
     errors: results.filter((r) => r.error !== null).length,
+    judged: {
+      pass: results.filter((r) => r.judged?.verdict === "pass").length,
+      fail: results.filter((r) => r.judged?.verdict === "fail").length
+    },
     glossary: {
       answers: answered.length,
       preferred: terms.reduce((sum, t) => sum + total(t.preferred), 0),
@@ -607,7 +629,8 @@ export function httpSender(options: {
 }
 
 const USAGE =
-  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>] [--compare <previous report.json>] [--only <question id>] [--repeat <1-20>]";
+  "Usage: AI_API_TOKEN=<token> node scripts/question-set-run.mjs --url <base url> --out <report.json> [--client-key <key>] [--compare <previous report.json>] [--only <question id>] [--repeat <1-20>]\n" +
+  "   or: node scripts/question-set-run.mjs --itelet <sheet.md> --report <report.json> --biro <judge> [--compare <previous report.json>]";
 
 /**
  * The question and every question it follows, in the set's order: a follow-up is asked in its parent's conversation, so
@@ -648,6 +671,7 @@ export async function main(
   env: NodeJS.ProcessEnv,
   io: { log: (line: string) => void; fetchImpl?: typeof fetch } = { log: (line) => console.log(line) }
 ): Promise<number> {
+  if (argv.includes("--itelet")) return judgeMain(argv, io);
   const baseUrl = argument(argv, "--url");
   const out = argument(argv, "--out");
   const token = env.AI_API_TOKEN;
@@ -715,11 +739,16 @@ export async function main(
   };
   if (comparePath !== undefined) report.comparison = compareReports(previous, report);
   writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
+  // the answers a machine cannot score, for a person (not for a partial run: it is no baseline, nobody compares it)
+  const sheet = partial ? null : judgementSheet(report, basename(out));
+  const sheetPath = sheetPathOf(out);
+  if (sheet !== null) writeFileSync(sheetPath, sheet);
   const s = report.summary;
   io.log(
     `question set ${report.questionSetVersion}, instructions ${report.instructionsVersion ?? "unknown"}, server ${report.serverVersion ?? "unknown"}: ` +
       `pass ${s.pass}, fail ${s.fail}, human ${s.human}, replaced ${s.replaced}, local ${s.local}, errors ${s.errors}; ` +
-      `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}`
+      `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}` +
+      (sheet !== null ? `; judgement sheet for the ${s.human} human answers: ${sheetPath}` : "")
   );
   if (report.repeat)
     for (const [id, t] of Object.entries(report.repeat.byQuestion))
@@ -734,4 +763,59 @@ export async function main(
         (c.improvements.length > 0 ? `; improved ${c.improvements.join("; ")}` : "")
     );
   return s.errors > 0 ? 1 : c && c.regressions.length > 0 ? 3 : 0;
+}
+
+/** The sheet next to the report: `qs-...json` -> `qs-...-itelet.md`. */
+export function sheetPathOf(reportPath: string): string {
+  return `${reportPath.replace(/\.json$/u, "")}-itelet.md`;
+}
+
+/**
+ * `--itelet`: reads a filled judgement sheet back into its report (no model call, no token). All or nothing: a refused
+ * section leaves the report untouched and exits 2. With `--compare`, the comparison is recomputed with the judged
+ * verdicts; exit 3 on a regression, as in a run.
+ */
+async function judgeMain(argv: readonly string[], io: { log: (line: string) => void }): Promise<number> {
+  const sheetPath = argument(argv, "--itelet");
+  const reportPath = argument(argv, "--report");
+  const judge = argument(argv, "--biro")?.trim();
+  if (!sheetPath || !reportPath || !judge) {
+    io.log(USAGE);
+    return 2;
+  }
+  let report: RunReport;
+  let sheet: string;
+  let previous: unknown;
+  const comparePath = argument(argv, "--compare");
+  try {
+    report = JSON.parse(readFileSync(reportPath, "utf8")) as RunReport;
+    sheet = readFileSync(sheetPath, "utf8");
+    if (comparePath !== undefined) previous = JSON.parse(readFileSync(comparePath, "utf8"));
+  } catch {
+    io.log(`a file cannot be read: ${[sheetPath, reportPath, comparePath].filter(Boolean).join(", ")}`);
+    return 2;
+  }
+  if (!Array.isArray(report.results) || report.repeat) {
+    io.log(`not a whole run's report: ${reportPath}`);
+    return 2;
+  }
+  const outcome = applyJudgements(report.results, sheet, judge);
+  if (outcome.refused.length > 0) {
+    for (const line of outcome.refused) io.log(`REFUSED ${line}`);
+    io.log("nothing was written: correct the sheet and run again");
+    return 2;
+  }
+  report.results = outcome.results;
+  report.summary = summarize(report.results);
+  if (comparePath !== undefined) report.comparison = compareReports(previous, report);
+  writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+  const s = report.summary;
+  io.log(
+    `judged ${outcome.applied.length} (${judge}): pass ${s.judged.pass}, fail ${s.judged.fail}; ` +
+      `still unjudged ${s.human - s.judged.pass - s.judged.fail}. Report: ${reportPath}`
+  );
+  const c = report.comparison;
+  if (c && comparePath !== undefined)
+    io.log(c.regressions.length > 0 ? `REGRESSION ${c.regressions.join("; ")}` : "no regression");
+  return c && comparePath !== undefined && c.regressions.length > 0 ? 3 : 0;
 }
