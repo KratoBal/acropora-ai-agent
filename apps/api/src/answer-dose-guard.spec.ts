@@ -523,3 +523,48 @@ describe("összetett mintaedény, literben kijövő összeg, literes adag", () =
     }
   });
 });
+
+/*
+  THE CRON GUARD'S RUNS OF 2026-11-20 22:15 AND 22:19 UTC (server e91336c5, acrobot 59045, 59046): three false replacements. WHAT TURNS IT RED:
+  a case-suffixed system volume ("3000 literen") read as a litre amount; a test step that names no vessel ("annyi vizet, amennyit a teszt előír")
+  replaced; a number multiplying a word ("párolgás × 7 =") read as a bare count; and on the other side, a litre dose, a dose read off a test
+  result, or a counted thing given after a multiplication let through.
+*/
+describe("ragos rendszer-térfogat, edény nélküli tesztlépés, szót szorzó szám", () => {
+  const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("a két futás három mondata nem csere", () => {
+    for (const answer of [
+      "- **Automata adagolórendszer** (balling / Ca-reaktor, KH-stabilizálás): 3000 literen a kézi napi adagolás gyorsan vállalhatatlan.",
+      "2. Felveszel pontosan annyi vizet, amennyit a teszt előír (pl. 5 vagy 10 ml)",
+      "3. Napi párolgás × 7 = a **minimális heti tartálytérfogat**, és ehhez adj még +20–30% tartalékot",
+      "Vegyél annyi akváriumvizet, amennyit a teszt kér (10 ml).",
+      "Az ATO naponta 2 literrel több vizet adagol nyáron."
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a literes adag, a teszt-eredményből olvasott adag és a szorzás utáni darab továbbra is csere", () => {
+    for (const [answer, rule] of [
+      ["Adj naponta 2 liter kalkwassert.", "litre-dose"],
+      ["Adagolj naponta 2 liter mészvizet.", "litre-dose"],
+      ["Naponta adj 2 liter kalkwassert 100 literen.", "litre-dose"],
+      ["Adagolj annyit, amennyit a teszt előír (5 ml).", "no-fixed-dose"],
+      ["Adagolj 5 ml-t, ha a teszt kéri, és cserélj vizet.", "no-fixed-dose"],
+      ["Az adag 5 ml, amennyit a teszt ír.", "no-fixed-dose"],
+      ["Hetente adj 3 × 2 = 6-ot.", "given-count"],
+      ["Hetente adj kupak × 2 = 6-ot.", "given-count"],
+      // barracuda on #135: the "-nyi" form and the instrumental are amounts; a named additive is never the test's water
+      ["Adagolj naponta 2 liternyi mészvizet.", "litre-dose"],
+      ["Adagolj naponta 2 literrel több kalkwassert.", "litre-dose"],
+      ["Ha a teszt alacsonyat ír, 200 ml mészvizet.", "no-fixed-dose"],
+      ["Ha a teszt alacsonyat ír, 200 ml oldatot és vizet.", "no-fixed-dose"],
+      // with no additive named: only plain or aquarium water is the test's water
+      ["Ha a teszt alacsonyat ír, 200 ml jódvizet.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, none);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+});
