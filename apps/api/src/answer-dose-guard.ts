@@ -126,9 +126,13 @@ const DOSING_VERB =
  * a weak verb too ("Adj naponta 2 liter kalkwassert", "Pótolj naponta 2 liter mészvizet"), and no water noun takes it out ("2 liter kalkwasseres vizet").
  */
 const STRONG_DOSING_VERB = /\b(?:adagol(?!o)\w*|csepegtet\w*|cseppents?\w*|dose[sd]?|dosing|dosier\w*)\b/;
-const LITRE_AMOUNT = new RegExp(
-  `${NUM}\\s*(?!(?:l|ltr|liter|litre)-?(?:es|re|ra|hez|enkent)\\b)(?:l|ltr|liter\\w*|litre\\w*)(?![a-z])`
-);
+/**
+ * ONLY THE NOMINATIVE OR THE ACCUSATIVE IS AN AMOUNT GIVEN ("2 liter", "2 litert", "2 liters", "2 l"): every other case names the volume something
+ * happens IN or ON, the system's size ("3000 literen a kézi napi adagolás gyorsan vállalhatatlan", the cron guard's run of 2026-11-20 22:15 UTC on
+ * e91336c5, acrobot 59045), and so do the adjective ("3000 literes") and the rate ("100 literre", "literhez", "literenként"). A list of the forms that
+ * ARE an amount, not of the ones that are not: a case ending nobody listed stays out instead of becoming a dose.
+ */
+const LITRE_AMOUNT = new RegExp(`${NUM}\\s*(?:l(?:-?t)?|ltr|liter[ts]?|litres?)(?![a-z])`);
 const WATER_VOLUME = new RegExp(
   `${NUM}\\s*(?:l|ltr|liter\\w*|litre\\w*)\\s+(?:[a-z-]+\\s+){0,2}` +
     `(?:(?:ro-?|ozmozis-?|desztillalt-?|csap|edes|tiszta|feltolto-?)?viz(?!(?:be|hez|ben|re|ra)\\b)[a-z]*|parolg\\w*|evapora\\w*|(?:ro-?)?(?:water|wasser)\\b)`
@@ -153,6 +157,15 @@ const PER_VOLUME = new RegExp(`${NUM}\\s*(?:l|ltr|liter|litre)-?(?:enkent|re|ra|
  * ("3 × 2 ml", "2 × 5 ml") (card 89a6ba86).
  */
 const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?(?=\s*=\s*\d)/g;
+
+/**
+ * A NUMBER MULTIPLYING A WORD IS AN OPERAND, NOT A COUNT ("Napi párolgás × 7 = a minimális heti tartálytérfogat, és ehhez adj még +20–30% tartalékot",
+ * the run of 2026-11-20 22:19 UTC, acrobot 59046: the "7" read as a bare count next to "napi", "heti" and "adj"). A number right after or right before
+ * a times sign ("×" or "*", not the letter x) with an equals sign following is taken out; what comes after the "=" stays, so "kupak × 2 = 6-ot" is
+ * still a counted thing given.
+ */
+const WORD_PRODUCT =
+  /[\u00d7*]\s*\d+(?:[.,]\d+)?(?=\s*=)|(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7*](?=\s*[a-z][^=]*=)/g;
 
 /**
  * THE OPERANDS OF A SUM THAT COMES OUT IN LITRES ARE WATER VOLUMES, NOT A COUNT ("kb. 14 + tartalék = 18–20 liter lenne a kényelmes heti méret"): the cron
@@ -246,8 +259,19 @@ const TEST_VESSEL =
   /\b(?:[a-z]*(?:fiol|kuvett|kemcso)\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
 const AQUARIUM_TARGET =
   /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|s[uz]ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
+/**
+ * THE TEST NAMES THE SAMPLE WITHOUT A VESSEL WORD TOO (acrobot 59046, the run of 2026-11-20 22:19 UTC): "Felveszel pontosan annyi vizet, amennyit a
+ * teszt előír (pl. 5 vagy 10 ml)". The water TAKEN ("vizet", "akváriumvizet") with the test as the one that says how much ("a teszt előír / ír /
+ * kér") is the sample, but only with NO dosing verb in the sentence: "Adagolj 5 ml-t, ha a teszt kéri, és cserélj vizet" names a test and water
+ * too, and its verb gives something.
+ */
+const TEST_SAYS = /\bteszt\w*\s+(?:[a-z]+\s+)?(?:eloir|ir|ker)\w*/;
+const WATER_TAKEN = /\b[a-z]*vizet\b/;
 const isTestStep = (s: string, volumes: number, periods: number) =>
-  TEST_VESSEL.test(s) && volumes === 0 && periods === 0 && !AQUARIUM_TARGET.test(s);
+  (TEST_VESSEL.test(s) || (TEST_SAYS.test(s) && WATER_TAKEN.test(s) && !DOSING_VERB.test(s))) &&
+  volumes === 0 &&
+  periods === 0 &&
+  !AQUARIUM_TARGET.test(s);
 
 /**
  * THE SIZE OF AN ANSWER, TWO NUMBERS AND NO TEXT (task t-20261117-csere-elotti-meret; acrobot 55186): how long it was and how many sentences it had,
@@ -282,7 +306,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw).replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(RANGE, "");
+    const s = fold(raw).replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
