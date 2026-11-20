@@ -15,6 +15,10 @@ import { QUESTION_SET } from "./question-set.js";
  * when the report's answer has the same one. A sheet from another run, or an answer edited in the sheet, is refused, not
  * applied to whatever answer now stands under that id.
  *
+ * THE GUARANTEE IS THE GENERATED SHEET'S. Every answer line is quoted with the same line rule the reader splits by, so no
+ * answer can put a field or a section on it (barracuda on #124). A sheet pasted together by hand is arbitrary text and
+ * outside that; the reader still refuses a field written twice in one section rather than guess which is the judge's.
+ *
  * ALL OR NOTHING. One unreadable section (an unknown id, a verdict that is not pass or fail, a verdict without a reason,
  * a fingerprint that does not match) refuses the whole sheet: a half-applied sheet would be a report nobody can trust.
  * An EMPTY verdict is no error: that answer stays `human`.
@@ -50,9 +54,18 @@ export function awaitingJudgement<T extends JudgeableResult>(results: readonly T
   return results.filter((r) => r.verdict === "human" && typeof r.answer === "string" && !r.judged);
 }
 
+/**
+ * EVERY KIND OF LINE END, ON BOTH SIDES (barracuda on #124). The sheet quotes the answer line by line and reads its fields
+ * line by line; if the two disagreed on what a line is, a model answer could carry a carriage return or U+2028 and start a
+ * line the reader takes for a field ("itelet: pass") or a section ("## other-id") behind the quote mark. An empty judge's
+ * field would then record the MODEL's verdict under the judge's name. So one rule splits for both: CRLF, CR, LF, U+2028,
+ * U+2029.
+ */
+const LINE_END = /\r\n|[\r\n\u2028\u2029]/u;
+
 const quote = (text: string) =>
   text
-    .split("\n")
+    .split(LINE_END)
     .map((line) => (line === "" ? ">" : `> ${line}`))
     .join("\n");
 
@@ -116,9 +129,27 @@ export function applyJudgements<T extends JudgeableResult>(
   const verdicts = new Map<string, Judgement>();
   const refused: string[] = [];
   const seen = new Set<string>();
-  for (const section of sheet.split(/^## /mu).slice(1)) {
-    const id = section.split("\n", 1)[0]!.trim();
-    const field = (name: string) => new RegExp(`^${name}:[ \\t]*(.*)$`, "mu").exec(section)?.[1]?.trim() ?? null;
+  // line by line with the quoting's own line rule: a quoted line starts with ">" and is never a field or a section
+  const sections: { id: string; fields: Map<string, string>; twice: Set<string> }[] = [];
+  for (const line of sheet.split(LINE_END)) {
+    if (line.startsWith("## ")) {
+      sections.push({ id: line.slice(3).trim(), fields: new Map(), twice: new Set() });
+      continue;
+    }
+    const current = sections.at(-1);
+    const match = /^(lenyomat|itelet|indok):[ \t]*(.*)$/u.exec(line);
+    if (!current || !match) continue;
+    // a field twice in one section: which one is the judge's cannot be told (an unquoted answer pasted by hand would put
+    // its own "itelet: pass" before the judge's empty line), so the sheet is refused rather than one of them guessed
+    if (current.fields.has(match[1]!)) current.twice.add(match[1]!);
+    else current.fields.set(match[1]!, match[2]!.trim());
+  }
+  for (const { id, fields, twice } of sections) {
+    if (twice.size > 0) {
+      refused.push(`${id}: a(z) ${[...twice].join(", ")} mezo ketszer all a szakaszban`);
+      continue;
+    }
+    const field = (name: string) => fields.get(name) || null;
     const verdict = field("itelet");
     if (!verdict) continue;
     if (seen.has(id)) {
