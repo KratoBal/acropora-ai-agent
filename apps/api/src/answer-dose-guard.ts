@@ -304,8 +304,14 @@ const WATER_TAKEN = /\b(?:ro-?|ozmozis-?|desztillalt-?|csap|edes|tiszta|feltolto
  * ENDING AFTER A HYPHEN TOO: an abbreviation or a foreign word takes its case with a hyphen ("az ATO-ba", "a DSB-be", "sump-ba"), and kalkwasser
  * through the ATO is a real dosing route (barracuda on #137). Measured
  * before the change on the 327 stored answers: six sentences pass as a test step, and none of them has another target word.
+ * ONLY THE ENDINGS THAT SAY WHERE TO (ai-doseguard-celpont-iranyrag-20261123): the question-set run of 2026-11-23 10:15Z lost an answer to
+ * "a tesztfiolába (pl. 5 vagy 10 ml - a teszt leírásában benne van)": "leírásában" (-ban: in, not into) read as a target. The locative
+ * endings say where, not where to ("általában", "összhangban", "fényben"), so they no longer count; the into, onto and to endings do
+ * (-ba/-be, -ra/-re, -hoz/-hez), on a stem of three letters or more ("hiba" is a word, not a case; "erre", "arra" fall out). Onto stays
+ * because it names where a dose goes ("csepegtesd a korallra", barracuda on #144). The aquarium's own places in the locative stay on the
+ * closed list above ("medencében", "sumpban").
  */
-const TARGET_WORD = /\b(?:[a-z]{2,}|[a-z0-9]+-)(?:ba|be|ban|ben|hoz|hez|ra|re)\b|\b(?:into|to)\s+(?:(?:the|your|a)\s+)?[a-z]+/g;
+const TARGET_WORD = /\b(?:[a-z]{3,}|[a-z0-9]+-)(?:ba|be|ra|re|hoz|hez)\b|\b(?:into|to)\s+(?:(?:the|your|a)\s+)?[a-z]+/g;
 const namesOtherTarget = (s: string) => [...s.matchAll(TARGET_WORD)].some((m) => !TEST_VESSEL.test(m[0]));
 const isTestStep = (s: string, volumes: number, periods: number) =>
   (TEST_VESSEL.test(s) ||
