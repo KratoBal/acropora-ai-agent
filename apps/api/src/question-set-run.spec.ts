@@ -12,6 +12,8 @@ import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
   checkAbbreviation,
   compareReports,
+  runExitCode,
+  throughputMedian,
   countTerms,
   errorText,
   httpSender,
@@ -474,6 +476,76 @@ describe("scoreLiveData", () => {
   it("own measurement: working with the 28,5 passes; saying there is no information goes to a person", () => {
     assert.equal(scoreLiveData("live-data-own-measurement", "A 28,5 °C sok egy korallos akváriumnak."), "pass");
     assert.equal(scoreLiveData("live-data-own-measurement", "Erről nincs információm."), "human");
+  });
+});
+
+/*
+  A PROVIDER SLOWDOWN (ai-kerdeskeszlet-szolgaltatoi-lassulas-20261123; acrobot 59359, 59363): 2026-11-23 08:45Z and 09:00Z lost the longest
+  answers to HTTP 504 ai_provider_timeout while the model wrote slower (median 213 -> 187 -> 141 chars/s). WHAT TURNS THIS RED: such a run
+  called a regression or a failed run; and on the other side, any of the cases that are NOT a provider slowdown excused: another error, a
+  mix, a throughput that did not fall, the instruction text moved, too few long answers to measure.
+*/
+describe("a provider slowdown is not a regression", () => {
+  const long = (id: string, seconds: number, extra: Record<string, unknown> = {}) =>
+    ({ id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000), elapsedMs: seconds * 1000, ...extra }) as never;
+  const failed = (id: string, error = "HTTP 504 ai_provider_timeout") =>
+    ({ id, verdict: "human", replacedBy: null, error, source: null, answer: null, elapsedMs: 40_040 }) as never;
+  const run = (results: unknown[], instructionsVersion = "aaaaaaaaaaaa") =>
+    ({
+      questionSetVersion: "1.2.0",
+      instructionsVersion,
+      serverVersion: "s1",
+      startedAt: "2026-11-23T08:00:00.000Z",
+      finishedAt: "2026-11-23T08:05:00.000Z",
+      summary: {
+        pass: 0, fail: 0, human: results.length, replaced: 0, local: 0, void: 0,
+        errors: (results as { error: string | null }[]).filter((r) => r.error !== null).length,
+        glossary: { answers: 0, preferred: 0, avoided: 0 }
+      },
+      results
+    }) as never;
+  // 4000 characters in 20 s is 200 chars/s; in 30 s about 133
+  const fast = run([long("a", 20), long("b", 20), long("c", 20), long("d", 20)]);
+
+  it("only provider timeouts in a slower run: named with both medians, no regression, exit 0", () => {
+    const c = compareReports(fast, run([long("a", 30), long("b", 30), long("c", 30), failed("d")]));
+    assert.deepEqual(c.regressions, []);
+    assert.deepEqual(c.providerSlowdown, ["d: HTTP 504 ai_provider_timeout (throughput median 200 -> 133 chars/s)"]);
+    assert.equal(runExitCode(1, c), 0);
+  });
+
+  it("stays a regression and a failed run: another error, a mix, no slowdown, the instructions moved, too few to measure", () => {
+    for (const [name, next] of [
+      ["another error", run([long("a", 30), long("b", 30), long("c", 30), failed("d", "HTTP 502 boom")])],
+      ["a mix", run([long("a", 30), long("b", 30), long("c", 30), failed("d"), failed("e", "network: ECONNRESET")])],
+      ["no slowdown", run([long("a", 20), long("b", 20), long("c", 20), failed("d")])],
+      ["instructions moved", run([long("a", 30), long("b", 30), long("c", 30), failed("d")], "bbbbbbbbbbbb")],
+      ["too few long answers", run([long("a", 30), long("b", 30), failed("d")])]
+    ] as const) {
+      const c = compareReports(fast, next);
+      assert.deepEqual(c.providerSlowdown, [], name);
+      assert.ok(c.regressions.some((r) => r.startsWith("errors: ")), name);
+      assert.equal(runExitCode((next as { summary: { errors: number } }).summary.errors, c), 1, name);
+    }
+  });
+
+  it("throughputMedian reads the model's long answers only, and needs three", () => {
+    assert.equal(
+      throughputMedian([
+        long("a", 20),
+        long("b", 40),
+        long("c", 10),
+        // not the model's, too short, or failed: left out
+        long("d", 1, { source: "local" }),
+        long("e", 1, { answer: "rövid" }),
+        failed("f")
+      ]),
+      200
+    );
+    assert.equal(throughputMedian([long("a", 20), long("b", 20)]), null);
+    assert.equal(throughputMedian(undefined), null);
+    // without a comparison every error is a failed call
+    assert.equal(runExitCode(1, undefined), 1);
   });
 });
 
