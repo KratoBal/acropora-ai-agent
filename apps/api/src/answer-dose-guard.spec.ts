@@ -670,7 +670,10 @@ describe("a tesztlépés célpontja: minden nem-edény célpont adag", () => {
       "Tegyél 5 ml-t a mintából a fiolába.",
       "Cseppents 5 cseppet a mintához.",
       "Add 5 ml of tank water to the vial.",
-      "1. Mérj ki egy adott mennyiségű akváriumvizet a kémcsőbe (pl. 5 vagy 10 ml)"
+      "1. Mérj ki egy adott mennyiségű akváriumvizet a kémcsőbe (pl. 5 vagy 10 ml)",
+      // the 10:15Z run (ai-doseguard-celpont-iranyrag-20261123): "leírásában" says where, not where to
+      "1. Kimérsz egy adott mennyiségű akváriumvizet a tesztfiolába (pl. 5 vagy 10 ml – a teszt leírásában benne van)",
+      "Cseppents 5 cseppet a mintához, általában ennyi elég, ha a hiba ismétlődik."
     ])
       assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
   });
