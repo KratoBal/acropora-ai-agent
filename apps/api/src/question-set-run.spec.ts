@@ -12,6 +12,8 @@ import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
   checkAbbreviation,
   compareReports,
+  measuredProviderSlowdown,
+  modelTimingOf,
   runExitCode,
   throughputMedian,
   countTerms,
@@ -40,7 +42,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, modelTiming: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -340,6 +342,8 @@ describe("httpSender against the real /v1/chat answer", () => {
         replacedSentence: null,
         replacedOriginalSize: null,
         replacedOriginal: null,
+        // the instance switch is off here, so the real route sends no modelTiming (ai-chat-modellhivas-ido-20261123 gates it)
+        modelTiming: null,
         instructionsVersion: INSTRUCTIONS_VERSION,
         // no OS configured in the test: the route reports the branch the model had
         productContext: "not_configured"
@@ -552,6 +556,93 @@ describe("a provider slowdown is not a regression", () => {
     assert.equal(throughputMedian(undefined), null);
     // without a comparison every error is a failed call
     assert.equal(runExitCode(1, undefined), 1);
+  });
+});
+
+/*
+  THE SLOWDOWN MEASURED WHERE IT HAPPENED (ai-kerdeskeszlet-modellido-szetvalasztas-20261123; acrobot 59468): with the server's `modelTiming`,
+  a run where the server or the instructions moved is excused when the model call itself slowed and nothing else grew. WHAT TURNS THIS RED:
+  such a run called a regression; on the other side, excusing a run where the time outside the model call grew, the input grew, the model
+  call did not slow, the previous report has no timing, an error is not the timeout, or there are more timeouts than timed answers; and the
+  sender not reading the field, or reading a malformed one.
+*/
+describe("a provider slowdown measured on the model call", () => {
+  // 4000 characters, the whole request and the model call in seconds, the input in tokens
+  const timedLong = (id: string, wholeSeconds: number, modelSeconds: number, inputTokens: number | null = 3000) =>
+    ({
+      id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000),
+      elapsedMs: wholeSeconds * 1000, modelTiming: { modelMs: modelSeconds * 1000, inputTokens, outputTokens: 900 }
+    }) as never;
+  const timeout = (id: string, error = "HTTP 504 ai_provider_timeout") =>
+    ({ id, verdict: "human", replacedBy: null, error, source: null, answer: null, elapsedMs: 40_040, modelTiming: null }) as never;
+  const run = (results: unknown[], serverVersion = "s1") =>
+    ({
+      questionSetVersion: "1.2.0", instructionsVersion: "aaaaaaaaaaaa", serverVersion,
+      startedAt: "2026-11-23T08:00:00.000Z", finishedAt: "2026-11-23T08:05:00.000Z",
+      summary: {
+        pass: 0, fail: 0, human: results.length, replaced: 0, local: 0, void: 0,
+        errors: (results as { error: string | null }[]).filter((r) => r.error !== null).length,
+        glossary: { answers: 0, preferred: 0, avoided: 0 }
+      },
+      results
+    }) as never;
+  const long4 = (id: string) =>
+    ({ id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000), elapsedMs: 20_000 }) as never;
+  // before: 20 s requests, 19 s of model call (210 chars/s), 1 s outside
+  const before = run([timedLong("a", 20, 19), timedLong("b", 20, 19), timedLong("c", 20, 19), timedLong("d", 20, 19)]);
+
+  it("the server moved, the model call slowed, nothing else grew: excused with the three readings, exit 0", () => {
+    const next = run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d")], "s2");
+    const c = compareReports(before, next);
+    assert.equal(c.cause, "server");
+    assert.deepEqual(c.regressions, []);
+    assert.deepEqual(c.providerSlowdown, [
+      "d: HTTP 504 ai_provider_timeout (model-call throughput median 211 -> 143 chars/s; outside the model call 1000 -> 1000 ms; input 3000 -> 3000 tokens)"
+    ]);
+    assert.equal(runExitCode(1, c), 0);
+  });
+
+  it("stays a regression: the time outside grew, the input grew, the model call did not slow, no timing before, another error, too many timeouts", () => {
+    for (const [name, prev, next] of [
+      ["outside grew", before, run([timedLong("a", 33, 28), timedLong("b", 33, 28), timedLong("c", 33, 28), timeout("d")], "s2")],
+      ["input grew", before, run([timedLong("a", 29, 28, 3400), timedLong("b", 29, 28, 3400), timedLong("c", 29, 28, 3400), timeout("d")], "s2")],
+      // the whole request slowed by 9 s, all of it outside the model call: the server's, not the provider's
+      ["model call did not slow", before, run([timedLong("a", 29, 19), timedLong("b", 29, 19), timedLong("c", 29, 19), timeout("d")], "s2")],
+      // the model call 5 % slower, nothing else moved: under a tenth, within one run's spread
+      ["model call slowed by under a tenth", before, run([timedLong("a", 21, 20), timedLong("b", 21, 20), timedLong("c", 21, 20), timeout("d")], "s2")],
+      ["no timing before", run([long4("a"), long4("b"), long4("c"), long4("d")]), run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d")], "s2")],
+      ["another error", before, run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d", "HTTP 502 boom")], "s2")],
+      ["too many timeouts", before, run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d"), timeout("e"), timeout("f"), timeout("g")], "s2")],
+      ["no input counts", before, run([timedLong("a", 29, 28, null), timedLong("b", 29, 28, null), timedLong("c", 29, 28, null), timeout("d")], "s2")]
+    ] as const) {
+      const c = compareReports(prev, next);
+      assert.deepEqual(c.providerSlowdown, [], name);
+      assert.ok(c.regressions.some((r) => r.startsWith("errors: ")), name);
+      assert.equal(runExitCode((next as { summary: { errors: number } }).summary.errors, c), 1, name);
+    }
+  });
+
+  it("measuredProviderSlowdown needs three timed answers on each side", () => {
+    const two = run([timedLong("a", 29, 28), timedLong("b", 29, 28), timeout("d")], "s2") as { results: unknown };
+    assert.equal(measuredProviderSlowdown((before as { results: unknown }).results, two.results, 1), null);
+  });
+
+  it("modelTimingOf: whole non-negative numbers, a missing count null, anything else null", () => {
+    assert.deepEqual(modelTimingOf({ modelMs: 28_000, inputTokens: 3000, outputTokens: 900 }), { modelMs: 28_000, inputTokens: 3000, outputTokens: 900 });
+    assert.deepEqual(modelTimingOf({ modelMs: 5, inputTokens: null, outputTokens: null }), { modelMs: 5, inputTokens: null, outputTokens: null });
+    for (const bad of [null, undefined, "x", { modelMs: -1, inputTokens: 1, outputTokens: 1 }, { modelMs: 1.5, inputTokens: 1, outputTokens: 1 }, { modelMs: 1, inputTokens: "3", outputTokens: 1 }, { modelMs: 1 }])
+      assert.equal(modelTimingOf(bad), null, JSON.stringify(bad));
+  });
+
+  it("httpSender reads modelTiming from the reply, and null when the server sends none", async () => {
+    const body = (extra: Record<string, unknown>) =>
+      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "válasz", model: "gpt-5.1", instructionsVersion: "0123456789ab", ...extra }), { status: 200 });
+    const send = (response: Response) =>
+      httpSender({ baseUrl: "http://ai.test", token: "t", clientKey: "question-set-run", fetchImpl: (async () => response) as unknown as typeof fetch });
+    const timed = await send(body({ modelTiming: { modelMs: 1234, inputTokens: 10, outputTokens: 20 } }))({ message: "x" });
+    assert.deepEqual(timed.ok ? timed.modelTiming : "failed", { modelMs: 1234, inputTokens: 10, outputTokens: 20 });
+    const bare = await send(body({}))({ message: "x" });
+    assert.equal(bare.ok ? bare.modelTiming : "failed", null);
   });
 });
 

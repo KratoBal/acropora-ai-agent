@@ -224,6 +224,12 @@ export type Measures =
   | { voidBecause: string }
   | Record<string, never>;
 
+export interface ModelTiming {
+  modelMs: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
 export interface QuestionResult {
   id: string;
   probe: PinnedQuestion["probe"];
@@ -245,6 +251,11 @@ export interface QuestionResult {
    * replacement is only measurable on the full text. Same server gate as the sentence; null otherwise.
    */
   replacedOriginal: string | null;
+  /**
+   * The model call's own milliseconds and the provider's token counts (`modelTiming` on /v1/chat, the same runner-only gate as
+   * `replacedOriginal`; ai-kerdeskeszlet-modellido-szetvalasztas-20261123). Absent in a report written before the server sent it.
+   */
+  modelTiming?: ModelTiming | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
   /**
@@ -352,6 +363,7 @@ export type SendQuestion = (input: {
       replacedSentence: string | null;
       replacedOriginalSize: { chars: number; sentences: number } | null;
       replacedOriginal: string | null;
+      modelTiming?: ModelTiming | null;
       instructionsVersion: string | null;
       productContext: string | null;
     }
@@ -415,6 +427,7 @@ export async function runQuestionSet(
       replacedSentence: reply.ok ? reply.replacedSentence : null,
       replacedOriginalSize: reply.ok ? reply.replacedOriginalSize : null,
       replacedOriginal: reply.ok ? reply.replacedOriginal : null,
+      modelTiming: reply.ok ? (reply.modelTiming ?? null) : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
@@ -487,7 +500,8 @@ export interface RunReport {
  * a server change that slows the work before the answer or makes the model's input longer lowers it exactly as a slow provider does,
  * and a longer instruction text does too, so a run where either moved cannot tell the two causes apart and a person reads it. Both
  * runs of 2026-11-23 had cause `server`, so this rule would NOT have excused them; it keeps the weekly run's provider timeouts quiet.
- * Any other error, a mix, a smaller fall, too few long answers, or any move stays a regression as before.
+ * Any other error, a mix, a smaller fall, too few long answers, or any move stays a regression as before. A run that DID move is excused
+ * only when the server's `modelTiming` shows the model call itself slowed and nothing else grew (`measuredProviderSlowdown`).
  */
 export interface Comparison {
   previous: { startedAt: string | null; instructionsVersion: string | null; serverVersion: string | null };
@@ -517,18 +531,62 @@ export function throughputMedian(results: unknown): number | null {
   return speeds.length % 2 ? speeds[mid]! : (speeds[mid - 1]! + speeds[mid]!) / 2;
 }
 
+/**
+ * THE SLOWDOWN MEASURED WHERE IT HAPPENED (ai-kerdeskeszlet-modellido-szetvalasztas-20261123; acrobot 59468): the rule above excuses a provider
+ * timeout only when nothing moved, because the whole-request throughput cannot tell a slow provider from a slower server (barracuda on #138).
+ * With the server's `modelTiming` beside each answer it can: over the long model answers that carry it (at least three in each run), the MODEL
+ * CALL's throughput fell by at least a tenth, while the time OUTSIDE the model call (the whole request minus the call) and the model's INPUT size
+ * did not grow by more than a tenth (the outside time with 500 ms of slack: it is a few hundred milliseconds, and its noise is not a tenth).
+ * Then the provider is what slowed, whatever moved between the runs. A report written before the server sent `modelTiming` cannot show this,
+ * and then only the rule above applies. Returns the reading for the `providerSlowdown` line, or null.
+ */
+export function measuredProviderSlowdown(previous: unknown, next: unknown, timeouts: number): string | null {
+  const timed = (results: unknown) =>
+    longModelAnswers(results).filter((r) => r.modelTiming && r.modelTiming.modelMs > 0) as (Partial<QuestionResult> & {
+      answer: string;
+      elapsedMs: number;
+      modelTiming: ModelTiming;
+    })[];
+  const a = timed(previous);
+  const b = timed(next);
+  if (a.length < THROUGHPUT_MIN_ANSWERS || b.length < THROUGHPUT_MIN_ANSWERS || timeouts > b.length) return null;
+  const median = (values: number[]) => {
+    const v = [...values].sort((x, y) => x - y);
+    const mid = Math.floor(v.length / 2);
+    return v.length % 2 ? v[mid]! : (v[mid - 1]! + v[mid]!) / 2;
+  };
+  const speed = (rs: typeof a) => median(rs.map((r) => r.answer.length / (r.modelTiming.modelMs / 1000)));
+  const outside = (rs: typeof a) => median(rs.map((r) => Math.max(0, r.elapsedMs - r.modelTiming.modelMs)));
+  const inputs = (rs: typeof a) => rs.map((r) => r.modelTiming.inputTokens).filter((n): n is number => n !== null);
+  const [ia, ib] = [inputs(a), inputs(b)];
+  if (ia.length < THROUGHPUT_MIN_ANSWERS || ib.length < THROUGHPUT_MIN_ANSWERS) return null;
+  const [sa, sb, oa, ob, ina, inb] = [speed(a), speed(b), outside(a), outside(b), median(ia), median(ib)];
+  if (sb > sa * (1 - THROUGHPUT_MIN_FALL)) return null;
+  if (ob > oa * (1 + THROUGHPUT_MIN_FALL) + OUTSIDE_SLACK_MS) return null;
+  if (inb > ina * (1 + THROUGHPUT_MIN_FALL)) return null;
+  return (
+    `model-call throughput median ${Math.round(sa)} -> ${Math.round(sb)} chars/s; ` +
+    `outside the model call ${Math.round(oa)} -> ${Math.round(ob)} ms; input ${Math.round(ina)} -> ${Math.round(inb)} tokens`
+  );
+}
+const OUTSIDE_SLACK_MS = 500;
+
+/** The long model answers of a run: the ones `throughputMedian` reads. */
+function longModelAnswers(results: unknown): Partial<QuestionResult>[] {
+  return (Array.isArray(results) ? (results as Partial<QuestionResult>[]) : []).filter(
+    (r) =>
+      r.error === null &&
+      typeof r.answer === "string" &&
+      r.answer.length >= THROUGHPUT_MIN_CHARS &&
+      typeof r.elapsedMs === "number" &&
+      r.elapsedMs > 0 &&
+      (r.source ? r.source === "model" : r.verdict !== "replaced" && r.verdict !== "local")
+  );
+}
+
 /** The characters a second of each long model answer, sorted. */
 function longAnswerSpeeds(results: unknown): number[] {
-  return (Array.isArray(results) ? (results as Partial<QuestionResult>[]) : [])
-    .filter(
-      (r) =>
-        r.error === null &&
-        typeof r.answer === "string" &&
-        r.answer.length >= THROUGHPUT_MIN_CHARS &&
-        typeof r.elapsedMs === "number" &&
-        r.elapsedMs > 0 &&
-        (r.source ? r.source === "model" : r.verdict !== "replaced" && r.verdict !== "local")
-    )
+  return longModelAnswers(results)
     .map((r) => (r.answer as string).length / ((r.elapsedMs as number) / 1000))
     .sort((a, b) => a - b);
 }
@@ -599,7 +657,14 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
   )
     for (const r of failed)
       providerSlowdown.push(`${r.id}: ${r.error} (throughput median ${Math.round(before)} -> ${Math.round(after)} chars/s)`);
-  else if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
+  else {
+    const measured =
+      failed.length > 0 && failed.every((r) => r.error === PROVIDER_TIMEOUT_ERROR)
+        ? measuredProviderSlowdown(prev.results, next.results, failed.length)
+        : null;
+    if (measured) for (const r of failed) providerSlowdown.push(`${r.id}: ${r.error} (${measured})`);
+    else if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
+  }
   return {
     previous: {
       startedAt: typeof prev.startedAt === "string" ? prev.startedAt : null,
@@ -618,6 +683,19 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
 }
 
 /** The server's size field as two finite non-negative whole numbers, or null (anything else, text included, is dropped). */
+/** The server's `modelTiming`, or null: a non-negative whole millisecond count, and each token count a non-negative whole number or null. */
+export function modelTimingOf(value: unknown): ModelTiming | null {
+  if (!value || typeof value !== "object") return null;
+  const { modelMs, inputTokens, outputTokens } = value as Record<string, unknown>;
+  const whole = (n: unknown): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0;
+  const count = (n: unknown): number | null | undefined => (n === null ? null : whole(n) ? n : undefined);
+  const input = count(inputTokens);
+  const output = count(outputTokens);
+  return whole(modelMs) && input !== undefined && output !== undefined
+    ? { modelMs, inputTokens: input, outputTokens: output }
+    : null;
+}
+
 function originalSizeOf(value: unknown): { chars: number; sentences: number } | null {
   if (!value || typeof value !== "object") return null;
   const { chars, sentences } = value as { chars?: unknown; sentences?: unknown };
@@ -737,6 +815,7 @@ export function httpSender(options: {
       replacedSentence: typeof body.doseGuardSentence === "string" ? body.doseGuardSentence : null,
       replacedOriginalSize: originalSizeOf(body.replacedOriginalSize),
       replacedOriginal: typeof body.replacedOriginal === "string" && body.replacedOriginal !== "" ? body.replacedOriginal : null,
+      modelTiming: modelTimingOf(body.modelTiming),
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
       productContext:
         typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"
