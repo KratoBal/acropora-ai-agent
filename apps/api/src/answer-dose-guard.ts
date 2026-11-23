@@ -196,12 +196,9 @@ const RANGE = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[-\u2013\u2014]\s*(?=\d)/g;
  * THE PLURAL NOMINATIVE "pumpák" IS THE EQUIPMENT NOUN ("hordók, pumpák, keverőtartály"), not a dose: nothing is dosed in the plural nominative, and
  * the question-set run of 2026-11-17 17:45 UTC lost an answer to it (card 15e38019). "pumpa", "pumpát", "pumpával" and the plural
  * accusative stay unit words; with a digit the unit is `OTHER_UNIT`'s and is not touched.
- * A "G" WITH A HYPHENATED WORD IS A NAME, NOT A GRAM ("Reefer G-széria", acrobot 59095): two of the seven false replacements on the 327 stored answers
- * read the series name as the gram unit next to a litre volume or "napi". After a hyphen only a case ending from a closed list keeps "g" a unit
- * ("g-ot", "g-os", "g-ra", "g-ból", "g-nyi", "g-mal"); any other word after the hyphen is a name.
  */
 const UNIT_WORD =
-  /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g(?:-(?:t|ot|os|ra|bol|nyi|mal)\b|(?!-))|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa(?!k\b)\w*|tablet\w*|kapszul\w*)\b/;
+  /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa(?!k\b)\w*|tablet\w*|kapszul\w*)\b/;
 
 /**
  * THE PUMP AS EQUIPMENT IS NO UNIT WORD (card 89a6ba86; acrobot 58779, the question-set run of 2026-11-20 20:15 UTC). "Ha automatizálsz (ATO, adagoló pumpa,
@@ -216,6 +213,14 @@ const UNIT_WORD =
  */
 const QUANTITY_WORD = "(?:egy|ket|ketto|harom|negy|ot|hat|het|nyolc|kilenc|tiz|fel|par|tobb|nehany)";
 const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bpumpa\\b`, "g");
+
+/**
+ * A "G-" WITH A WORD AFTER IT IS A NAME, NOT A GRAM, ONLY WITH NO QUANTITY BEFORE IT ("Reefer XXL / Peninsula / G-széria", acrobot 59095): two of the seven false
+ * replacements on the 327 stored answers read the series name as the gram unit next to a litre volume or "napi". The same boundary as the pump's: with a quantity
+ * word anywhere earlier in the sentence the "g-" is the unit, whatever ending follows ("Naponta fél g-ig adj", "pár g-ban", "egy g-hoz"). A first version kept a
+ * closed list of case endings as the unit, and every ending missing from it leaked a dose (barracuda on #136). With a digit the gram is `OTHER_UNIT`'s and is not touched.
+ */
+const SERIES_G = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bg-(?=[a-z])`, "g");
 
 /**
  * The pack's reach or content, not a dose: a PACK NOUN only. "elég", "enough",
@@ -351,7 +356,7 @@ export function guardAnswerDoses(
     // the sentence is a dose and needs the full match (barracuda, #43)
     const dose =
       amounts.length > 0 ||
-      (UNIT_WORD.test(s.replace(EQUIPMENT_PUMP, " ")) && (volumes.length > 0 || periods.length > 0));
+      (UNIT_WORD.test(s.replace(EQUIPMENT_PUMP, " ").replace(SERIES_G, " ")) && (volumes.length > 0 || periods.length > 0));
     if (
       !dose ||
       (REACH.test(s) && periods.length === 0) ||

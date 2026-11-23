@@ -579,7 +579,7 @@ describe("ragos rendszer-térfogat, edény nélküli tesztlépés, szót szorzó
 describe("a negyedik kör: a tárolt válaszok hamis cseréinek mért okai", () => {
   const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
 
-  it("a tárolt válaszok négy mondata nem csere", () => {
+  it("a tárolt válaszok mondatai a négy mért okkal nem cserék", () => {
     for (const answer of [
       "3. Ha kijön mondjuk 3 l/nap, akkor 3 × 7 ≈ **21 liter** körüli tartállyal már kényelmesen elvagy egy hétig",
       "- Ha napi kb. 2 liter párolog, akkor egy hétre: 2 × 7 = **14 liter**",
@@ -614,9 +614,14 @@ describe("a negyedik kör: a tárolt válaszok hamis cseréinek mért okai", () 
       // the test tube is no test step with a period or an aquarium as the target
       ["Naponta 5 ml-t a tesztcsőből.", "no-fixed-dose"],
       ["Tegyél 5 ml-t a tesztcsőből az akváriumba.", "no-fixed-dose"],
-      // the gram with a case ending is still a unit
+      // a "g-" after a quantity word is the gram, whatever the ending (barracuda on #136: a closed list of endings leaked "g-ig")
       ["Adj naponta pár g-ot.", "no-fixed-dose"],
-      ["Naponta egy g elég 100 literre.", "no-fixed-dose"]
+      ["Naponta fél g-ig adj.", "no-fixed-dose"],
+      ["Pár g-ban oldd fel naponta.", "no-fixed-dose"],
+      ["Egy g-hoz naponta 100 liter kell.", "no-fixed-dose"],
+      ["Naponta egy g elég 100 literre.", "no-fixed-dose"],
+      // the bold mark no longer splits a digit from its unit (barracuda on #136)
+      ["**5** g naponta.", "other-unit"]
     ] as const) {
       const result = guardAnswerDoses(answer, none);
       assert.equal(result.ok, false, answer);
