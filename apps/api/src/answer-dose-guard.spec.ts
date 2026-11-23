@@ -654,7 +654,10 @@ describe("a tesztlépés célpontja: minden nem-edény célpont adag", () => {
       "Tegyél 5 ml-t a mintából a refugiumba.",
       "Öntsd a küvetta tartalmát, 10 ml-t, a vízcserélő hordóba.",
       "Cseppents 5 cseppet a kémcsőből a refugiumhoz.",
-      "Add 5 ml from the vial to the refugium."
+      "Add 5 ml from the vial to the refugium.",
+      // the case ending after a hyphen (barracuda on #137)
+      "Tegyél 5 ml-t a fiolából az ATO-ba.",
+      "Tegyél 5 ml-t a fiolából a DSB-be."
     ]) {
       const result = guardAnswerDoses(answer, none);
       assert.equal(result.ok, false, answer);

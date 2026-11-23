@@ -300,10 +300,12 @@ const WATER_TAKEN = /\b(?:ro-?|ozmozis-?|desztillalt-?|csap|edes|tiszta|feltolto
  * list above is closed, and every place missing from it leaked through the test-step exception ("Tegyél 5 ml-t a fiolából a refugiumba /
  * kalkreaktorba / karanténba / sumpba", "a küvetta tartalmát, 10 ml-t, a vízcserélő hordóba" all passed on main 8ded915; "sump" never matched,
  * the pattern read "s[uz]ump"). So the rule is turned round: a word with a target ending (-ba/-be, -ban/-ben, -hoz/-hez, -ra/-re) or an English
- * "into/to the <word>" must be a test vessel or the sample, or the sentence is no test step. A new place is a target without being listed. Measured
+ * "into/to the <word>" must be a test vessel or the sample, or the sentence is no test step. A new place is a target without being listed. THE
+ * ENDING AFTER A HYPHEN TOO: an abbreviation or a foreign word takes its case with a hyphen ("az ATO-ba", "a DSB-be", "sump-ba"), and kalkwasser
+ * through the ATO is a real dosing route (barracuda on #137). Measured
  * before the change on the 327 stored answers: six sentences pass as a test step, and none of them has another target word.
  */
-const TARGET_WORD = /\b[a-z]{2,}(?:ba|be|ban|ben|hoz|hez|ra|re)\b|\b(?:into|to)\s+(?:(?:the|your|a)\s+)?[a-z]+/g;
+const TARGET_WORD = /\b(?:[a-z]{2,}|[a-z0-9]+-)(?:ba|be|ban|ben|hoz|hez|ra|re)\b|\b(?:into|to)\s+(?:(?:the|your|a)\s+)?[a-z]+/g;
 const namesOtherTarget = (s: string) => [...s.matchAll(TARGET_WORD)].some((m) => !TEST_VESSEL.test(m[0]));
 const isTestStep = (s: string, volumes: number, periods: number) =>
   (TEST_VESSEL.test(s) ||
