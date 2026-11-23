@@ -373,6 +373,43 @@ describe("httpSender against the real /v1/chat answer", () => {
     }
   });
 
+  // THE CONTRACT BETWEEN #142 AND #143 (barracuda 59507): with the instance switch on, the real route names the model call's time, the
+  // provider's counts and the model, and the sender reads all three. A renamed field on either side turns this red.
+  it("with the switch on, the real route's modelTiming and model reach the sender", async () => {
+    process.env.AI_DOSE_GUARD_DEBUG = "true";
+    const store = {
+      createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+      conversationBelongsToClient: async () => true,
+      saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+      setMessageOutcome: async () => {},
+      getConversationMessages: async () => []
+    } as unknown as ConversationStore;
+    const openai = {
+      responses: {
+        create: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { output_text: "A nitrátot hetente mérd.", usage: { input_tokens: 321, output_tokens: 45, total_tokens: 366 } };
+        }
+      }
+    } as unknown as NonNullable<AppDependencies["openai"]>;
+    const app = buildApp({ conversations: store, openai });
+    await app.ready();
+    try {
+      const fetchImpl = (async (url: string, init: RequestInit) => {
+        const res = await app.inject({ method: "POST", url: new URL(url).pathname, headers: init.headers as Record<string, string>, payload: init.body as string });
+        return new Response(res.body, { status: res.statusCode });
+      }) as unknown as typeof fetch;
+      const reply = await httpSender({ baseUrl: "http://ai.test", token: API_TOKEN, clientKey: "question-set-run", fetchImpl })({ message: "Hogyan mérjem a nitrátot?" });
+      assert.ok(reply.ok);
+      assert.equal(reply.model, process.env.OPENAI_MODEL ?? "gpt-5.1");
+      assert.deepEqual([reply.modelTiming?.inputTokens, reply.modelTiming?.outputTokens], [321, 45]);
+      assert.ok((reply.modelTiming?.modelMs ?? -1) >= 15, `modelMs ${reply.modelTiming?.modelMs}`);
+    } finally {
+      delete process.env.AI_DOSE_GUARD_DEBUG;
+      await app.close();
+    }
+  });
+
   it("an answer the dose guard swapped arrives as replaced, with the guard's reason, on the real route", async () => {
     const store = {
       createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
