@@ -635,3 +635,43 @@ describe("a negyedik kör: a tárolt válaszok hamis cseréinek mért okai", () 
     }
   });
 });
+
+/*
+  THE TEST STEP'S TARGET (ai-doseguard-tesztlepes-celpont-20261123; barracuda on #136, acrobot 59240). Measured on main 8ded915: an amount poured from
+  a test vessel into any place missing from the closed target list left ("a refugiumba", "a kalkreaktorba", "a karanténba", "a hordóba"), and "sump"
+  never matched ("s[uz]ump"). WHAT TURNS IT RED: a place that is no vessel read as part of a test step; the vessels themselves read as a target, so
+  the stored test steps would be replaced.
+*/
+describe("a tesztlépés célpontja: minden nem-edény célpont adag", () => {
+  const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("az edényből egy nem-edény célpontba tett mennyiség csere marad", () => {
+    for (const answer of [
+      "Tegyél 5 ml-t a fiolából a refugiumba.",
+      "Tegyél 5 ml-t a fiolából a kalkreaktorba.",
+      "Tegyél 5 ml-t a fiolából a sumpba.",
+      "Tegyél 5 ml-t a fiolából a karanténba.",
+      "Tegyél 5 ml-t a mintából a refugiumba.",
+      "Öntsd a küvetta tartalmát, 10 ml-t, a vízcserélő hordóba.",
+      "Cseppents 5 cseppet a kémcsőből a refugiumhoz.",
+      "Add 5 ml from the vial to the refugium.",
+      // the case ending after a hyphen (barracuda on #137)
+      "Tegyél 5 ml-t a fiolából az ATO-ba.",
+      "Tegyél 5 ml-t a fiolából a DSB-be."
+    ]) {
+      const result = guardAnswerDoses(answer, none);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, "no-fixed-dose", answer);
+    }
+  });
+
+  it("az edényen belül maradó tesztlépés nem csere", () => {
+    for (const answer of [
+      "Tegyél 5 ml-t a mintából a fiolába.",
+      "Cseppents 5 cseppet a mintához.",
+      "Add 5 ml of tank water to the vial.",
+      "1. Mérj ki egy adott mennyiségű akváriumvizet a kémcsőbe (pl. 5 vagy 10 ml)"
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
+  });
+});
