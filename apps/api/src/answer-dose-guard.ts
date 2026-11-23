@@ -156,9 +156,10 @@ const PER_VOLUME = new RegExp(`${NUM}\\s*(?:l|ltr|liter|litre)-?(?:enkent|re|ra|
  * an equals sign and a number follow. ONLY THE LEFT SIDE IS TAKEN OUT, the result stays (barracuda on #122): "2 × 5 = 10-et" is still a dose, its "10-et" is a
  * counted thing given, and a first version that took the result too let it through. A result with a unit ("= 10 csepp") keeps its unit word and amount;
  * a result followed by a volume ("= 17,5 liter") is a volume and no count. A number with a UNIT on the left has no equals sign after it and is untouched
- * ("3 × 2 ml", "2 × 5 ml") (card 89a6ba86).
+ * ("3 × 2 ml", "2 × 5 ml") (card 89a6ba86). THE APPROXIMATE SIGN "≈" IS AN EQUALS SIGN TOO ("3 × 7 ≈ 21 liter körüli tartállyal", acrobot 59095): the result
+ * is still kept, so "2 × 5 ≈ 10-et" stays a counted thing given.
  */
-const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?(?=\s*=\s*\d)/g;
+const EQUATION = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7x*]\s*\d+(?:[.,]\d+)?(?=\s*[=\u2248]\s*\d)/g;
 
 /**
  * A NUMBER MULTIPLYING A WORD IS AN OPERAND, NOT A COUNT ("Napi párolgás × 7 = a minimális heti tartálytérfogat, és ehhez adj még +20–30% tartalékot",
@@ -195,9 +196,12 @@ const RANGE = /(?<![\d.,])\d+(?:[.,]\d+)?\s*[-\u2013\u2014]\s*(?=\d)/g;
  * THE PLURAL NOMINATIVE "pumpák" IS THE EQUIPMENT NOUN ("hordók, pumpák, keverőtartály"), not a dose: nothing is dosed in the plural nominative, and
  * the question-set run of 2026-11-17 17:45 UTC lost an answer to it (card 15e38019). "pumpa", "pumpát", "pumpával" and the plural
  * accusative stay unit words; with a digit the unit is `OTHER_UNIT`'s and is not touched.
+ * A "G" WITH A HYPHENATED WORD IS A NAME, NOT A GRAM ("Reefer G-széria", acrobot 59095): two of the seven false replacements on the 327 stored answers
+ * read the series name as the gram unit next to a litre volume or "napi". After a hyphen only a case ending from a closed list keeps "g" a unit
+ * ("g-ot", "g-os", "g-ra", "g-ból", "g-nyi", "g-mal"); any other word after the hyphen is a name.
  */
 const UNIT_WORD =
-  /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa(?!k\b)\w*|tablet\w*|kapszul\w*)\b/;
+  /\b(?:ml|milliliter\w*|millilitre\w*|drops?|csepp\w*|tropfen|capful\w*|caps?|scoops?|spoons?|teaspoons?|tablespoons?|tsp|g(?:-(?:t|ot|os|ra|bol|nyi|mal)\b|(?!-))|gramm?\w*|grams?|kupak\w*|merokanal\w*|kanal\w*|messloffel|loffel|adag(?:ot|ok|okat|ban|nyi)?|portions?|pumps?|pumpa(?!k\b)\w*|tablet\w*|kapszul\w*)\b/;
 
 /**
  * THE PUMP AS EQUIPMENT IS NO UNIT WORD (card 89a6ba86; acrobot 58779, the question-set run of 2026-11-20 20:15 UTC). "Ha automatizálsz (ATO, adagoló pumpa,
@@ -220,6 +224,14 @@ const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bpumpa\\b`, "g
  */
 const REACH =
   /\b(?:bottles?|flasche|flakon\w*|uveg\w*|kiszereles\w*|tartalom|inhalt|contents?)\b/;
+
+/**
+ * MARKDOWN EMPHASIS IS NO TEXT (ai-doseguard-negyedik-kor-20261123; acrobot 59095): "egy hétre: 2 × 7 = **14 liter**" kept its "2" as a bare count
+ * next to "napi 2 liter", because the equation reads "= <digit>" and found "= **". Measured on the 327 stored question-set answers: the bold mark
+ * stood between the equals sign and the result in two of the seven false replacements. The doubled marks ("**", "__") are taken out before any
+ * reading; a single "*" stays, it is also a times sign.
+ */
+const EMPHASIS = /\*\*|__/g;
 
 /**
  * A LIST NUMBER AT A LINE'S START IS NO AMOUNT ("1. Egy hétig kézzel pótold ...", "2) Hetente ..."): a number of one or two digits, a point or
@@ -255,10 +267,10 @@ function sentences(text: string): string[] {
  * names the aquarium and stays a dose. The words are read after `fold` (no accents).
  * THE VESSEL IS OFTEN THE SECOND HALF OF A COMPOUND: "Mérőfiolába pontosan kimérsz egy adott mennyiségű akváriumvizet (pl. 5 vagy 10 ml)" lost an answer in
  * the cron guard's run of 2026-11-20 21:45 UTC (acrobot 58977), the word boundary before "fiol" missing inside "merofiolaba". The vessel words (fiola, küvetta,
- * kémcső) match INSIDE a word too; the sample words stay whole words, and the syringe and the measuring cup stay off the list (they dose).
+ * kémcső, and "tesztcső": "akváriumvizet a tesztcsőbe (pl. 5 vagy 10 ml)", acrobot 59095) match INSIDE a word too; the sample words stay whole words, and the syringe and the measuring cup stay off the list (they dose).
  */
 const TEST_VESSEL =
-  /\b(?:[a-z]*(?:fiol|kuvett|kemcso)\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
+  /\b(?:[a-z]*(?:fiol|kuvett|kemcso|tesztcso)\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
 const AQUARIUM_TARGET =
   /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|s[uz]ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
 /**
@@ -311,7 +323,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw).replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
+    const s = fold(raw).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));

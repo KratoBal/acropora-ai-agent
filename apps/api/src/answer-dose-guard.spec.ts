@@ -568,3 +568,59 @@ describe("ragos rendszer-térfogat, edény nélküli tesztlépés, szót szorzó
     }
   });
 });
+
+/*
+  THE FOURTH ROUND, MEASURED ON THE 327 STORED QUESTION-SET ANSWERS (ai-doseguard-negyedik-kor-20261123; acrobot 59095, barracuda 59173). Main stopped
+  seven sentences, all false; their causes were the bold mark inside an equation, the approximate sign, the "tesztcső" vessel and the "G-széria" name
+  read as a gram. WHAT TURNS IT RED: one of those four read as before; on the other side, a real dose let through by one of the four new readings, or
+  one of barracuda's sentences where an aquarium noun near the amount could pass for its object ("napi 10 ml-t a medencébe"). The two false
+  replacements this round leaves (a multiplier "7‑tel", a fill-to-the-mark step) are asserted as stops: that is the price, measured.
+*/
+describe("a negyedik kör: a tárolt válaszok hamis cseréinek mért okai", () => {
+  const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+
+  it("a tárolt válaszok négy mondata nem csere", () => {
+    for (const answer of [
+      "3. Ha kijön mondjuk 3 l/nap, akkor 3 × 7 ≈ **21 liter** körüli tartállyal már kényelmesen elvagy egy hétig",
+      "- Ha napi kb. 2 liter párolog, akkor egy hétre: 2 × 7 = **14 liter**",
+      // only the doubled mark is emphasis: a single "*" is a times sign, and the equation stays arithmetic
+      "Ha napi 2 liter párolog, akkor 2 * 7 = **14 liter** kell egy hétre.",
+      "A Reefer XXL / Peninsula / G-széria nagyobb modelljei már több száz, esetenként ~1000 liter körüli bruttó térfogatú rendszerek, de 3000 liter körülit a gyártó nem ad meg a Reefer vonalban",
+      "Ha leírod, hogy pontosan melyik Reefer modellt nézed (pl. Reefer XXL, Peninsula, G-széria és a gyári literadat), valamint hány halat, milyen korallokat tervezel, tudok segíteni abban, milyen konkrét karbantartási rutinnal érdemes számolnod (napi, heti, havi teendők listája)",
+      "1. Vegyél egy megadott mennyiségű akváriumvizet a tesztcsőbe (pl. 5 vagy 10 ml – a saját teszteden lesz pontosan)"
+    ])
+      assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
+  });
+
+  it("a kimondott ár: a szorzó és a jelölésig töltés csere marad", () => {
+    for (const answer of [
+      "- Mérd meg 1–2 nap alatt, **hány liter RO‑vizet kell visszatöltened naponta**, majd szorozd fel 7‑tel – ez alapján válassz kb. **+20–30% tartalékkal** ATO‑tartályt (sok 200 literes rendszernél ez kb. 20–30 liter szokott lenni)",
+      "2. Töltsd meg a jelölésig (általában 5 vagy 10 ml)"
+    ])
+      assert.equal(guardAnswerDoses(answer, none).ok, false, answer);
+  });
+
+  it("a valódi adag csere marad: medence vagy rendszer a mennyiség mellett, kiemelés, közelítő jel, tesztcső, gramm", () => {
+    for (const [answer, rule] of [
+      // barracuda 59173: an aquarium noun near the amount is not its object
+      ["Adagolj napi 10 ml-t a medencébe.", "no-fixed-dose"],
+      ["Naponta 10 ml a rendszerbe.", "no-fixed-dose"],
+      ["Adagolj a medencébe (napi 10 ml).", "no-fixed-dose"],
+      ["Adagolj naponta 2 liter kalkwasser-vizet.", "litre-dose"],
+      // the bold mark taken out changes no dose; the equation's result stays a counted thing given
+      ["Adagolj **naponta 10 ml-t**.", "no-fixed-dose"],
+      ["Naponta 2 × 5 = **10-et** adj.", "given-count"],
+      ["Naponta 2 × 5 ≈ 10-et adj.", "given-count"],
+      // the test tube is no test step with a period or an aquarium as the target
+      ["Naponta 5 ml-t a tesztcsőből.", "no-fixed-dose"],
+      ["Tegyél 5 ml-t a tesztcsőből az akváriumba.", "no-fixed-dose"],
+      // the gram with a case ending is still a unit
+      ["Adj naponta pár g-ot.", "no-fixed-dose"],
+      ["Naponta egy g elég 100 literre.", "no-fixed-dose"]
+    ] as const) {
+      const result = guardAnswerDoses(answer, none);
+      assert.equal(result.ok, false, answer);
+      assert.equal(result.ok ? null : result.rule, rule, answer);
+    }
+  });
+});
