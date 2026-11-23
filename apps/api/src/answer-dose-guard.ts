@@ -284,7 +284,7 @@ function sentences(text: string): string[] {
 const TEST_VESSEL =
   /\b(?:[a-z]*(?:fiol|kuvett|kemcso|tesztcso)\w*|mint(?:a|aba|ahoz|abol|at|aval|avetel\w*|aviz\w*)|vial\w*|cuvette\w*|test tube\w*|sample\w*|probe\w*)\b/;
 const AQUARIUM_TARGET =
-  /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|s[uz]ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
+  /\b(?:akvarium(?:ba|ban|hoz|ra)|medence(?:be|ben|hez|re)|rendszer(?:be|ben|hez)|sz?ump(?:ba|ban|hoz)|tartaly(?:ba|ban)|tank(?:ba|ban)|viz(?:be|hez)|aramlas\w*ba|technik\w*(?:ba|ban)|(?:into|to|in) (?:the |your )?(?:tank|aquarium|system|sump|water|flow))\b/;
 /**
  * THE TEST NAMES THE SAMPLE WITHOUT A VESSEL WORD TOO (acrobot 59046, the run of 2026-11-20 22:19 UTC): "Felveszel pontosan annyi vizet, amennyit a
  * teszt előír (pl. 5 vagy 10 ml)". The water TAKEN ("vizet", "akváriumvizet") with the test as the one that says how much ("a teszt előír / ír /
@@ -295,12 +295,23 @@ const AQUARIUM_TARGET =
 const TEST_SAYS = /\bteszt\w*\s+(?:[a-z]+\s+)?(?:eloir|ir|ker)\w*/;
 // plain water or the aquarium's water only, as in WATER_VOLUME: "mészvizet" is Kalkwasser (barracuda on #135)
 const WATER_TAKEN = /\b(?:ro-?|ozmozis-?|desztillalt-?|csap|edes|tiszta|feltolto-?|akvarium|tenger|minta)?vizet\b/;
+/**
+ * ANY TARGET THAT IS NOT A VESSEL MAKES THE AMOUNT A DOSE (ai-doseguard-tesztlepes-celpont-20261123; barracuda on #136, acrobot 59240): the target
+ * list above is closed, and every place missing from it leaked through the test-step exception ("Tegyél 5 ml-t a fiolából a refugiumba /
+ * kalkreaktorba / karanténba / sumpba", "a küvetta tartalmát, 10 ml-t, a vízcserélő hordóba" all passed on main 8ded915; "sump" never matched,
+ * the pattern read "s[uz]ump"). So the rule is turned round: a word with a target ending (-ba/-be, -ban/-ben, -hoz/-hez, -ra/-re) or an English
+ * "into/to the <word>" must be a test vessel or the sample, or the sentence is no test step. A new place is a target without being listed. Measured
+ * before the change on the 327 stored answers: six sentences pass as a test step, and none of them has another target word.
+ */
+const TARGET_WORD = /\b[a-z]{2,}(?:ba|be|ban|ben|hoz|hez|ra|re)\b|\b(?:into|to)\s+(?:(?:the|your|a)\s+)?[a-z]+/g;
+const namesOtherTarget = (s: string) => [...s.matchAll(TARGET_WORD)].some((m) => !TEST_VESSEL.test(m[0]));
 const isTestStep = (s: string, volumes: number, periods: number) =>
   (TEST_VESSEL.test(s) ||
     (TEST_SAYS.test(s) && WATER_TAKEN.test(s) && !DOSING_VERB.test(s) && !ADDITIVE.test(s))) &&
   volumes === 0 &&
   periods === 0 &&
-  !AQUARIUM_TARGET.test(s);
+  !AQUARIUM_TARGET.test(s) &&
+  !namesOtherTarget(s);
 
 /**
  * THE SIZE OF AN ANSWER, TWO NUMBERS AND NO TEXT (task t-20261117-csere-elotti-meret; acrobot 55186): how long it was and how many sentences it had,
