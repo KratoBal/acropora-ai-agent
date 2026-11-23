@@ -12,6 +12,8 @@ import { QUESTION_SET, type PinnedQuestion } from "./question-set.js";
 import {
   checkAbbreviation,
   compareReports,
+  measuredProviderSlowdown,
+  modelTimingOf,
   runExitCode,
   throughputMedian,
   countTerms,
@@ -40,7 +42,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, modelTiming: null, model: "gpt-5.1", instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -359,11 +361,51 @@ describe("httpSender against the real /v1/chat answer", () => {
         replacedSentence: null,
         replacedOriginalSize: null,
         replacedOriginal: null,
+        // the instance switch is off here, so the real route sends no modelTiming (ai-chat-modellhivas-ido-20261123 gates it)
+        modelTiming: null,
+        model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructionsVersion: INSTRUCTIONS_VERSION,
         // no OS configured in the test: the route reports the branch the model had
         productContext: "not_configured"
       });
     } finally {
+      await app.close();
+    }
+  });
+
+  // THE CONTRACT BETWEEN #142 AND #143 (barracuda 59507): with the instance switch on, the real route names the model call's time, the
+  // provider's counts and the model, and the sender reads all three. A renamed field on either side turns this red.
+  it("with the switch on, the real route's modelTiming and model reach the sender", async () => {
+    process.env.AI_DOSE_GUARD_DEBUG = "true";
+    const store = {
+      createConversation: async () => "6f1d0a2c-1b7e-4a3f-9c2d-8b5e4f7a1c30",
+      conversationBelongsToClient: async () => true,
+      saveMessage: async () => "b2c4d6e8-0a1b-4c3d-8e5f-9a7b6c5d4e3f",
+      setMessageOutcome: async () => {},
+      getConversationMessages: async () => []
+    } as unknown as ConversationStore;
+    const openai = {
+      responses: {
+        create: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return { output_text: "A nitrátot hetente mérd.", usage: { input_tokens: 321, output_tokens: 45, total_tokens: 366 } };
+        }
+      }
+    } as unknown as NonNullable<AppDependencies["openai"]>;
+    const app = buildApp({ conversations: store, openai });
+    await app.ready();
+    try {
+      const fetchImpl = (async (url: string, init: RequestInit) => {
+        const res = await app.inject({ method: "POST", url: new URL(url).pathname, headers: init.headers as Record<string, string>, payload: init.body as string });
+        return new Response(res.body, { status: res.statusCode });
+      }) as unknown as typeof fetch;
+      const reply = await httpSender({ baseUrl: "http://ai.test", token: API_TOKEN, clientKey: "question-set-run", fetchImpl })({ message: "Hogyan mérjem a nitrátot?" });
+      assert.ok(reply.ok);
+      assert.equal(reply.model, process.env.OPENAI_MODEL ?? "gpt-5.1");
+      assert.deepEqual([reply.modelTiming?.inputTokens, reply.modelTiming?.outputTokens], [321, 45]);
+      assert.ok((reply.modelTiming?.modelMs ?? -1) >= 15, `modelMs ${reply.modelTiming?.modelMs}`);
+    } finally {
+      delete process.env.AI_DOSE_GUARD_DEBUG;
       await app.close();
     }
   });
@@ -571,6 +613,110 @@ describe("a provider slowdown is not a regression", () => {
     assert.equal(throughputMedian(undefined), null);
     // without a comparison every error is a failed call
     assert.equal(runExitCode(1, undefined), 1);
+  });
+});
+
+/*
+  THE SLOWDOWN MEASURED WHERE IT HAPPENED (ai-kerdeskeszlet-modellido-szetvalasztas-20261123; acrobot 59468): with the server's `modelTiming`,
+  a run where the server or the instructions moved is excused when the model call itself slowed and nothing else grew. WHAT TURNS THIS RED:
+  such a run called a regression; on the other side, excusing a run where the time outside the model call grew, the input grew, the model
+  call did not slow, the previous report has no timing, an error is not the timeout, or there are more timeouts than timed answers; and the
+  sender not reading the field, or reading a malformed one.
+*/
+describe("a provider slowdown measured on the model call", () => {
+  // 4000 characters, the whole request and the model call in seconds, the input in tokens
+  const timedLong = (
+    id: string,
+    wholeSeconds: number,
+    modelSeconds: number,
+    inputTokens: number | null = 3000,
+    outputTokens: number | null = 900,
+    model: string | null = "gpt-5.1"
+  ) =>
+    ({
+      id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000), model,
+      elapsedMs: wholeSeconds * 1000, modelTiming: { modelMs: modelSeconds * 1000, inputTokens, outputTokens }
+    }) as never;
+  const timeout = (id: string, error = "HTTP 504 ai_provider_timeout") =>
+    ({ id, verdict: "human", replacedBy: null, error, source: null, answer: null, elapsedMs: 40_040, modelTiming: null }) as never;
+  const run = (results: unknown[], serverVersion = "s1") =>
+    ({
+      questionSetVersion: "1.2.0", instructionsVersion: "aaaaaaaaaaaa", serverVersion,
+      startedAt: "2026-11-23T08:00:00.000Z", finishedAt: "2026-11-23T08:05:00.000Z",
+      summary: {
+        pass: 0, fail: 0, human: results.length, replaced: 0, local: 0, void: 0,
+        errors: (results as { error: string | null }[]).filter((r) => r.error !== null).length,
+        glossary: { answers: 0, preferred: 0, avoided: 0 }
+      },
+      results
+    }) as never;
+  const long4 = (id: string) =>
+    ({ id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000), elapsedMs: 20_000 }) as never;
+  // before: 20 s requests, 19 s of model call (210 chars/s), 1 s outside
+  const before = run([timedLong("a", 20, 19), timedLong("b", 20, 19), timedLong("c", 20, 19), timedLong("d", 20, 19)]);
+
+  it("the server moved, the model call slowed, nothing else grew: excused with the three readings, exit 0", () => {
+    const next = run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d")], "s2");
+    const c = compareReports(before, next);
+    assert.equal(c.cause, "server");
+    assert.deepEqual(c.regressions, []);
+    assert.deepEqual(c.providerSlowdown, [
+      "d: HTTP 504 ai_provider_timeout (model-call throughput median 211 -> 143 chars/s; outside the model call 1000 -> 1000 ms; input 3000 -> 3000 tokens; output 900 -> 900 tokens; model gpt-5.1)"
+    ]);
+    assert.equal(runExitCode(1, c), 0);
+  });
+
+  it("stays a regression: the time outside grew, the input grew, the model call did not slow, no timing before, another error, too many timeouts", () => {
+    for (const [name, prev, next] of [
+      ["outside grew", before, run([timedLong("a", 33, 28), timedLong("b", 33, 28), timedLong("c", 33, 28), timeout("d")], "s2")],
+      ["input grew", before, run([timedLong("a", 29, 28, 3400), timedLong("b", 29, 28, 3400), timedLong("c", 29, 28, 3400), timeout("d")], "s2")],
+      // the whole request slowed by 9 s, all of it outside the model call: the server's, not the provider's
+      ["model call did not slow", before, run([timedLong("a", 29, 19), timedLong("b", 29, 19), timedLong("c", 29, 19), timeout("d")], "s2")],
+      // the model call 5 % slower, nothing else moved: under a tenth, within one run's spread
+      ["model call slowed by under a tenth", before, run([timedLong("a", 21, 20), timedLong("b", 21, 20), timedLong("c", 21, 20), timeout("d")], "s2")],
+      ["no timing before", run([long4("a"), long4("b"), long4("c"), long4("d")]), run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d")], "s2")],
+      ["another error", before, run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d", "HTTP 502 boom")], "s2")],
+      ["too many timeouts", before, run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d"), timeout("e"), timeout("f"), timeout("g")], "s2")],
+      ["no input counts", before, run([timedLong("a", 29, 28, null), timedLong("b", 29, 28, null), timedLong("c", 29, 28, null), timeout("d")], "s2")],
+      // barracuda on #143: our own changes that slow the model call itself. More reasoning for the same answer raises the output tokens
+      ["more reasoning (output tokens +50 %)", before, run([timedLong("a", 29, 28, 3000, 1350), timedLong("b", 29, 28, 3000, 1350), timedLong("c", 29, 28, 3000, 1350), timeout("d")], "s2")],
+      // a model change is the environment's, not in serverVersion
+      ["another model", before, run([timedLong("a", 29, 28, 3000, 900, "gpt-5.2"), timedLong("b", 29, 28, 3000, 900, "gpt-5.2"), timedLong("c", 29, 28, 3000, 900, "gpt-5.2"), timeout("d")], "s2")],
+      // no name on either side: an older server or a stand-in, and nothing says the model stayed the same
+      ["no model name on either side", run([timedLong("a", 20, 19, 3000, 900, null), timedLong("b", 20, 19, 3000, 900, null), timedLong("c", 20, 19, 3000, 900, null), timedLong("d", 20, 19, 3000, 900, null)]), run([timedLong("a", 29, 28, 3000, 900, null), timedLong("b", 29, 28, 3000, 900, null), timedLong("c", 29, 28, 3000, 900, null), timeout("d")], "s2")],
+      ["no model name", before, run([timedLong("a", 29, 28, 3000, 900, null), timedLong("b", 29, 28, 3000, 900, null), timedLong("c", 29, 28, 3000, 900, null), timeout("d")], "s2")],
+      ["no output counts", before, run([timedLong("a", 29, 28, 3000, null), timedLong("b", 29, 28, 3000, null), timedLong("c", 29, 28, 3000, null), timeout("d")], "s2")]
+    ] as const) {
+      const c = compareReports(prev, next);
+      assert.deepEqual(c.providerSlowdown, [], name);
+      assert.ok(c.regressions.some((r) => r.startsWith("errors: ")), name);
+      assert.equal(runExitCode((next as { summary: { errors: number } }).summary.errors, c), 1, name);
+    }
+  });
+
+  it("measuredProviderSlowdown needs three timed answers on each side", () => {
+    const two = run([timedLong("a", 29, 28), timedLong("b", 29, 28), timeout("d")], "s2") as { results: unknown };
+    assert.equal(measuredProviderSlowdown((before as { results: unknown }).results, two.results, 1), null);
+  });
+
+  it("modelTimingOf: whole non-negative numbers, a missing count null, anything else null", () => {
+    assert.deepEqual(modelTimingOf({ modelMs: 28_000, inputTokens: 3000, outputTokens: 900 }), { modelMs: 28_000, inputTokens: 3000, outputTokens: 900 });
+    assert.deepEqual(modelTimingOf({ modelMs: 5, inputTokens: null, outputTokens: null }), { modelMs: 5, inputTokens: null, outputTokens: null });
+    for (const bad of [null, undefined, "x", { modelMs: -1, inputTokens: 1, outputTokens: 1 }, { modelMs: 1.5, inputTokens: 1, outputTokens: 1 }, { modelMs: 1, inputTokens: "3", outputTokens: 1 }, { modelMs: 1 }])
+      assert.equal(modelTimingOf(bad), null, JSON.stringify(bad));
+  });
+
+  it("httpSender reads modelTiming from the reply, and null when the server sends none", async () => {
+    const body = (extra: Record<string, unknown>) =>
+      new Response(JSON.stringify({ conversationId: "c1", messageId: "m1", answer: "válasz", model: "gpt-5.1", instructionsVersion: "0123456789ab", ...extra }), { status: 200 });
+    const send = (response: Response) =>
+      httpSender({ baseUrl: "http://ai.test", token: "t", clientKey: "question-set-run", fetchImpl: (async () => response) as unknown as typeof fetch });
+    const timed = await send(body({ modelTiming: { modelMs: 1234, inputTokens: 10, outputTokens: 20 } }))({ message: "x" });
+    assert.deepEqual(timed.ok ? timed.modelTiming : "failed", { modelMs: 1234, inputTokens: 10, outputTokens: 20 });
+    // the answering model is kept too: a model change is not in serverVersion
+    assert.equal(timed.ok ? timed.model : "failed", "gpt-5.1");
+    const bare = await send(body({}))({ message: "x" });
+    assert.equal(bare.ok ? bare.modelTiming : "failed", null);
   });
 });
 
