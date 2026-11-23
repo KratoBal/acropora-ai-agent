@@ -476,6 +476,18 @@ export interface RunReport {
  *
  * THE CAUSE names what moved between the runs: the instruction text, the server's code, both, or neither (the model
  * itself, the weekly run). A regression with cause `none` is model drift.
+ *
+ * A PROVIDER SLOWDOWN IS NOT A REGRESSION (ai-kerdeskeszlet-szolgaltatoi-lassulas-20261123; acrobot 59359, 59363). On 2026-11-23 two runs
+ * in a row (08:45Z, 09:00Z) lost the longest answers to `HTTP 504 ai_provider_timeout` at 40.04 s, the model call's own limit. The answers
+ * were no longer than before (median ~3 500 characters throughout); the model wrote slower: the median throughput of the long answers fell
+ * from 213 characters a second (2026-11-20 22:45Z) to 187 and then 141. When EVERY error of a run is that timeout, the run's throughput
+ * median fell by at least a tenth against the previous report's, there are no more such errors than long answers that measured it,
+ * and NOTHING MOVED between the runs (cause `none`: the weekly run), the errors go to `providerSlowdown` with both medians, not to
+ * `regressions`. Nothing may move because the throughput is the answer's length over the WHOLE request time (barracuda on #138):
+ * a server change that slows the work before the answer or makes the model's input longer lowers it exactly as a slow provider does,
+ * and a longer instruction text does too, so a run where either moved cannot tell the two causes apart and a person reads it. Both
+ * runs of 2026-11-23 had cause `server`, so this rule would NOT have excused them; it keeps the weekly run's provider timeouts quiet.
+ * Any other error, a mix, a smaller fall, too few long answers, or any move stays a regression as before.
  */
 export interface Comparison {
   previous: { startedAt: string | null; instructionsVersion: string | null; serverVersion: string | null };
@@ -483,6 +495,42 @@ export interface Comparison {
   regressions: string[];
   improvements: string[];
   onlyInOne: string[];
+  /** The provider timeouts of a slower run, with the two throughput medians; never a regression (see above). */
+  providerSlowdown: string[];
+}
+
+export const PROVIDER_TIMEOUT_ERROR = "HTTP 504 ai_provider_timeout";
+/** Shorter answers are mostly the wait for the first word, not the writing speed. */
+const THROUGHPUT_MIN_CHARS = 1500;
+const THROUGHPUT_MIN_ANSWERS = 3;
+/** A smaller fall is within one run's spread (2026-11-20 evening: 187-257 chars/s between runs). */
+const THROUGHPUT_MIN_FALL = 0.1;
+
+/**
+ * The median characters a second of a run's long model answers, or null with fewer than three to measure. The model's answer only: a
+ * replaced or local one did not come from the model at that speed.
+ */
+export function throughputMedian(results: unknown): number | null {
+  const speeds = longAnswerSpeeds(results);
+  if (speeds.length < THROUGHPUT_MIN_ANSWERS) return null;
+  const mid = Math.floor(speeds.length / 2);
+  return speeds.length % 2 ? speeds[mid]! : (speeds[mid - 1]! + speeds[mid]!) / 2;
+}
+
+/** The characters a second of each long model answer, sorted. */
+function longAnswerSpeeds(results: unknown): number[] {
+  return (Array.isArray(results) ? (results as Partial<QuestionResult>[]) : [])
+    .filter(
+      (r) =>
+        r.error === null &&
+        typeof r.answer === "string" &&
+        r.answer.length >= THROUGHPUT_MIN_CHARS &&
+        typeof r.elapsedMs === "number" &&
+        r.elapsedMs > 0 &&
+        (r.source ? r.source === "model" : r.verdict !== "replaced" && r.verdict !== "local")
+    )
+    .map((r) => (r.answer as string).length / ((r.elapsedMs as number) / 1000))
+    .sort((a, b) => a - b);
 }
 
 const SCORED: readonly Verdict[] = ["pass", "fail", "replaced"];
@@ -535,7 +583,23 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
     ["avoided glossary forms", then.avoided, now.avoided]
   ] as const)
     if (b > a) regressions.push(`${name}: ${a} -> ${b}`);
-  if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
+  const providerSlowdown: string[] = [];
+  const failed = next.results.filter((r) => r.error !== null);
+  const before = throughputMedian(prev.results);
+  const after = throughputMedian(next.results);
+  if (
+    failed.length > 0 &&
+    failed.every((r) => r.error === PROVIDER_TIMEOUT_ERROR) &&
+    !instructionsMoved &&
+    !serverMoved &&
+    failed.length <= longAnswerSpeeds(next.results).length &&
+    before !== null &&
+    after !== null &&
+    after <= before * (1 - THROUGHPUT_MIN_FALL)
+  )
+    for (const r of failed)
+      providerSlowdown.push(`${r.id}: ${r.error} (throughput median ${Math.round(before)} -> ${Math.round(after)} chars/s)`);
+  else if (next.summary.errors > 0) regressions.push(`errors: ${next.summary.errors}`);
   return {
     previous: {
       startedAt: typeof prev.startedAt === "string" ? prev.startedAt : null,
@@ -545,6 +609,7 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
     cause: instructionsMoved && serverMoved ? "instructions+server" : instructionsMoved ? "instructions" : serverMoved ? "server" : "none",
     regressions,
     improvements,
+    providerSlowdown,
     onlyInOne: [
       ...[...nextResults.keys()].filter((id) => !prevResults.has(id)).map((id) => `${id}: new`),
       ...[...prevResults.keys()].filter((id) => !nextResults.has(id)).map((id) => `${id}: gone`)
@@ -814,9 +879,19 @@ export async function main(
     io.log(
       `compared with ${c.previous.startedAt ?? "unknown"} (moved: ${c.cause}): ` +
         (c.regressions.length > 0 ? `REGRESSION ${c.regressions.join("; ")}` : "no regression") +
-        (c.improvements.length > 0 ? `; improved ${c.improvements.join("; ")}` : "")
+        (c.improvements.length > 0 ? `; improved ${c.improvements.join("; ")}` : "") +
+        (c.providerSlowdown.length > 0 ? `; provider slowdown, no regression: ${c.providerSlowdown.join("; ")}` : "")
     );
-  return s.errors > 0 ? 1 : c && c.regressions.length > 0 ? 3 : 0;
+  return runExitCode(s.errors, c);
+}
+
+/**
+ * 1 a failed call, 3 a regression, 0 otherwise. The provider timeouts of a slower run are named in the comparison and are not a failed
+ * run (see `Comparison`); without a comparison there is nothing to measure them against, and every error stays a failed call.
+ */
+export function runExitCode(errors: number, comparison: Comparison | undefined): 0 | 1 | 3 {
+  const failed = errors - (comparison ? comparison.providerSlowdown.length : 0);
+  return failed > 0 ? 1 : comparison && comparison.regressions.length > 0 ? 3 : 0;
 }
 
 /** The sheet next to the report: `qs-...json` -> `qs-...-itelet.md`. */
