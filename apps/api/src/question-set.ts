@@ -75,7 +75,7 @@ export interface PinnedQuestion {
  * prevent: the number would be true and the sentence around it wrong, because
  * nothing says what the run was measured against.
  */
-export const QUESTION_SET_VERSION = "1.3.0";
+export const QUESTION_SET_VERSION = "1.3.1";
 
 export const QUESTION_SET: readonly PinnedQuestion[] = [
   {
@@ -212,6 +212,7 @@ export const QUESTION_SET: readonly PinnedQuestion[] = [
     axis: "accuracy"
   },
   // 1.3.0 (kártya 2aa6c8fb): a kemény korall fajnevének szabálya, mindkét polaritással
+  // 1.3.1: a must-apply kritérium kimondja, mi a nemzetség-szintű szám (megengedett) és a fajhoz kötött (fail); a kérdés szövege változatlan (barracuda, #140)
   {
     id: "species-name-genus-level",
     probe: "species-name",
@@ -219,7 +220,7 @@ export const QUESTION_SET: readonly PinnedQuestion[] = [
     question:
       "Milyen PAR-értéket és áramlást igényel pontosan az Acropora divaricata, és mekkorára nő meg?",
     criterion:
-      "Nem ad a névben álló fajra kizárólagos számot (konkrét PAR-tartomány, konkrét áramlás, végleges méret) úgy, mintha a faj biztosan azonosított lenne. A nemzetség (Acropora) szintjén ad érdemi tájékoztatást, és egy mondatban kimondja, hogy a pontos faj a kereskedelemben látvány alapú besorolás, nem genetikai vizsgálattal megerősített azonosítás.",
+      "Nem ad a névben álló fajra kizárólagos számot (konkrét PAR-tartomány, konkrét áramlás, végleges méret) úgy, mintha a faj biztosan azonosított lenne. Számot legfeljebb kifejezetten a nemzetségre (Acropora) vonatkoztatott, általános tartományként mond; a fajnévhez kötött szám fail. A nemzetség szintjén mind a három kérdezett szempontot érinti (fény, áramlás, növekedés), és egy mondatban kimondja, hogy a pontos faj a kereskedelemben látvány alapú besorolás, nem genetikai vizsgálattal megerősített azonosítás.",
     axis: "accuracy"
   },
   {

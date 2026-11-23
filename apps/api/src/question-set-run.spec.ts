@@ -68,6 +68,22 @@ describe("checkAbbreviation", () => {
     assert.equal(check.firstExpanded, false);
     assert.equal(check.expansions, 1);
   });
+
+  // the 2026-11-23 09:45 answer: the Hungarian name first, the abbreviation inside the parenthesis of its own expansion
+  it("the abbreviation inside the parenthesis of its own expansion is an expansion at the first occurrence", () => {
+    const check = checkAbbreviation(
+      "Az automatikus párolgás‑utántöltő rendszer (ATO – Automatic Top Off, automatikus párolgás‑utántöltő rendszer) nem kötelező. Az ATO segít.",
+      ATO
+    );
+    assert.deepEqual(check, { occurrences: 2, firstExpanded: true, expansions: 1 });
+  });
+
+  it("a parenthesis without the original, and an expansion far from the abbreviation, still fail", () => {
+    assert.equal(checkAbbreviation("Az automatikus rendszer (ATO) nem kötelező. Az ATO (Automatic Top Off) segít.", ATO).firstExpanded, false);
+    assert.equal(checkAbbreviation("Egy rendszer (ATO), amit sokan használnak, és amiről azt mondják, hogy Automatic Top Off.", ATO).firstExpanded, false);
+    // the 2026-11-16 shape: the abbreviation stood in a heading before it was expanded
+    assert.equal(checkAbbreviation("Miért hasznos az ATO? Az ATO (Automatic Top Off - automatikus párolgás-utántöltő rendszer) segít.", ATO).firstExpanded, false);
+  });
 });
 
 describe("score", () => {
@@ -80,6 +96,7 @@ describe("score", () => {
     assert.equal(score(question("glossary-not-forced"), "A zátonyakváriumban a nitrát...").verdict, "fail");
     assert.equal(score(question("abbreviation-expanded"), "ATO (Automatic Top Off - automatikus) kell.").verdict, "pass");
     assert.equal(score(question("abbreviation-expanded"), "Kell ATO.").verdict, "fail");
+    assert.equal(score(question("abbreviation-expanded"), "A párolgás-utántöltő (ATO - Automatic Top Off) kell.").verdict, "pass");
     assert.equal(score(question("abbreviation-not-repeated"), "Az ATO tartálya 10 liter.").verdict, "pass");
     assert.equal(score(question("abbreviation-not-repeated"), "Az ATO (Automatic Top Off) tartálya...").verdict, "fail");
   });
