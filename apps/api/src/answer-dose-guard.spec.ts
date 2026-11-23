@@ -622,6 +622,7 @@ describe("a negyedik kör: a tárolt válaszok hamis cseréinek mért okai", () 
       ["Naponta másfél g-ot adj.", "no-fixed-dose"],
       ["Adj naponta húsz g-ot.", "no-fixed-dose"],
       ["Naponta egy G-ot adj.", "no-fixed-dose"],
+      ["Napi 5 G-ot.", "other-unit"],
       ["A g-széria napi 2 órát megy.", "no-fixed-dose"],
       ["Egy g-hoz naponta 100 liter kell.", "no-fixed-dose"],
       ["Naponta egy g elég 100 literre.", "no-fixed-dose"],

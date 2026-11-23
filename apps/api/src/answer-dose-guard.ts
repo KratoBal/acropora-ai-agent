@@ -219,11 +219,11 @@ const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bpumpa\\b`, "g
  * 327 stored answers read the series name as the gram unit next to a litre volume or "napi". The mark of the name is the LETTER ITSELF: the gram is
  * always a small "g", so this is read on the raw sentence, before `fold` lowercases it, and a small "g-" stays the unit whatever follows. Two versions
  * that read the context instead leaked (barracuda on #136): a closed list of case endings ("g-ig" missing) and then a quantity word before it
- * ("másfél", "húsz", "tizenöt" are no `QUANTITY_WORD`). With a quantity word earlier in the sentence the capital G is the unit too; that only
- * widens the stop side. A digit makes the gram `OTHER_UNIT`'s either way. The name's "G" becomes "§", which no pattern reads.
+ * ("másfél", "húsz", "tizenöt" are no `QUANTITY_WORD`). After a digit or a quantity word earlier in the sentence the capital G is the unit
+ * too ("Napi 5 G-ot" stays `OTHER_UNIT`'s; barracuda on #136 v3); that only widens the stop side. The name's "G" becomes "§", which no pattern reads.
  */
 const SERIES_G = /\bG-(?=\p{L})/gu;
-const QUANTITY_BEFORE = new RegExp(`\\b${QUANTITY_WORD}\\b`);
+const QUANTITY_BEFORE = new RegExp(`\\d|\\b${QUANTITY_WORD}\\b`);
 const markSeriesNames = (raw: string) =>
   raw.replace(SERIES_G, (match, offset: number) =>
     QUANTITY_BEFORE.test(fold(raw.slice(0, offset))) ? match : "\u00a7-"
