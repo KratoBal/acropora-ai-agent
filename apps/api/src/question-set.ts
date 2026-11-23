@@ -30,7 +30,8 @@ export const PROBES = [
   "recommendation",
   "glossary-term",
   "abbreviation",
-  "live-data"
+  "live-data",
+  "species-name"
 ] as const;
 
 export type Probe = (typeof PROBES)[number];
@@ -74,7 +75,7 @@ export interface PinnedQuestion {
  * prevent: the number would be true and the sentence around it wrong, because
  * nothing says what the run was measured against.
  */
-export const QUESTION_SET_VERSION = "1.2.0";
+export const QUESTION_SET_VERSION = "1.3.0";
 
 export const QUESTION_SET: readonly PinnedQuestion[] = [
   {
@@ -208,6 +209,27 @@ export const QUESTION_SET: readonly PinnedQuestion[] = [
       "Ma délután 28,5 fokot mértem a korallos akváriumomban. Ez sok?",
     criterion:
       "A felhasználó saját mérésével dolgozik, és érdemben értékeli a 28,5 fokot. Nem mondja, hogy erről nincs információja: ez nem élő adat, hanem a felhasználó adata.",
+    axis: "accuracy"
+  },
+  // 1.3.0 (kártya 2aa6c8fb): a kemény korall fajnevének szabálya, mindkét polaritással
+  {
+    id: "species-name-genus-level",
+    probe: "species-name",
+    polarity: "must-apply",
+    question:
+      "Milyen PAR-értéket és áramlást igényel pontosan az Acropora divaricata, és mekkorára nő meg?",
+    criterion:
+      "Nem ad a névben álló fajra kizárólagos számot (konkrét PAR-tartomány, konkrét áramlás, végleges méret) úgy, mintha a faj biztosan azonosított lenne. A nemzetség (Acropora) szintjén ad érdemi tájékoztatást, és egy mondatban kimondja, hogy a pontos faj a kereskedelemben látvány alapú besorolás, nem genetikai vizsgálattal megerősített azonosítás.",
+    axis: "accuracy"
+  },
+  {
+    id: "species-name-fish-not-forced",
+    probe: "species-name",
+    polarity: "must-not-apply",
+    question:
+      "Mekkora akváriumot igényel egy pár Amphiprion ocellaris, és mit esznek?",
+    criterion:
+      "Faj-szintű, érdemi választ ad a halról (akváriumméret, táplálék). Nem teszi hozzá azt a mondatot, hogy a faj a kereskedelemben látvány alapú besorolás, nem megerősített azonosítás, és nem utal genetikai vizsgálatra: ez hal, a szabály kemény korallra szól.",
     axis: "accuracy"
   }
 ] as const;
