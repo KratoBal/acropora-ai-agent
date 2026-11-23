@@ -481,9 +481,13 @@ export interface RunReport {
  * in a row (08:45Z, 09:00Z) lost the longest answers to `HTTP 504 ai_provider_timeout` at 40.04 s, the model call's own limit. The answers
  * were no longer than before (median ~3 500 characters throughout); the model wrote slower: the median throughput of the long answers fell
  * from 213 characters a second (2026-11-20 22:45Z) to 187 and then 141. When EVERY error of a run is that timeout, the run's throughput
- * median is lower than the previous report's, and the instruction text did not move (a longer instruction slows the model as well, and
- * would read the same in characters a second), the errors go to `providerSlowdown` with both medians, not to `regressions`. Any other
- * error, a mix, a throughput that did not fall, or too few long answers to measure it, stays a regression as before.
+ * median fell by at least a tenth against the previous report's, there are no more such errors than long answers that measured it,
+ * and NOTHING MOVED between the runs (cause `none`: the weekly run), the errors go to `providerSlowdown` with both medians, not to
+ * `regressions`. Nothing may move because the throughput is the answer's length over the WHOLE request time (barracuda on #138):
+ * a server change that slows the work before the answer or makes the model's input longer lowers it exactly as a slow provider does,
+ * and a longer instruction text does too, so a run where either moved cannot tell the two causes apart and a person reads it. Both
+ * runs of 2026-11-23 had cause `server`, so this rule would NOT have excused them; it keeps the weekly run's provider timeouts quiet.
+ * Any other error, a mix, a smaller fall, too few long answers, or any move stays a regression as before.
  */
 export interface Comparison {
   previous: { startedAt: string | null; instructionsVersion: string | null; serverVersion: string | null };
@@ -499,13 +503,23 @@ export const PROVIDER_TIMEOUT_ERROR = "HTTP 504 ai_provider_timeout";
 /** Shorter answers are mostly the wait for the first word, not the writing speed. */
 const THROUGHPUT_MIN_CHARS = 1500;
 const THROUGHPUT_MIN_ANSWERS = 3;
+/** A smaller fall is within one run's spread (2026-11-20 evening: 187-257 chars/s between runs). */
+const THROUGHPUT_MIN_FALL = 0.1;
 
 /**
  * The median characters a second of a run's long model answers, or null with fewer than three to measure. The model's answer only: a
  * replaced or local one did not come from the model at that speed.
  */
 export function throughputMedian(results: unknown): number | null {
-  const speeds = (Array.isArray(results) ? (results as Partial<QuestionResult>[]) : [])
+  const speeds = longAnswerSpeeds(results);
+  if (speeds.length < THROUGHPUT_MIN_ANSWERS) return null;
+  const mid = Math.floor(speeds.length / 2);
+  return speeds.length % 2 ? speeds[mid]! : (speeds[mid - 1]! + speeds[mid]!) / 2;
+}
+
+/** The characters a second of each long model answer, sorted. */
+function longAnswerSpeeds(results: unknown): number[] {
+  return (Array.isArray(results) ? (results as Partial<QuestionResult>[]) : [])
     .filter(
       (r) =>
         r.error === null &&
@@ -517,9 +531,6 @@ export function throughputMedian(results: unknown): number | null {
     )
     .map((r) => (r.answer as string).length / ((r.elapsedMs as number) / 1000))
     .sort((a, b) => a - b);
-  if (speeds.length < THROUGHPUT_MIN_ANSWERS) return null;
-  const mid = Math.floor(speeds.length / 2);
-  return speeds.length % 2 ? speeds[mid]! : (speeds[mid - 1]! + speeds[mid]!) / 2;
 }
 
 const SCORED: readonly Verdict[] = ["pass", "fail", "replaced"];
@@ -580,9 +591,11 @@ export function compareReports(previous: unknown, next: RunReport): Comparison {
     failed.length > 0 &&
     failed.every((r) => r.error === PROVIDER_TIMEOUT_ERROR) &&
     !instructionsMoved &&
+    !serverMoved &&
+    failed.length <= longAnswerSpeeds(next.results).length &&
     before !== null &&
     after !== null &&
-    after < before
+    after <= before * (1 - THROUGHPUT_MIN_FALL)
   )
     for (const r of failed)
       providerSlowdown.push(`${r.id}: ${r.error} (throughput median ${Math.round(before)} -> ${Math.round(after)} chars/s)`);

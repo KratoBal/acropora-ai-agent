@@ -490,11 +490,11 @@ describe("a provider slowdown is not a regression", () => {
     ({ id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000), elapsedMs: seconds * 1000, ...extra }) as never;
   const failed = (id: string, error = "HTTP 504 ai_provider_timeout") =>
     ({ id, verdict: "human", replacedBy: null, error, source: null, answer: null, elapsedMs: 40_040 }) as never;
-  const run = (results: unknown[], instructionsVersion = "aaaaaaaaaaaa") =>
+  const run = (results: unknown[], instructionsVersion = "aaaaaaaaaaaa", serverVersion = "s1") =>
     ({
       questionSetVersion: "1.2.0",
       instructionsVersion,
-      serverVersion: "s1",
+      serverVersion,
       startedAt: "2026-11-23T08:00:00.000Z",
       finishedAt: "2026-11-23T08:05:00.000Z",
       summary: {
@@ -507,7 +507,7 @@ describe("a provider slowdown is not a regression", () => {
   // 4000 characters in 20 s is 200 chars/s; in 30 s about 133
   const fast = run([long("a", 20), long("b", 20), long("c", 20), long("d", 20)]);
 
-  it("only provider timeouts in a slower run: named with both medians, no regression, exit 0", () => {
+  it("only provider timeouts in a slower run where nothing moved: named with both medians, no regression, exit 0", () => {
     const c = compareReports(fast, run([long("a", 30), long("b", 30), long("c", 30), failed("d")]));
     assert.deepEqual(c.regressions, []);
     assert.deepEqual(c.providerSlowdown, ["d: HTTP 504 ai_provider_timeout (throughput median 200 -> 133 chars/s)"]);
@@ -520,6 +520,12 @@ describe("a provider slowdown is not a regression", () => {
       ["a mix", run([long("a", 30), long("b", 30), long("c", 30), failed("d"), failed("e", "network: ECONNRESET")])],
       ["no slowdown", run([long("a", 20), long("b", 20), long("c", 20), failed("d")])],
       ["instructions moved", run([long("a", 30), long("b", 30), long("c", 30), failed("d")], "bbbbbbbbbbbb")],
+      // barracuda on #138: the throughput is over the whole request, so a server change reads like a slow provider
+      ["server moved", run([long("a", 30), long("b", 30), long("c", 30), failed("d")], "aaaaaaaaaaaa", "s2")],
+      // 4000 characters in 21.6 s is 185 chars/s: a 7.5 % fall, within one run's spread
+      ["a fall under a tenth", run([long("a", 21.6), long("b", 21.6), long("c", 21.6), failed("d")])],
+      // more timeouts than long answers that measured the slowdown: half a run is no evidence
+      ["more timeouts than measured answers", run([long("a", 30), long("b", 30), long("c", 30), failed("d"), failed("e"), failed("f"), failed("g")])],
       ["too few long answers", run([long("a", 30), long("b", 30), failed("d")])]
     ] as const) {
       const c = compareReports(fast, next);
