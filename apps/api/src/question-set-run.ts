@@ -256,6 +256,11 @@ export interface QuestionResult {
    * `replacedOriginal`; ai-kerdeskeszlet-modellido-szetvalasztas-20261123). Absent in a report written before the server sent it.
    */
   modelTiming?: ModelTiming | null;
+  /**
+   * The model that answered (`model` on /v1/chat): it comes from the server's environment, not its code, so a model change is not in
+   * `serverVersion` (barracuda on #143). Absent in an older report; null when the server named none.
+   */
+  model?: string | null;
   /** From the answer itself (`instructionsVersion` on /v1/chat); null for a local answer or an older server. */
   instructionsVersion: string | null;
   /**
@@ -364,6 +369,7 @@ export type SendQuestion = (input: {
       replacedOriginalSize: { chars: number; sentences: number } | null;
       replacedOriginal: string | null;
       modelTiming?: ModelTiming | null;
+      model?: string | null;
       instructionsVersion: string | null;
       productContext: string | null;
     }
@@ -428,6 +434,7 @@ export async function runQuestionSet(
       replacedOriginalSize: reply.ok ? reply.replacedOriginalSize : null,
       replacedOriginal: reply.ok ? reply.replacedOriginal : null,
       modelTiming: reply.ok ? (reply.modelTiming ?? null) : null,
+      model: reply.ok ? (reply.model ?? null) : null,
       instructionsVersion: reply.ok ? reply.instructionsVersion : null,
       productContext: reply.ok ? reply.productContext : null,
       error: reply.ok ? null : reply.error,
@@ -535,9 +542,15 @@ export function throughputMedian(results: unknown): number | null {
  * THE SLOWDOWN MEASURED WHERE IT HAPPENED (ai-kerdeskeszlet-modellido-szetvalasztas-20261123; acrobot 59468): the rule above excuses a provider
  * timeout only when nothing moved, because the whole-request throughput cannot tell a slow provider from a slower server (barracuda on #138).
  * With the server's `modelTiming` beside each answer it can: over the long model answers that carry it (at least three in each run), the MODEL
- * CALL's throughput fell by at least a tenth, while the time OUTSIDE the model call (the whole request minus the call) and the model's INPUT size
- * did not grow by more than a tenth (the outside time with 500 ms of slack: it is a few hundred milliseconds, and its noise is not a tenth).
- * Then the provider is what slowed, whatever moved between the runs. A report written before the server sent `modelTiming` cannot show this,
+ * CALL's throughput fell by at least a tenth, while the time OUTSIDE the model call (the whole request minus the call), the model's INPUT size
+ * and its OUTPUT tokens did not grow by more than a tenth (the outside time with 500 ms of slack: it is a few hundred milliseconds, and its
+ * noise is not a tenth), and every timed answer of both runs came from the SAME MODEL. Then the provider is what slowed, whatever moved.
+ * The last two are ours that slow the model call itself (barracuda on #143): a slower model (`OPENAI_MODEL` is the environment's, not in
+ * `serverVersion`), and more reasoning for the same answer (a reasoning setting or an instruction): the Responses API counts reasoning in
+ * `output_tokens` (its `output_tokens_details.reasoning_tokens` is a breakdown of them), so more thinking raises the output tokens, a slow
+ * provider does not. A SLOWER SERVER DOES NOT EAT INTO THE MODEL'S TIME: `ai_provider_timeout` is the model call's own limit, counted from
+ * the call's start (the SDK client's per-call `timeout`), and its `waitedMs` is the call's time; a slow server reaches the shared chat
+ * deadline instead, `ai_chat_deadline`, which nothing here excuses (barracuda on #142, #143). A report written before the server sent `modelTiming` cannot show this,
  * and then only the rule above applies. Returns the reading for the `providerSlowdown` line, or null.
  */
 export function measuredProviderSlowdown(previous: unknown, next: unknown, timeouts: number): string | null {
@@ -557,16 +570,21 @@ export function measuredProviderSlowdown(previous: unknown, next: unknown, timeo
   };
   const speed = (rs: typeof a) => median(rs.map((r) => r.answer.length / (r.modelTiming.modelMs / 1000)));
   const outside = (rs: typeof a) => median(rs.map((r) => Math.max(0, r.elapsedMs - r.modelTiming.modelMs)));
-  const inputs = (rs: typeof a) => rs.map((r) => r.modelTiming.inputTokens).filter((n): n is number => n !== null);
-  const [ia, ib] = [inputs(a), inputs(b)];
-  if (ia.length < THROUGHPUT_MIN_ANSWERS || ib.length < THROUGHPUT_MIN_ANSWERS) return null;
-  const [sa, sb, oa, ob, ina, inb] = [speed(a), speed(b), outside(a), outside(b), median(ia), median(ib)];
+  const models = new Set([...a, ...b].map((r) => r.model ?? null));
+  if (models.size !== 1 || models.has(null)) return null;
+  const counts = (rs: typeof a, key: "inputTokens" | "outputTokens") =>
+    rs.map((r) => r.modelTiming[key]).filter((n): n is number => n !== null);
+  const [ia, ib, ua, ub] = [counts(a, "inputTokens"), counts(b, "inputTokens"), counts(a, "outputTokens"), counts(b, "outputTokens")];
+  if ([ia, ib, ua, ub].some((c) => c.length < THROUGHPUT_MIN_ANSWERS)) return null;
+  const [sa, sb, oa, ob, ina, inb, outa, outb] = [speed(a), speed(b), outside(a), outside(b), median(ia), median(ib), median(ua), median(ub)];
   if (sb > sa * (1 - THROUGHPUT_MIN_FALL)) return null;
   if (ob > oa * (1 + THROUGHPUT_MIN_FALL) + OUTSIDE_SLACK_MS) return null;
   if (inb > ina * (1 + THROUGHPUT_MIN_FALL)) return null;
+  if (outb > outa * (1 + THROUGHPUT_MIN_FALL)) return null;
   return (
     `model-call throughput median ${Math.round(sa)} -> ${Math.round(sb)} chars/s; ` +
-    `outside the model call ${Math.round(oa)} -> ${Math.round(ob)} ms; input ${Math.round(ina)} -> ${Math.round(inb)} tokens`
+    `outside the model call ${Math.round(oa)} -> ${Math.round(ob)} ms; input ${Math.round(ina)} -> ${Math.round(inb)} tokens; ` +
+    `output ${Math.round(outa)} -> ${Math.round(outb)} tokens; model ${[...models][0]}`
   );
 }
 const OUTSIDE_SLACK_MS = 500;
@@ -816,6 +834,7 @@ export function httpSender(options: {
       replacedOriginalSize: originalSizeOf(body.replacedOriginalSize),
       replacedOriginal: typeof body.replacedOriginal === "string" && body.replacedOriginal !== "" ? body.replacedOriginal : null,
       modelTiming: modelTimingOf(body.modelTiming),
+      model,
       instructionsVersion: typeof body.instructionsVersion === "string" ? body.instructionsVersion : null,
       productContext:
         typeof (body.productContext as { state?: unknown } | null | undefined)?.state === "string"

@@ -42,7 +42,7 @@ const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 const question = (id: string) => QUESTION_SET.find((q) => q.id === id)!;
 /** A model answer as the sender hands it on. */
 const modelReply = (conversationId: string, messageId: string, answer: string) =>
-  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, modelTiming: null, instructionsVersion: "0123456789ab", productContext: null }) as const;
+  ({ ok: true, conversationId, messageId, answer, source: "model", replacedBy: null, replacedSentence: null, replacedOriginalSize: null, replacedOriginal: null, modelTiming: null, model: "gpt-5.1", instructionsVersion: "0123456789ab", productContext: null }) as const;
 
 describe("countTerms", () => {
   it("counts a longer form once, not also the shorter form inside it, and a suffixed word as its form", () => {
@@ -344,6 +344,7 @@ describe("httpSender against the real /v1/chat answer", () => {
         replacedOriginal: null,
         // the instance switch is off here, so the real route sends no modelTiming (ai-chat-modellhivas-ido-20261123 gates it)
         modelTiming: null,
+        model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructionsVersion: INSTRUCTIONS_VERSION,
         // no OS configured in the test: the route reports the branch the model had
         productContext: "not_configured"
@@ -568,10 +569,17 @@ describe("a provider slowdown is not a regression", () => {
 */
 describe("a provider slowdown measured on the model call", () => {
   // 4000 characters, the whole request and the model call in seconds, the input in tokens
-  const timedLong = (id: string, wholeSeconds: number, modelSeconds: number, inputTokens: number | null = 3000) =>
+  const timedLong = (
+    id: string,
+    wholeSeconds: number,
+    modelSeconds: number,
+    inputTokens: number | null = 3000,
+    outputTokens: number | null = 900,
+    model: string | null = "gpt-5.1"
+  ) =>
     ({
-      id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000),
-      elapsedMs: wholeSeconds * 1000, modelTiming: { modelMs: modelSeconds * 1000, inputTokens, outputTokens: 900 }
+      id, verdict: "human", replacedBy: null, error: null, source: "model", answer: "x".repeat(4000), model,
+      elapsedMs: wholeSeconds * 1000, modelTiming: { modelMs: modelSeconds * 1000, inputTokens, outputTokens }
     }) as never;
   const timeout = (id: string, error = "HTTP 504 ai_provider_timeout") =>
     ({ id, verdict: "human", replacedBy: null, error, source: null, answer: null, elapsedMs: 40_040, modelTiming: null }) as never;
@@ -597,7 +605,7 @@ describe("a provider slowdown measured on the model call", () => {
     assert.equal(c.cause, "server");
     assert.deepEqual(c.regressions, []);
     assert.deepEqual(c.providerSlowdown, [
-      "d: HTTP 504 ai_provider_timeout (model-call throughput median 211 -> 143 chars/s; outside the model call 1000 -> 1000 ms; input 3000 -> 3000 tokens)"
+      "d: HTTP 504 ai_provider_timeout (model-call throughput median 211 -> 143 chars/s; outside the model call 1000 -> 1000 ms; input 3000 -> 3000 tokens; output 900 -> 900 tokens; model gpt-5.1)"
     ]);
     assert.equal(runExitCode(1, c), 0);
   });
@@ -613,7 +621,15 @@ describe("a provider slowdown measured on the model call", () => {
       ["no timing before", run([long4("a"), long4("b"), long4("c"), long4("d")]), run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d")], "s2")],
       ["another error", before, run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d", "HTTP 502 boom")], "s2")],
       ["too many timeouts", before, run([timedLong("a", 29, 28), timedLong("b", 29, 28), timedLong("c", 29, 28), timeout("d"), timeout("e"), timeout("f"), timeout("g")], "s2")],
-      ["no input counts", before, run([timedLong("a", 29, 28, null), timedLong("b", 29, 28, null), timedLong("c", 29, 28, null), timeout("d")], "s2")]
+      ["no input counts", before, run([timedLong("a", 29, 28, null), timedLong("b", 29, 28, null), timedLong("c", 29, 28, null), timeout("d")], "s2")],
+      // barracuda on #143: our own changes that slow the model call itself. More reasoning for the same answer raises the output tokens
+      ["more reasoning (output tokens +50 %)", before, run([timedLong("a", 29, 28, 3000, 1350), timedLong("b", 29, 28, 3000, 1350), timedLong("c", 29, 28, 3000, 1350), timeout("d")], "s2")],
+      // a model change is the environment's, not in serverVersion
+      ["another model", before, run([timedLong("a", 29, 28, 3000, 900, "gpt-5.2"), timedLong("b", 29, 28, 3000, 900, "gpt-5.2"), timedLong("c", 29, 28, 3000, 900, "gpt-5.2"), timeout("d")], "s2")],
+      // no name on either side: an older server or a stand-in, and nothing says the model stayed the same
+      ["no model name on either side", run([timedLong("a", 20, 19, 3000, 900, null), timedLong("b", 20, 19, 3000, 900, null), timedLong("c", 20, 19, 3000, 900, null), timedLong("d", 20, 19, 3000, 900, null)]), run([timedLong("a", 29, 28, 3000, 900, null), timedLong("b", 29, 28, 3000, 900, null), timedLong("c", 29, 28, 3000, 900, null), timeout("d")], "s2")],
+      ["no model name", before, run([timedLong("a", 29, 28, 3000, 900, null), timedLong("b", 29, 28, 3000, 900, null), timedLong("c", 29, 28, 3000, 900, null), timeout("d")], "s2")],
+      ["no output counts", before, run([timedLong("a", 29, 28, 3000, null), timedLong("b", 29, 28, 3000, null), timedLong("c", 29, 28, 3000, null), timeout("d")], "s2")]
     ] as const) {
       const c = compareReports(prev, next);
       assert.deepEqual(c.providerSlowdown, [], name);
@@ -641,6 +657,8 @@ describe("a provider slowdown measured on the model call", () => {
       httpSender({ baseUrl: "http://ai.test", token: "t", clientKey: "question-set-run", fetchImpl: (async () => response) as unknown as typeof fetch });
     const timed = await send(body({ modelTiming: { modelMs: 1234, inputTokens: 10, outputTokens: 20 } }))({ message: "x" });
     assert.deepEqual(timed.ok ? timed.modelTiming : "failed", { modelMs: 1234, inputTokens: 10, outputTokens: 20 });
+    // the answering model is kept too: a model change is not in serverVersion
+    assert.equal(timed.ok ? timed.model : "failed", "gpt-5.1");
     const bare = await send(body({}))({ message: "x" });
     assert.equal(bare.ok ? bare.modelTiming : "failed", null);
   });
