@@ -1058,6 +1058,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     try {
+      const modelStartedAt = Date.now();
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructions: chatInstructions(resolvedCustomer, productContext, {
@@ -1068,6 +1069,7 @@ export function buildApp(dependencies: AppDependencies = {}) {
         input: modelInput,
         store: false
       }, { signal: deadline.signal });
+      const modelMs = Date.now() - modelStartedAt;
 
       // NO DOSE LEAVES THAT THE MANUFACTURER DID NOT GIVE (Acropora OS card
       // 85c38ab1): every dose statement must be a FIXED dose of a hit; else the
@@ -1199,6 +1201,22 @@ export function buildApp(dependencies: AppDependencies = {}) {
          */
         ...(namesDoseSentenceTo(clientKey) && (!doseGuard.ok || (linkRule === "enforce" && linkGuard && !linkGuard.ok))
           ? { replacedOriginalSize: answerSize(response.output_text), replacedOriginal: response.output_text }
+          : {}),
+        /**
+         * THE MODEL CALL'S OWN TIME AND SIZE (ai-chat-modellhivas-ido-20261123; acrobot 59468): the question-set runner measures a request's
+         * whole time, so a slower provider and a slower server read the same (barracuda on #138). With the model call's milliseconds and the
+         * provider's token counts beside the answer, the runner can tell which one moved. Two numbers and two counts, no text; the same gate
+         * as the fields above (the runner's own client key AND the instance switch), not stored, not logged. A count the provider did not
+         * send is null, never zero.
+         */
+        ...(namesDoseSentenceTo(clientKey)
+          ? {
+              modelTiming: {
+                modelMs,
+                inputTokens: readUsage(response)?.inputTokens ?? null,
+                outputTokens: readUsage(response)?.outputTokens ?? null
+              }
+            }
           : {}),
         /** The link gate's reading (null under `off`): the reason and the hosts, never a URL. */
         linkGuard:
