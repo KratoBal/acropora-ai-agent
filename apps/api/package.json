@@ -7,7 +7,7 @@
     "start": "node dist/apps/api/src/server.js"
   },
   "dependencies": {
-    "fastify": "^5.0.0",
+    "fastify": "^5.12.8",
     "openai": "^5.0.0",
     "pg": "^8.13.0"
   },
