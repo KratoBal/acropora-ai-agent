@@ -128,9 +128,14 @@ export function checkAbbreviation(answer: string, entry: Abbreviation): Abbrevia
   const original = lower(entry.original);
   const first = matches[0];
   const after = first ? lower(answer.slice(first.index! + entry.abbreviation.length, first.index! + entry.abbreviation.length + entry.original.length + 6)) : "";
+  // "ATO (Automatic Top Off ...": the abbreviation first, the original in the parenthesis after it (the form the rule gives as its example)
+  const parenthesisAfter = first !== undefined && /^\s*\(/.test(after) && after.includes(original);
+  // "az automatikus ... rendszer (ATO - Automatic Top Off, ...": the Hungarian name first and the abbreviation INSIDE the parenthesis of its own
+  // expansion. The criterion says "for example", so this form meets it; the check used to fail it (2026-11-23 09:45, one answer; 6 of 6 repeats then passed)
+  const insideParenthesis = first !== undefined && /\(\s*$/.test(answer.slice(Math.max(0, first.index! - 4), first.index!)) && after.includes(original);
   return {
     occurrences: matches.length,
-    firstExpanded: first !== undefined && /^\s*\(/.test(after) && after.includes(original),
+    firstExpanded: parenthesisAfter || insideParenthesis,
     expansions: lower(answer).split(original).length - 1
   };
 }
