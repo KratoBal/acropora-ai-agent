@@ -81,6 +81,8 @@ describe("checkAbbreviation", () => {
   it("a parenthesis without the original, and an expansion far from the abbreviation, still fail", () => {
     assert.equal(checkAbbreviation("Az automatikus rendszer (ATO) nem kötelező. Az ATO (Automatic Top Off) segít.", ATO).firstExpanded, false);
     assert.equal(checkAbbreviation("Egy rendszer (ATO), amit sokan használnak, és amiről azt mondják, hogy Automatic Top Off.", ATO).firstExpanded, false);
+    // no parenthesis at all: the form the check has always asked for is a parenthesised expansion (a dash after the abbreviation is not one)
+    assert.equal(checkAbbreviation("Az ATO - Automatic Top Off nem kötelező egy 200 literes akváriumhoz.", ATO).firstExpanded, false);
     // the 2026-11-16 shape: the abbreviation stood in a heading before it was expanded
     assert.equal(checkAbbreviation("Miért hasznos az ATO? Az ATO (Automatic Top Off - automatikus párolgás-utántöltő rendszer) segít.", ATO).firstExpanded, false);
   });
