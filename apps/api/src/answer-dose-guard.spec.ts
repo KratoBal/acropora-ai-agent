@@ -657,7 +657,9 @@ describe("a tesztlépés célpontja: minden nem-edény célpont adag", () => {
       "Add 5 ml from the vial to the refugium.",
       // the case ending after a hyphen (barracuda on #137)
       "Tegyél 5 ml-t a fiolából az ATO-ba.",
-      "Tegyél 5 ml-t a fiolából a DSB-be."
+      "Tegyél 5 ml-t a fiolából a DSB-be.",
+      // onto names where a dose goes too: targeted feeding (barracuda on #144)
+      "Szívj fel 2 ml-t a fiolába, és csepegtesd a korallra."
     ]) {
       const result = guardAnswerDoses(answer, none);
       assert.equal(result.ok, false, answer);
@@ -673,7 +675,9 @@ describe("a tesztlépés célpontja: minden nem-edény célpont adag", () => {
       "1. Mérj ki egy adott mennyiségű akváriumvizet a kémcsőbe (pl. 5 vagy 10 ml)",
       // the 10:15Z run (ai-doseguard-celpont-iranyrag-20261123): "leírásában" says where, not where to
       "1. Kimérsz egy adott mennyiségű akváriumvizet a tesztfiolába (pl. 5 vagy 10 ml – a teszt leírásában benne van)",
-      "Cseppents 5 cseppet a mintához, általában ennyi elég, ha a hiba ismétlődik."
+      "Cseppents 5 cseppet a mintához, általában ennyi elég, ha a hiba ismétlődik.",
+      // a two-letter stem before an onto ending is no place: "erre", "arra"
+      "Cseppents 5 cseppet a mintához, erre figyelj, és arra, hogy a fiola tiszta legyen."
     ])
       assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
   });
