@@ -618,6 +618,11 @@ describe("a negyedik kör: a tárolt válaszok hamis cseréinek mért okai", () 
       ["Adj naponta pár g-ot.", "no-fixed-dose"],
       ["Naponta fél g-ig adj.", "no-fixed-dose"],
       ["Pár g-ban oldd fel naponta.", "no-fixed-dose"],
+      // a small "g" is the gram whatever number word stands before it, and a capital G after a quantity word too (barracuda on #136 v2)
+      ["Naponta másfél g-ot adj.", "no-fixed-dose"],
+      ["Adj naponta húsz g-ot.", "no-fixed-dose"],
+      ["Naponta egy G-ot adj.", "no-fixed-dose"],
+      ["A g-széria napi 2 órát megy.", "no-fixed-dose"],
       ["Egy g-hoz naponta 100 liter kell.", "no-fixed-dose"],
       ["Naponta egy g elég 100 literre.", "no-fixed-dose"],
       // the bold mark no longer splits a digit from its unit (barracuda on #136)

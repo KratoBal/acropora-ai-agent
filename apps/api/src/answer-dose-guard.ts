@@ -215,12 +215,19 @@ const QUANTITY_WORD = "(?:egy|ket|ketto|harom|negy|ot|hat|het|nyolc|kilenc|tiz|f
 const EQUIPMENT_PUMP = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bpumpa\\b`, "g");
 
 /**
- * A "G-" WITH A WORD AFTER IT IS A NAME, NOT A GRAM, ONLY WITH NO QUANTITY BEFORE IT ("Reefer XXL / Peninsula / G-széria", acrobot 59095): two of the seven false
- * replacements on the 327 stored answers read the series name as the gram unit next to a litre volume or "napi". The same boundary as the pump's: with a quantity
- * word anywhere earlier in the sentence the "g-" is the unit, whatever ending follows ("Naponta fél g-ig adj", "pár g-ban", "egy g-hoz"). A first version kept a
- * closed list of case endings as the unit, and every ending missing from it leaked a dose (barracuda on #136). With a digit the gram is `OTHER_UNIT`'s and is not touched.
+ * A CAPITAL "G-" WITH A WORD AFTER IT IS A NAME, NOT A GRAM ("Reefer XXL / Peninsula / G-széria", acrobot 59095): two of the seven false replacements on the
+ * 327 stored answers read the series name as the gram unit next to a litre volume or "napi". The mark of the name is the LETTER ITSELF: the gram is
+ * always a small "g", so this is read on the raw sentence, before `fold` lowercases it, and a small "g-" stays the unit whatever follows. Two versions
+ * that read the context instead leaked (barracuda on #136): a closed list of case endings ("g-ig" missing) and then a quantity word before it
+ * ("másfél", "húsz", "tizenöt" are no `QUANTITY_WORD`). With a quantity word earlier in the sentence the capital G is the unit too; that only
+ * widens the stop side. A digit makes the gram `OTHER_UNIT`'s either way. The name's "G" becomes "§", which no pattern reads.
  */
-const SERIES_G = new RegExp(`(?<!\\b${QUANTITY_WORD}\\b.*)\\bg-(?=[a-z])`, "g");
+const SERIES_G = /\bG-(?=\p{L})/gu;
+const QUANTITY_BEFORE = new RegExp(`\\b${QUANTITY_WORD}\\b`);
+const markSeriesNames = (raw: string) =>
+  raw.replace(SERIES_G, (match, offset: number) =>
+    QUANTITY_BEFORE.test(fold(raw.slice(0, offset))) ? match : "\u00a7-"
+  );
 
 /**
  * The pack's reach or content, not a dose: a PACK NOUN only. "elég", "enough",
@@ -328,7 +335,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(raw).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
+    const s = fold(markSeriesNames(raw)).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
@@ -356,7 +363,7 @@ export function guardAnswerDoses(
     // the sentence is a dose and needs the full match (barracuda, #43)
     const dose =
       amounts.length > 0 ||
-      (UNIT_WORD.test(s.replace(EQUIPMENT_PUMP, " ").replace(SERIES_G, " ")) && (volumes.length > 0 || periods.length > 0));
+      (UNIT_WORD.test(s.replace(EQUIPMENT_PUMP, " ")) && (volumes.length > 0 || periods.length > 0));
     if (
       !dose ||
       (REACH.test(s) && periods.length === 0) ||
