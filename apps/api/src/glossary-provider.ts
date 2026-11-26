@@ -1,5 +1,5 @@
 import { GLOSSARY_INSTRUCTIONS, renderGlossaryInstructions } from "./glossary.js";
-import { loadActiveGlossary, type GlossaryQuery } from "./glossary-store.js";
+import { loadActiveGlossary, SEED_ENTRIES, type GlossaryEntry, type GlossaryQuery } from "./glossary-store.js";
 
 /**
  * A SZÓJEGYZÉK, AHOGY A PROMPT OLVASSA (Acropora OS kártya 7a5ea203, B2).
@@ -21,6 +21,8 @@ export interface GlossaryCurrent {
   version: number | null;
   /** A szójegyzék utasításszövege, ahogy a modell kapja. */
   text: string;
+  /** A lista maga, ahogy a szöveg épült belőle (B3: a csak olvasó végpont és a kérdéskészlet futtatója ezt olvassa). */
+  entries: readonly GlossaryEntry[];
   source: "stored" | "constants";
 }
 
@@ -30,7 +32,7 @@ export interface GlossaryProvider {
   invalidate(): void;
 }
 
-const CONSTANTS: GlossaryCurrent = { version: null, text: GLOSSARY_INSTRUCTIONS, source: "constants" };
+const CONSTANTS: GlossaryCurrent = { version: null, text: GLOSSARY_INSTRUCTIONS, entries: SEED_ENTRIES, source: "constants" };
 
 export const DEFAULT_TTL_MS = 60_000;
 /** Hibás olvasás után ennyit várunk az újrapróbálásig: ne verjük a hibázó adatbázist minden kéréssel. */
@@ -58,7 +60,7 @@ export function createGlossaryProvider(options: {
     try {
       const active = await loadActiveGlossary(options.db);
       const next: GlossaryCurrent = active
-        ? { version: active.version, text: renderGlossaryInstructions(active.entries), source: "stored" }
+        ? { version: active.version, text: renderGlossaryInstructions(active.entries), entries: active.entries, source: "stored" }
         : CONSTANTS;
       lastGood = next;
       served = next;

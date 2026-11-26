@@ -1133,6 +1133,7 @@ describe("--only and --repeat", () => {
     let n = 0;
     const fetchImpl = (async (url: string, init?: { body?: string }) => {
       if (url.endsWith("/health")) return new Response(JSON.stringify({ version: "v1", instructionsVersion: "i1" }));
+      if (url.endsWith("/v1/glossary")) return new Response("{}", { status: 404 });
       const body = JSON.parse(init?.body ?? "{}") as { message: string; conversationId?: string };
       asked.push(body);
       n += 1;

@@ -38,7 +38,7 @@ const EDITED = SEED_ENTRIES.map((entry) => (entry.abbreviation === "ATO" ? { ...
 describe("a szójegyzék szolgáltatója", () => {
   it("adatbázis nélkül a kód-konstans, version null", async () => {
     const provider = createGlossaryProvider({ db: null });
-    assert.deepEqual(await provider.current(), { version: null, text: GLOSSARY_INSTRUCTIONS, source: "constants" });
+    assert.deepEqual(await provider.current(), { version: null, text: GLOSSARY_INSTRUCTIONS, entries: SEED_ENTRIES, source: "constants" });
   });
 
   it("a tárolt listából épül a szöveg, a verzió számával; a seed szövege bájtra a konstans", async () => {
@@ -58,6 +58,7 @@ describe("a szójegyzék szolgáltatója", () => {
     assert.deepEqual(await createGlossaryProvider({ db: queued([[]]).db }).current(), {
       version: null,
       text: GLOSSARY_INSTRUCTIONS,
+      entries: SEED_ENTRIES,
       source: "constants"
     });
   });

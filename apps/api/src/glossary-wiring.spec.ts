@@ -23,8 +23,8 @@ before(() => {
 });
 
 const EDITED = SEED_ENTRIES.map((entry) => (entry.abbreviation === "ATO" ? { ...entry, hungarian: "más név" } : entry));
-const STORED: GlossaryCurrent = { version: 7, text: renderGlossaryInstructions(EDITED), source: "stored" };
-const CONSTANTS: GlossaryCurrent = { version: null, text: GLOSSARY_INSTRUCTIONS, source: "constants" };
+const STORED: GlossaryCurrent = { version: 7, text: renderGlossaryInstructions(EDITED), entries: EDITED, source: "stored" };
+const CONSTANTS: GlossaryCurrent = { version: null, text: GLOSSARY_INSTRUCTIONS, entries: SEED_ENTRIES, source: "constants" };
 
 const providerOf = (...answers: GlossaryCurrent[]) => {
   let calls = 0;
