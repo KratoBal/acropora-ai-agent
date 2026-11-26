@@ -682,3 +682,46 @@ describe("a tesztlépés célpontja: minden nem-edény célpont adag", () => {
       assert.deepEqual(guardAnswerDoses(answer, none), { ok: true, doseStatements: 0 }, answer);
   });
 });
+
+/*
+  A SZOROZD MEG N-TEL, HA TÉRFOGATHOZ VEZET (kártya 9ae2a149; a kérdéskészlet 2026-11-26 17:45 UTC-s futása, e224a1e8). MI PIROSÍT: az ATO-tartály méretezése
+  ("Szorozd meg 7-tel: napi 3 liter -> egy hétre kb. 21 literes tartály") adagnak számít és a vevő tartalék-mondatot kap; VAGY a szűkítés túl tág, és egy
+  újraszámolt adag ("a 100 literre szánt adagot szorozd meg 2-vel") átmegy, mert a szorzó szó nélkül az őr nem látja. A KONTROLLOK A LÉNYEG: a hamis pozitív
+  négy alakja átmegy, a hét valódi adag-alak továbbra is megáll. A karaktereket kódpontból építi, nem a forrásból: a nem törő kötőjel és a nyíl a
+  forrásban olvashatatlan lenne.
+*/
+describe("a szorzó szóval írt számítás, ha térfogatot ad", () => {
+  const none: ProductSearchOutcome = { ok: true, result: { hits: [] } };
+  const hyphen = String.fromCodePoint(0x2011);
+  const arrow = String.fromCodePoint(0x2192);
+  const approx = String.fromCodePoint(0x2248);
+
+  const mustPass: Array<[string, string]> = [
+    ["a futtatott mondat (nem törő kötőjellel és nyíllal)", `3. Szorozd meg 7${hyphen}tel: napi 3 liter ${arrow} egy hétre kb. 21 literes tartály lenne célszerű`],
+    ["sima kötőjellel és egyenlőségjellel", "Szorozd meg 7-tel: napi 3 liter = 21 liter egy hétre"],
+    ["közelítő jellel", `Szorozd meg 7-tel: napi 3 liter ${approx} 21 liter egy hétre`],
+    ["más igealakkal", `Szorozza meg 7-tel a napi 3 litert ${arrow} 21 liter`],
+  ];
+  for (const [name, sentence] of mustPass) {
+    it(`átmegy: ${name}`, () => {
+      assert.equal(guardAnswerDoses(sentence, none).ok, true, sentence);
+    });
+  }
+
+  const mustStayRed: Array<[string, string, string]> = [
+    ["a: újraszámolt adag, jel nélkül", "Hetente szorozd meg 2-vel a 100 literre szánt adagot", "per-volume-count"],
+    ["b: nyíl, de a végén nincs liter", `Hetente szorozd meg 2-vel: 100 literre napi 1 ${arrow} 2`, "per-volume-count"],
+    ["c: csepp mennyiség", `Szorozd meg 2-vel a napi 3 cseppet ${arrow} 6 csepp`, "no-fixed-dose"],
+    ["d: adott darabszám", "Szorozd meg 7-tel és adj naponta 3-at 100 literre", "given-count"],
+    ["e: adalék literben", `Adj naponta 3 liter kalkwassert, szorozd meg 7-tel ${arrow} 21 liter egy hétre`, "litre-dose"],
+    ["f: az eredmény ml", `Szorozd meg 7-tel: napi 3 ml ${arrow} 21 ml 100 literre`, "no-fixed-dose"],
+    ["g: a jel után darabszám, nem térfogat", `Szorozd meg 2-vel: napi 100 literre 1 ${arrow} 2 liter kalkwasser`, "per-volume-count"],
+  ];
+  for (const [name, sentence, rule] of mustStayRed) {
+    it(`megáll (${rule}): ${name}`, () => {
+      const result = guardAnswerDoses(sentence, none);
+      assert.equal(result.ok, false, sentence);
+      if (!result.ok) assert.equal(result.rule, rule);
+    });
+  }
+});

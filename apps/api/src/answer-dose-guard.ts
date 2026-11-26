@@ -171,6 +171,24 @@ const WORD_PRODUCT =
   /[\u00d7*]\s*\d+(?:[.,]\d+)?(?=\s*=)|(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7*](?=\s*[a-z][^=]*=)/g;
 
 /**
+ * "SZOROZD MEG N-TEL" IS ARITHMETIC TOO, WHEN IT LEADS TO A VOLUME (card 9ae2a149; the question-set run of 2026-11-26 17:45 UTC on e224a1e8): "Szorozd meg
+ * 7-tel: napi 3 liter -> egy hétre kb. 21 literes tartály lenne célszerű" sizes an ATO tank (3 litres a day, times 7 days, a 21 litre tank) and
+ * lost the answer to `per-volume-count`: the "7-tel" read as a bare count next to "napi" and a volume. The same multiplier written with a
+ * times sign ("napi 3 liter × 7 = 21 liter") already passes (`EQUATION`, `VOLUME_SUM`); this is the multiplier written as a verb phrase.
+ * IT IS TAKEN OUT ONLY WHEN THE SAME SENTENCE CARRIES A RESULT MARKER (an arrow, "=" or "≈") AND A NUMBER IN LITRES AFTER IT: the result is a
+ * volume. A recalculated dose ("Szorozd meg 2-vel a heti adagot 100 literre", "szorozd meg 2-vel: 100 literre napi 1 -> 2") has no litre
+ * result after a marker, so its count stays. The hyphen is any of the hyphens (the answer used U+2011), the verb any form of "szoroz-". The
+ * characters are built from code points, not typed: an invisible or look-alike character in the source is unreadable.
+ */
+const HYPHENS = "-" + String.fromCodePoint(0x2010) + String.fromCodePoint(0x2011);
+const RESULT_MARKERS = "=" + String.fromCodePoint(0x2248) + String.fromCodePoint(0x2192);
+const WORD_MULTIPLY = new RegExp(
+  `\\bszoroz\\w*\\s+(?:meg\\s+)?\\d+(?:[.,]\\d+)?[${HYPHENS}](?:tel|val|vel|szel|szal)\\b` +
+    `(?=[^${RESULT_MARKERS}]*[${RESULT_MARKERS}]>?[^0-9]*\\d+(?:[.,]\\d+)?\\s*(?:l|ltr|liter\\w*|litre\\w*)(?![a-z]))`,
+  "g"
+);
+
+/**
  * THE OPERANDS OF A SUM THAT COMES OUT IN LITRES ARE WATER VOLUMES, NOT A COUNT ("kb. 14 + tartalék = 18–20 liter lenne a kényelmes heti méret"): the cron
  * guard's run of 2026-11-20 21:45 UTC lost an answer on the size of a top-off reservoir to it, the "14" read as a bare count next to "napi 2 liter" and "heti"
  * (acrobot 58977). A number followed by one or more "+ <number or word>" or "× <number>" terms and then "= <number or range> liter" is taken out; the
@@ -354,7 +372,7 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(markSeriesNames(raw)).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
+    const s = fold(markSeriesNames(raw)).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(WORD_MULTIPLY, " ").replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
