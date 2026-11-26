@@ -1,5 +1,7 @@
 import { Pool } from "pg";
 
+import { seedGlossary } from "./glossary-store.js";
+
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL
 });
@@ -186,6 +188,31 @@ export const SCHEMA_SQL = `
       read_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
 
+    /*
+     * The aquarium glossary as stored, versioned data (card 7a5ea203, part B; glossary-store.ts). A version is the WHOLE list, append-only: a
+     * restore is a copy of an old version written as a NEW one, and the active list is the highest version. The seed writes version 1 from
+     * the code constants when no version exists. 'position' keeps the order the prompt lists them in. 'approved' only marks: it filters
+     * nothing in the prompt (acrobot 63253).
+     */
+    CREATE TABLE IF NOT EXISTS glossary_versions (
+      version INTEGER PRIMARY KEY CHECK (version > 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      created_by TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS glossary_entries (
+      version INTEGER NOT NULL REFERENCES glossary_versions(version),
+      position INTEGER NOT NULL CHECK (position > 0),
+      abbreviation TEXT NOT NULL CHECK (abbreviation <> ''),
+      original TEXT NOT NULL CHECK (original <> ''),
+      language TEXT NOT NULL CHECK (language IN ('en', 'de')),
+      hungarian TEXT NOT NULL CHECK (hungarian <> ''),
+      approved BOOLEAN NOT NULL,
+      PRIMARY KEY (version, abbreviation),
+      UNIQUE (version, position)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_conversations_client_key
       ON conversations(client_key);
 
@@ -196,6 +223,17 @@ export const SCHEMA_SQL = `
       ON answer_ratings(message_id);
 `;
 
-export async function initializeDatabase(): Promise<void> {
+export async function initializeDatabase(
+  log: { error(details: unknown, message: string): void } = { error: (details, message) => console.error(message, details) }
+): Promise<void> {
   await pool.query(SCHEMA_SQL);
+  /*
+   * The glossary's first version, from the code constants, when none exists. NOT fatal: the prompt falls back to the constants
+   * (glossary.ts), so a failed seed leaves the language rule in place and must not keep the service down.
+   */
+  try {
+    await seedGlossary(pool);
+  } catch (error) {
+    log.error({ error: error instanceof Error ? error.message : String(error) }, "glossary seed failed; the code constants stay in use");
+  }
 }
