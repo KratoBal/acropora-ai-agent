@@ -1,5 +1,6 @@
 import {
   GLOSSARY_LIMITS,
+  hasControlCharacter,
   listGlossaryVersions,
   loadGlossaryVersionDetail,
   saveGlossaryVersion,
@@ -53,11 +54,12 @@ export function parseGlossarySave(body: unknown): { ok: true; value: GlossarySav
     return { ok: false, message: "az expectedVersion pozitív egész vagy null" };
   }
   const createdBy = typeof body.createdBy === "string" ? body.createdBy.trim() : "";
-  if (createdBy === "" || createdBy.length > GLOSSARY_LIMITS.createdBy) return { ok: false, message: "a createdBy kötelező szöveg" };
+  if (createdBy === "" || createdBy.length > GLOSSARY_LIMITS.createdBy || hasControlCharacter(createdBy)) return { ok: false, message: "a createdBy kötelező, egysoros szöveg" };
   const noteRaw = body.note ?? "";
   if (typeof noteRaw !== "string") return { ok: false, message: "a note szöveg legyen" };
   const note = noteRaw.trim();
   if (note.length > GLOSSARY_LIMITS.note) return { ok: false, message: `a note legfeljebb ${GLOSSARY_LIMITS.note} karakter` };
+  if (hasControlCharacter(note)) return { ok: false, message: "a note egysoros szöveg legyen" };
   if (!Array.isArray(body.entries)) return { ok: false, message: "az entries lista legyen" };
   const entryKeys = new Set(["abbreviation", "original", "language", "hungarian", "approved"]);
   const entries: GlossaryEntry[] = [];

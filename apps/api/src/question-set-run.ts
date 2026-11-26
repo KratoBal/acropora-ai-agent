@@ -123,7 +123,9 @@ export interface AbbreviationCheck {
 
 /** A letter or digit next to it means it is part of another word ("ATOM" is not an ATO). */
 export function checkAbbreviation(answer: string, entry: Abbreviation): AbbreviationCheck {
-  const token = new RegExp(`(?<![\\p{L}\\p{N}])${entry.abbreviation}(?![\\p{L}\\p{N}])`, "gu");
+  // the abbreviation is DATA now (the server's stored list): matched literally, never as a pattern (a stored "A+B" or "A.B" must not widen or break the match)
+  const literal = entry.abbreviation.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&");
+  const token = new RegExp(`(?<![\\p{L}\\p{N}])${literal}(?![\\p{L}\\p{N}])`, "gu");
   const matches = [...answer.matchAll(token)];
   const original = lower(entry.original);
   const first = matches[0];

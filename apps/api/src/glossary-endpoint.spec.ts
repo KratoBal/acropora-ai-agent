@@ -163,3 +163,18 @@ describe("main a szerver szójegyzékével", () => {
     assert.equal(report.results.find((r) => r.id === "abbreviation-expanded")!.verdict, "fail");
   });
 });
+
+describe("a tárolt rövidítés szó szerint illeszkedik (C1b)", () => {
+  it("a pont és a plusz nem minta: nem szélesíti és nem töri el az illesztést", async () => {
+    const { checkAbbreviation } = await import("./question-set-run.js");
+    const dotted = { abbreviation: "A.B", original: "Alpha Beta", language: "en" as const, hungarian: "x" };
+    // "AxB" would match the pattern A.B, the literal never
+    assert.equal(checkAbbreviation("Az AxB (Alpha Beta) nem az.", dotted).occurrences, 0);
+    assert.equal(checkAbbreviation("Az A.B (Alpha Beta) igen.", dotted).occurrences, 1);
+    const plus = { abbreviation: "C++", original: "C plus plus", language: "en" as const, hungarian: "x" };
+    assert.doesNotThrow(() => checkAbbreviation("C++ (C plus plus)", plus));
+    assert.equal(checkAbbreviation("A C++ (C plus plus) jó.", plus).firstExpanded, true);
+    const bracket = { abbreviation: "[X]", original: "Ex", language: "en" as const, hungarian: "x" };
+    assert.doesNotThrow(() => checkAbbreviation("[X] (Ex)", bracket));
+  });
+});

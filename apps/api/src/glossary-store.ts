@@ -125,11 +125,22 @@ export interface GlossaryTransactionPool {
  */
 export const GLOSSARY_LIMITS = { entries: 100, abbreviation: 16, original: 120, hungarian: 200, note: 300, createdBy: 128 } as const;
 
+/**
+ * EGYSOROS, VEZÉRLŐKARAKTER NÉLKÜL (barracuda, #149): a mezők szövege VÁLTOZATLANUL a modell utasításába kerül, tehát egy sortörés vagy egy
+ * vezérlő- (és láthatatlan, irányváltó) karakter a magyar névben széttehetné a renderelt listát, és a szerkesztő szövege utasításnak látszana.
+ * Tab, sortörés, a C0 és C1 vezérlők, a nulla szélességű jelek, a sor- és bekezdés-elválasztó és az írásirány-vezérlők tiltottak.
+ */
+export const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/;
+export const hasControlCharacter = (text: string): boolean => CONTROL_CHARACTERS.test(text);
+
 export function validateGlossaryEntries(entries: readonly GlossaryEntry[]): string | null {
   if (entries.length === 0) return "a szójegyzék nem lehet üres";
   if (entries.length > GLOSSARY_LIMITS.entries) return `a szójegyzék legfeljebb ${GLOSSARY_LIMITS.entries} sor lehet`;
   const seen = new Set<string>();
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
+    if (hasControlCharacter(entry.abbreviation) || hasControlCharacter(entry.original) || hasControlCharacter(entry.hungarian)) {
+      return `a(z) ${index + 1}. sor szövege egysoros, vezérlőkarakter nélküli legyen`;
+    }
     if (
       entry.abbreviation.length > GLOSSARY_LIMITS.abbreviation ||
       entry.original.length > GLOSSARY_LIMITS.original ||
