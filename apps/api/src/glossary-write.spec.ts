@@ -199,3 +199,43 @@ describe("a szójegyzék útvonalai", () => {
     assert.ok(!JSON.stringify(second.json()).includes("glossary_versions"));
   });
 });
+
+/*
+  EGYSOROS SZÖVEG (barracuda, #149; C1b). What turns it red: a newline, a tab, a control, a zero-width or a bidi character accepted in a field
+  that goes into the model's instructions; the same in the note or the saver's name; the runner reading a stored abbreviation as a PATTERN
+  (a "." or "+" widening or breaking the match). Ordinary Hungarian text with accents, hyphens, commas and parentheses is still accepted.
+*/
+describe("egysoros, vezérlőkarakter nélküli szöveg", () => {
+  const bad = ["\n", "\r\n", "\t", "\u0000", "\u0085", "\u200b", "\u2028", "\u2029", "\u202e", "\u2066", "\ufeff"];
+
+  it("a három szöveges mező mindegyikében elutasítja", () => {
+    for (const character of bad) {
+      for (const field of ["abbreviation", "original", "hungarian"] as const) {
+        const entry = { ...SEED_ENTRIES[0]!, [field]: `ab${character}cd` };
+        assert.match(validateGlossaryEntries([entry]) ?? "", /egysoros/, `${JSON.stringify(character)} in ${field}`);
+      }
+    }
+  });
+
+  it("a magyar ékezetes szöveget, kötőjelet, vesszőt, zárójelet és idézőjelet elfogadja (kontroll)", () => {
+    const entry = { ...SEED_ENTRIES[0]!, hungarian: "induktív csatolású plazma, ICP-OES (vízelemzés) „példa”" };
+    assert.equal(validateGlossaryEntries([entry]), null);
+    assert.equal(validateGlossaryEntries(SEED_ENTRIES), null);
+  });
+
+  it("a törzs note és createdBy mezőjében is", () => {
+    for (const character of ["\n", "\u202e"]) {
+      assert.equal(parseGlossarySave(body({ note: `a${character}b` })).ok, false);
+      assert.equal(parseGlossarySave(body({ createdBy: `u${character}1` })).ok, false);
+    }
+    assert.equal(parseGlossarySave(body({ note: "ATO magyar neve, javítva (második kör)" })).ok, true);
+  });
+
+  it("az útvonal 400, ha a magyar névben sortörés van, és nem ír", async () => {
+    const { admin, saved } = fakeAdmin();
+    const entries = SEED_ENTRIES.map((entry) => ({ ...entry, hungarian: entry.abbreviation === "RO" ? "fordított\nozmózis" : entry.hungarian }));
+    const response = await call({ admin, method: "PUT", url: "/v1/glossary", payload: body({ entries }) });
+    assert.equal(response.statusCode, 400);
+    assert.equal(saved.length, 0);
+  });
+});
