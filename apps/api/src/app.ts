@@ -32,6 +32,7 @@ import {
 import { CHAT_DEADLINE_ERROR, chatDeadlineMs, type ChatDeadline, withChatDeadline } from "./chat-deadline.js";
 import { ANSWER_ORDER_INSTRUCTIONS } from "./answer-order.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
+import { createGlossaryProvider, type GlossaryProvider } from "./glossary-provider.js";
 import { instructionsVersion } from "./instructions-version.js";
 import { LIVE_DATA_INSTRUCTIONS } from "./live-data.js";
 import { FALSE_PREMISE_INSTRUCTIONS } from "./answer-false-premise.js";
@@ -162,18 +163,29 @@ const ASSISTANT_INSTRUCTIONS =
  * purchase-recommendation rule (card 355f7286), the non-existent-product rule (cards c3f7aa01, 48d8229a, e2a5c8e6) and the hard-coral species-name rule (card 2aa6c8fb). All unconditional; the version stored with each model answer is
  * taken from exactly these.
  */
-const FIXED_INSTRUCTIONS = [
-  ASSISTANT_INSTRUCTIONS,
-  ANSWER_ORDER_INSTRUCTIONS,
-  LIVE_DATA_INSTRUCTIONS,
-  GLOSSARY_INSTRUCTIONS,
-  RECOMMENDATION_INSTRUCTIONS,
-  FALSE_PREMISE_INSTRUCTIONS,
-  SPECIES_NAME_INSTRUCTIONS
-] as const;
+function fixedInstructions(glossary: string = GLOSSARY_INSTRUCTIONS): readonly string[] {
+  return [
+    ASSISTANT_INSTRUCTIONS,
+    ANSWER_ORDER_INSTRUCTIONS,
+    LIVE_DATA_INSTRUCTIONS,
+    glossary,
+    RECOMMENDATION_INSTRUCTIONS,
+    FALSE_PREMISE_INSTRUCTIONS,
+    SPECIES_NAME_INSTRUCTIONS
+  ];
+}
 
-/** Stored with every model answer (`messages.instructions_version`), see instructions-version.ts. */
-export const INSTRUCTIONS_VERSION = instructionsVersion(FIXED_INSTRUCTIONS);
+/**
+ * The version of the fixed text WITH the glossary the model is told (card 7a5ea203, B2): the glossary is stored, versioned data, so the
+ * text (and its hash) follow the stored list, not only the commit. Stored with every model answer (`messages.instructions_version`), see
+ * instructions-version.ts.
+ */
+export function instructionsVersionOf(glossary: string): string {
+  return instructionsVersion(fixedInstructions(glossary));
+}
+
+/** The version with the code-constant glossary: what a service with no stored list (or no database) answers under. */
+export const INSTRUCTIONS_VERSION = instructionsVersionOf(GLOSSARY_INSTRUCTIONS);
 
 
 /**
@@ -194,13 +206,15 @@ export function chatInstructions(
     /** The contact request is on (slice 4c): the model is told to ask for the contact instead of saying a colleague cannot be reached. */
     contactRequestActive?: boolean;
     linkRule?: LinkRuleMode;
+    /** The glossary text the model is told (the stored list, B2); absent: the code constant. */
+    glossary?: string;
   } = {}
 ): string {
   return [
     // FELTETEL NELKUL, es a helye sem veletlen: az elo adat es a szojegyzek nyelvi
     // szabaly, tehat a szemely-blokk mellett all, NEM a termekkontextus agai
     // kozott. Ott egy uzemzavar csendben elvinne oket is.
-    ...FIXED_INSTRUCTIONS,
+    ...fixedInstructions(options.glossary),
     // R1 of the link rule (card 9d060f5c): told under `log` and `enforce`, absent
     // under `off`, so the default keeps the prompt what it was.
     ...((options.linkRule ?? "off") === "off" ? [] : [LINK_RULE_INSTRUCTIONS]),
@@ -288,6 +302,7 @@ export interface ConversationStore {
     usage?: MessageUsage;
     localKind?: "contact_offer" | "contact_ask";
     instructionsVersion?: string;
+    glossaryVersion?: number | null;
   }): Promise<string>;
   setMessageOutcome(messageId: string, outcome: string): Promise<void>;
   /** The stored customer message with its contact replaced, after the OS recorded the request (slice 4c). */
@@ -402,6 +417,11 @@ export interface AppDependencies {
    * could not be reached by any test.
    */
   resolveCustomer?: (rawCustomerId: unknown) => Promise<CustomerContextResult>;
+  /**
+   * Where the glossary text comes from (card 7a5ea203, B2). Substitutable so a test can serve a stored list, a failing read or the
+   * constants through the real routes. Default: the stored list from the database when one is configured, else the code constants.
+   */
+  glossary?: GlossaryProvider;
 }
 
 /** The longest client key kept (the caller's key is stored with every conversation). */
@@ -433,6 +453,17 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const conversations =
     dependencies.conversations ?? databaseConversationStore;
   const ratings = dependencies.ratings ?? databaseRatingStore;
+  const glossary =
+    dependencies.glossary ??
+    createGlossaryProvider({
+      // no database configured (a test, a process started by hand): the code constants
+      db: process.env.DATABASE_URL ? pool : null,
+      onError: (error) =>
+        app.log.warn(
+          { error: error instanceof Error ? error.message : String(error) },
+          "the stored glossary could not be read; the last good list or the code constants are in use"
+        )
+    });
   const resolveCustomer =
     dependencies.resolveCustomer ??
     ((rawCustomerId: unknown) => resolveCustomerContext(rawCustomerId));
@@ -624,6 +655,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
 
   app.get("/health", async () => {
     await databaseCheck();
+    // never throws: a failed read serves the last good list or the code constants (glossary-provider.ts)
+    const glossaryNow = await glossary.current();
 
     return {
       ok: true,
@@ -657,7 +690,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
        * (`messages.instructions_version`). The question-set runner reads it here, from the server it measures, and not
        * from its own build.
        */
-      instructionsVersion: INSTRUCTIONS_VERSION,
+      instructionsVersion: instructionsVersionOf(glossaryNow.text),
+      /**
+       * The stored glossary version the model is told (card 7a5ea203, B2); null when the code constants serve. The question-set gate
+       * runs when this or the instructions version moves, so a glossary edit starts a measurement with no manual step.
+       */
+      glossaryVersion: glossaryNow.version,
       /**
        * Whether this instance may name the dose guard's sentence to the question-set runner (barracuda, #103): a
        * boolean, so "never on a production service" is a measurable claim, not a promise.
@@ -1058,13 +1096,18 @@ export function buildApp(dependencies: AppDependencies = {}) {
     }
 
     try {
+      // ONE reading per request, BEFORE the call: the version stored with the answer and returned to the caller is the list the model
+      // was told, not whatever the cache holds a second later (card 7a5ea203, B2).
+      const glossaryNow = await glossary.current();
+      const answerInstructionsVersion = instructionsVersionOf(glossaryNow.text);
       const modelStartedAt = Date.now();
       const response = await openai.responses.create({
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         instructions: chatInstructions(resolvedCustomer, productContext, {
           colleagueOfferActive: offerActive,
           contactRequestActive: contactFlow,
-          linkRule
+          linkRule,
+          glossary: glossaryNow.text
         }),
         input: modelInput,
         store: false
@@ -1157,7 +1200,8 @@ export function buildApp(dependencies: AppDependencies = {}) {
         content: answerText,
         model: process.env.OPENAI_MODEL ?? "gpt-5.1",
         usage: readUsage(response),
-        instructionsVersion: INSTRUCTIONS_VERSION,
+        instructionsVersion: answerInstructionsVersion,
+        glossaryVersion: glossaryNow.version,
         ...(offerColleague && contactFlow
           ? { localKind: CONTACT_OFFER_KIND }
           : contactFlow && previousRow?.role === "assistant" && previousRow.localKind === CONTACT_OFFER_KIND
@@ -1181,7 +1225,9 @@ export function buildApp(dependencies: AppDependencies = {}) {
         messageId: answerMessageId,
         answer: answerText,
         /** The language rules this answer was made under, the value stored on its row (card 7a5ea203). A local answer has none. */
-        instructionsVersion: INSTRUCTIONS_VERSION,
+        instructionsVersion: answerInstructionsVersion,
+        /** The stored glossary version this answer was made under; null: the code constants (card 7a5ea203, B2). */
+        glossaryVersion: glossaryNow.version,
         /** Why the answer was replaced, if it was: the judging surface reads it. */
         doseGuard: doseGuard.ok ? null : doseGuard.reason,
         /** Which reading of the guard found it (t-20261116-adagolasi-or-szukites): the question-set run reports it. */

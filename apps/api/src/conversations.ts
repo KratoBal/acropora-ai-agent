@@ -80,6 +80,8 @@ export async function saveMessage(input: {
   localKind?: "contact_offer" | "contact_ask";
   /** The fixed instruction text's version, on a model answer only (see instructions-version.ts). */
   instructionsVersion?: string;
+  /** The stored glossary version the model was told (see db.ts); null or absent when the code constants served. */
+  glossaryVersion?: number | null;
 }): Promise<string> {
   const inserted = await pool.query<{ id: string }>(
     `
@@ -92,9 +94,10 @@ export async function saveMessage(input: {
         output_tokens,
         total_tokens,
         local_kind,
-        instructions_version
+        instructions_version,
+        glossary_version
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING id
     `,
     [
@@ -106,7 +109,8 @@ export async function saveMessage(input: {
       input.usage?.outputTokens ?? null,
       input.usage?.totalTokens ?? null,
       input.localKind ?? null,
-      input.instructionsVersion ?? null
+      input.instructionsVersion ?? null,
+      input.glossaryVersion ?? null
     ]
   );
 
