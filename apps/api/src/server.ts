@@ -5,7 +5,7 @@ import { startRetention } from "./retention.js";
 const app = buildApp();
 
 async function start(): Promise<void> {
-  await initializeDatabase();
+  await initializeDatabase(app.log);
 
   // The daily retention job: off unless AI_CHAT_RETENTION is exactly `true` (see retention.ts).
   startRetention(pool, app.log);
