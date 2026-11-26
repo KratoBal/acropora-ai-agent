@@ -123,4 +123,99 @@ describe("the glossary store in Postgres", { skip: url ? false : "AI_GLOSSARY_DB
       )
     );
   });
+
+  describe("history, the base version and who approved (C1)", () => {
+    const toEntries = (list: readonly import("./glossary-store.js").GlossaryEntry[]) => list.map((entry) => ({ ...entry }));
+
+    before(async () => {
+      await clear();
+      assert.equal(await store.seedGlossary(db.pool), true);
+    });
+
+    it("the seeded approved rows say 'seed' with the seed's time; the others have no approver", async () => {
+      const detail = await store.loadGlossaryVersionDetail(db.pool, 1);
+      assert.ok(detail);
+      assert.equal(detail.active, true);
+      assert.equal(detail.createdBy, "seed");
+      for (const entry of detail.entries) {
+        if (entry.approved) {
+          assert.equal(entry.approvedBy, "seed");
+          assert.equal(entry.approvedAt, detail.createdAt);
+        } else {
+          assert.equal(entry.approvedBy, null);
+          assert.equal(entry.approvedAt, null);
+        }
+      }
+    });
+
+    it("a save from a stale base writes nothing and says which version is active; null is a stale base too", async () => {
+      await assert.rejects(store.saveGlossaryVersion(db.pool, toEntries(store.SEED_ENTRIES), "u", "x", 7), (error: unknown) => {
+        assert.ok(error instanceof store.GlossaryVersionConflict);
+        assert.equal(error.activeVersion, 1);
+        return true;
+      });
+      await assert.rejects(store.saveGlossaryVersion(db.pool, toEntries(store.SEED_ENTRIES), "u", "x", null), store.GlossaryVersionConflict);
+      const count = await db.pool.query("SELECT COUNT(*)::int AS n FROM glossary_versions");
+      assert.equal(count.rows[0].n, 1);
+    });
+
+    it("an unchanged approved row keeps its approver and time; a new approval is the saver's; a changed approved text is the saver's too", async () => {
+      const afterSeed = (await store.loadGlossaryVersionDetail(db.pool, 1))!;
+      const atoBefore = afterSeed.entries.find((e) => e.abbreviation === "ATO")!;
+
+      // v2: ICP gets approved by user-9; everything else as it was
+      const v2 = toEntries(store.SEED_ENTRIES).map((entry) => (entry.abbreviation === "ICP" ? { ...entry, approved: true } : entry));
+      assert.equal(await store.saveGlossaryVersion(db.pool, v2, "user-9", "ICP jóváhagyva", 1), 2);
+      const d2 = (await store.loadGlossaryVersionDetail(db.pool, 2))!;
+      const ato2 = d2.entries.find((e) => e.abbreviation === "ATO")!;
+      const icp2 = d2.entries.find((e) => e.abbreviation === "ICP")!;
+      const ro2 = d2.entries.find((e) => e.abbreviation === "RO")!;
+      assert.deepEqual([ato2.approvedBy, ato2.approvedAt], [atoBefore.approvedBy, atoBefore.approvedAt]);
+      assert.equal(icp2.approvedBy, "user-9");
+      assert.ok(icp2.approvedAt);
+      assert.deepEqual([ro2.approvedBy, ro2.approvedAt], [null, null]);
+
+      // v3: ATO's Hungarian name edited (still marked approved): the new text is approved by the saver, ICP keeps user-9
+      const v3 = v2.map((entry) => (entry.abbreviation === "ATO" ? { ...entry, hungarian: "más név" } : entry));
+      assert.equal(await store.saveGlossaryVersion(db.pool, v3, "user-2", "ATO név", 2), 3);
+      const d3 = (await store.loadGlossaryVersionDetail(db.pool, 3))!;
+      assert.equal(d3.entries.find((e) => e.abbreviation === "ATO")!.approvedBy, "user-2");
+      assert.deepEqual(
+        [d3.entries.find((e) => e.abbreviation === "ICP")!.approvedBy, d3.entries.find((e) => e.abbreviation === "ICP")!.approvedAt],
+        [icp2.approvedBy, icp2.approvedAt]
+      );
+
+      // v4: ICP un-approved: no approver; v5: approved again: a NEW approval by the saver
+      const v4 = v3.map((entry) => (entry.abbreviation === "ICP" ? { ...entry, approved: false } : entry));
+      assert.equal(await store.saveGlossaryVersion(db.pool, v4, "user-3", "ICP vissza", 3), 4);
+      const icp4 = (await store.loadGlossaryVersionDetail(db.pool, 4))!.entries.find((e) => e.abbreviation === "ICP")!;
+      assert.deepEqual([icp4.approved, icp4.approvedBy, icp4.approvedAt], [false, null, null]);
+      const v5 = v4.map((entry) => (entry.abbreviation === "ICP" ? { ...entry, approved: true } : entry));
+      assert.equal(await store.saveGlossaryVersion(db.pool, v5, "user-4", "ICP újra", 4), 5);
+      assert.equal((await store.loadGlossaryVersionDetail(db.pool, 5))!.entries.find((e) => e.abbreviation === "ICP")!.approvedBy, "user-4");
+    });
+
+    it("the list is newest first, with the saver, note, row count and exactly one active", async () => {
+      const list = await store.listGlossaryVersions(db.pool);
+      assert.deepEqual(list.map((v) => v.version), [5, 4, 3, 2, 1]);
+      assert.deepEqual(list.map((v) => v.active), [true, false, false, false, false]);
+      assert.equal(list[0]!.createdBy, "user-4");
+      assert.equal(list[0]!.note, "ICP újra");
+      assert.ok(list.every((v) => v.entryCount === 6));
+    });
+
+    it("an unknown version reads as null", async () => {
+      assert.equal(await store.loadGlossaryVersionDetail(db.pool, 99), null);
+    });
+
+    it("the schema run backfills an empty approver on a seeded row, and only that", async () => {
+      await db.pool.query("UPDATE glossary_entries SET approved_by = NULL, approved_at = NULL WHERE version IN (1, 2)");
+      await db.pool.query(db.SCHEMA_SQL);
+      const v1 = (await store.loadGlossaryVersionDetail(db.pool, 1))!;
+      assert.equal(v1.entries.find((e) => e.abbreviation === "ATO")!.approvedBy, "seed");
+      // version 2 was saved by a user, not seeded: its approver stays empty (nothing is invented)
+      const v2 = (await store.loadGlossaryVersionDetail(db.pool, 2))!;
+      assert.equal(v2.entries.find((e) => e.abbreviation === "ATO")!.approvedBy, null);
+    });
+  });
 });

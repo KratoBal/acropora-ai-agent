@@ -220,6 +220,17 @@ export const SCHEMA_SQL = `
       UNIQUE (version, position)
     );
 
+    /*
+     * WHO approved a glossary row and when (acrobot 63288): written at save time on the server (glossary-store.ts), shown by the editor next
+     * to the mark. A row seeded as approved says 'seed'. The backfill runs on every start and only fills what is still empty.
+     */
+    ALTER TABLE glossary_entries ADD COLUMN IF NOT EXISTS approved_by TEXT;
+    ALTER TABLE glossary_entries ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+    UPDATE glossary_entries e
+      SET approved_by = 'seed', approved_at = v.created_at
+      FROM glossary_versions v
+      WHERE v.version = e.version AND e.approved AND e.approved_by IS NULL AND v.created_by = 'seed';
+
     CREATE INDEX IF NOT EXISTS idx_conversations_client_key
       ON conversations(client_key);
 

@@ -51,8 +51,9 @@ export const SEED_SQL = `
     ON CONFLICT (version) DO NOTHING
     RETURNING version
   )
-  INSERT INTO glossary_entries (version, position, abbreviation, original, language, hungarian, approved)
-  SELECT new_version.version, e.position, e.abbreviation, e.original, e.language, e.hungarian, e.approved
+  INSERT INTO glossary_entries (version, position, abbreviation, original, language, hungarian, approved, approved_by, approved_at)
+  SELECT new_version.version, e.position, e.abbreviation, e.original, e.language, e.hungarian, e.approved,
+    CASE WHEN e.approved THEN 'seed' END, CASE WHEN e.approved THEN NOW() END
   FROM new_version,
     unnest($2::int[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[])
       AS e(position, abbreviation, original, language, hungarian, approved)
@@ -122,10 +123,20 @@ export interface GlossaryTransactionPool {
  * Egy lista érvényessége, MIELŐTT bármi íródna (a séma kényszerei ugyanezt tartják, de egy ellenőrizetlen lista félúton, tranzakció közben
  * bukna el, és a hibaüzenet a sémáé lenne, nem a szerkesztőé). Üres lista nincs: egy üres verzió elvinné a szójegyzéket.
  */
+export const GLOSSARY_LIMITS = { entries: 100, abbreviation: 16, original: 120, hungarian: 200, note: 300, createdBy: 128 } as const;
+
 export function validateGlossaryEntries(entries: readonly GlossaryEntry[]): string | null {
   if (entries.length === 0) return "a szójegyzék nem lehet üres";
+  if (entries.length > GLOSSARY_LIMITS.entries) return `a szójegyzék legfeljebb ${GLOSSARY_LIMITS.entries} sor lehet`;
   const seen = new Set<string>();
   for (const entry of entries) {
+    if (
+      entry.abbreviation.length > GLOSSARY_LIMITS.abbreviation ||
+      entry.original.length > GLOSSARY_LIMITS.original ||
+      entry.hungarian.length > GLOSSARY_LIMITS.hungarian
+    ) {
+      return `a(z) "${entry.abbreviation.slice(0, GLOSSARY_LIMITS.abbreviation)}" sor szövege túl hosszú`;
+    }
     if (!entry.abbreviation.trim() || !entry.original.trim() || !entry.hungarian.trim()) {
       return `a(z) "${entry.abbreviation}" sorban üres szöveg van`;
     }
@@ -136,16 +147,33 @@ export function validateGlossaryEntries(entries: readonly GlossaryEntry[]): stri
   return null;
 }
 
+/** A mentés a megadott alapverzió ellenére nem fut: közben más mentett (nincs elveszett frissítés). */
+export class GlossaryVersionConflict extends Error {
+  constructor(readonly activeVersion: number | null) {
+    super(`the glossary moved: the active version is ${activeVersion ?? "none"}`);
+    this.name = "GlossaryVersionConflict";
+  }
+}
+
 /**
  * ÚJ VERZIÓ, EGY TRANZAKCIÓBAN: a verzió-sor és a bejegyzései együtt íródnak, vagy semmi (barracuda, #146). Egy félbehagyott írás különben egy
  * bejegyzés nélküli legmagasabb verziót hagyna, az olvasás azt üresnek venné, és a szójegyzék eltűnne a promptból. Az új szám a legnagyobb +1,
  * a két egyszerre író sorba áll egy tábla-zárolásnál. Visszaadja az új verzió számát; érvénytelen listára dob, és nem ír.
+ *
+ * `expectedVersion` (C1): ha meg van adva (szám, vagy `null` = "még nincs tárolt verzió"), és NEM az aktív verzió, a mentés a zárolás alatt
+ * `GlossaryVersionConflict`-ot dob, és nem ír: a szerkesztő így nem írhat felül egy közben mentett listát. Megadatlan: nincs ellenőrzés.
+ *
+ * A JÓVÁHAGYÁS KINEK ÉS MIKOR (acrobot 63288): soronként `approved_by` és `approved_at`, MENTÉSKOR számolva a szerveren. Ha a sor az előző
+ * aktív verzióban is jóváhagyott volt, és a magyar neve ugyanaz, az előző jóváhagyás öröklődik; ha most lett jóváhagyott, vagy a jóváhagyott
+ * sor magyar neve megváltozott (az új szöveget senki nem hagyta jóvá), az új jóváhagyó a mentő (`createdBy`), az idő a mostani. Nem jóváhagyott
+ * sor: nincs jóváhagyó.
  */
 export async function saveGlossaryVersion(
   pool: GlossaryTransactionPool,
   entries: readonly GlossaryEntry[],
   createdBy: string,
-  note: string
+  note: string,
+  expectedVersion?: number | null
 ): Promise<number> {
   const problem = validateGlossaryEntries(entries);
   if (problem) throw new Error(problem);
@@ -153,15 +181,37 @@ export async function saveGlossaryVersion(
   try {
     await client.query("BEGIN");
     await client.query("LOCK TABLE glossary_versions IN SHARE ROW EXCLUSIVE MODE");
-    const next = await client.query("SELECT COALESCE(MAX(version), 0) + 1 AS version FROM glossary_versions");
-    const version = Number(next.rows[0]?.version);
+    const active = await client.query("SELECT MAX(version) AS version FROM glossary_versions");
+    const activeVersion = active.rows[0]?.version === null || active.rows[0]?.version === undefined ? null : Number(active.rows[0].version);
+    if (expectedVersion !== undefined && expectedVersion !== activeVersion) throw new GlossaryVersionConflict(activeVersion);
+    const version = (activeVersion ?? 0) + 1;
+    const previous = new Map<string, { hungarian: string; approvedBy: string | null; approvedAt: Date | null }>();
+    if (activeVersion !== null) {
+      const rows = await client.query(
+        "SELECT abbreviation, hungarian, approved, approved_by, approved_at FROM glossary_entries WHERE version = $1 AND approved",
+        [activeVersion]
+      );
+      for (const row of rows.rows) {
+        previous.set(String(row.abbreviation), {
+          hungarian: String(row.hungarian),
+          approvedBy: typeof row.approved_by === "string" ? row.approved_by : null,
+          approvedAt: row.approved_at instanceof Date ? row.approved_at : null
+        });
+      }
+    }
+    const inherited = entries.map((entry) => {
+      const before = previous.get(entry.abbreviation);
+      return entry.approved && before && before.hungarian === entry.hungarian && before.approvedBy !== null ? before : null;
+    });
     await client.query("INSERT INTO glossary_versions (version, created_by, note) VALUES ($1, $2, $3)", [version, createdBy, note]);
     await client.query(
       `
-        INSERT INTO glossary_entries (version, position, abbreviation, original, language, hungarian, approved)
-        SELECT $1, e.position, e.abbreviation, e.original, e.language, e.hungarian, e.approved
-        FROM unnest($2::int[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[])
-          AS e(position, abbreviation, original, language, hungarian, approved)
+        INSERT INTO glossary_entries (version, position, abbreviation, original, language, hungarian, approved, approved_by, approved_at)
+        SELECT $1, e.position, e.abbreviation, e.original, e.language, e.hungarian, e.approved,
+          CASE WHEN e.approved THEN COALESCE(e.approved_by, $8) END,
+          CASE WHEN e.approved THEN COALESCE(e.approved_at, NOW()) END
+        FROM unnest($2::int[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[], $9::text[], $10::timestamptz[])
+          AS e(position, abbreviation, original, language, hungarian, approved, approved_by, approved_at)
       `,
       [
         version,
@@ -170,7 +220,10 @@ export async function saveGlossaryVersion(
         entries.map((entry) => entry.original),
         entries.map((entry) => entry.language),
         entries.map((entry) => entry.hungarian),
-        entries.map((entry) => entry.approved)
+        entries.map((entry) => entry.approved),
+        createdBy,
+        inherited.map((before) => before?.approvedBy ?? null),
+        inherited.map((before) => before?.approvedAt ?? null)
       ]
     );
     await client.query("COMMIT");
@@ -185,4 +238,93 @@ export async function saveGlossaryVersion(
   } finally {
     client.release();
   }
+}
+
+/** Egy tárolt verzió fejléce a listához: ki mentette, mikor, mi a megjegyzés. */
+export interface GlossaryVersionInfo {
+  version: number;
+  createdAt: string;
+  createdBy: string;
+  note: string;
+  entryCount: number;
+  active: boolean;
+}
+
+export const LIST_VERSIONS_SQL = `
+  SELECT v.version, v.created_at, v.created_by, v.note, COUNT(e.abbreviation)::int AS entry_count,
+    v.version = (SELECT MAX(version) FROM glossary_versions) AS active
+  FROM glossary_versions v
+  LEFT JOIN glossary_entries e ON e.version = v.version
+  GROUP BY v.version, v.created_at, v.created_by, v.note
+  ORDER BY v.version DESC
+  LIMIT 200
+`;
+
+export async function listGlossaryVersions(db: GlossaryQuery): Promise<GlossaryVersionInfo[]> {
+  const result = await db.query(LIST_VERSIONS_SQL);
+  return result.rows.map((row) => ({
+    version: Number(row.version),
+    createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+    createdBy: String(row.created_by),
+    note: String(row.note ?? ""),
+    entryCount: Number(row.entry_count),
+    active: row.active === true
+  }));
+}
+
+/** Egy sor a szerkesztőnek: az `approved` mellett, ki hagyta jóvá és mikor (a prompt ezt nem olvassa). */
+export interface GlossaryEntryDetail extends GlossaryEntry {
+  approvedBy: string | null;
+  approvedAt: string | null;
+}
+
+export interface GlossaryVersionDetail extends Omit<GlossaryVersionInfo, "entryCount"> {
+  entries: GlossaryEntryDetail[];
+}
+
+export const LOAD_VERSION_DETAIL_SQL = `
+  SELECT v.version, v.created_at, v.created_by, v.note,
+    v.version = (SELECT MAX(version) FROM glossary_versions) AS active,
+    e.abbreviation, e.original, e.language, e.hungarian, e.approved, e.approved_by, e.approved_at
+  FROM glossary_versions v
+  JOIN glossary_entries e ON e.version = v.version
+  WHERE v.version = $1
+  ORDER BY e.position
+`;
+
+/** Egy verzió a szerkesztőnek, vagy `null`, ha nincs ilyen (vagy egy sor nem az, amit a szerződés enged: nem javítjuk). */
+export async function loadGlossaryVersionDetail(db: GlossaryQuery, version: number): Promise<GlossaryVersionDetail | null> {
+  const result = await db.query(LOAD_VERSION_DETAIL_SQL, [version]);
+  if (result.rows.length === 0) return null;
+  const first = result.rows[0]!;
+  const entries: GlossaryEntryDetail[] = [];
+  for (const row of result.rows) {
+    const { abbreviation, original, language, hungarian, approved } = row;
+    if (
+      typeof abbreviation !== "string" ||
+      typeof original !== "string" ||
+      (language !== "en" && language !== "de") ||
+      typeof hungarian !== "string" ||
+      typeof approved !== "boolean"
+    ) {
+      return null;
+    }
+    entries.push({
+      abbreviation,
+      original,
+      language,
+      hungarian,
+      approved,
+      approvedBy: typeof row.approved_by === "string" ? row.approved_by : null,
+      approvedAt: row.approved_at instanceof Date ? row.approved_at.toISOString() : null
+    });
+  }
+  return {
+    version: Number(first.version),
+    createdAt: first.created_at instanceof Date ? first.created_at.toISOString() : String(first.created_at),
+    createdBy: String(first.created_by),
+    note: String(first.note ?? ""),
+    active: first.active === true,
+    entries
+  };
 }

@@ -32,7 +32,9 @@ import {
 import { CHAT_DEADLINE_ERROR, chatDeadlineMs, type ChatDeadline, withChatDeadline } from "./chat-deadline.js";
 import { ANSWER_ORDER_INSTRUCTIONS } from "./answer-order.js";
 import { GLOSSARY_INSTRUCTIONS } from "./glossary.js";
-import { createGlossaryProvider, type GlossaryProvider } from "./glossary-provider.js";
+import { createDatabaseGlossaryAdmin, parseGlossarySave, type GlossaryAdmin } from "./glossary-admin.js";
+import { createGlossaryProvider, DEFAULT_TTL_MS, type GlossaryProvider } from "./glossary-provider.js";
+import { GlossaryVersionConflict, validateGlossaryEntries } from "./glossary-store.js";
 import { instructionsVersion } from "./instructions-version.js";
 import { LIVE_DATA_INSTRUCTIONS } from "./live-data.js";
 import { FALSE_PREMISE_INSTRUCTIONS } from "./answer-false-premise.js";
@@ -422,6 +424,11 @@ export interface AppDependencies {
    * constants through the real routes. Default: the stored list from the database when one is configured, else the code constants.
    */
   glossary?: GlossaryProvider;
+  /**
+   * The glossary's history and write path (card 7a5ea203, C1). Substitutable for a test; the default is the database when one is configured,
+   * else none (the routes answer 503: with no database there is nothing to write to).
+   */
+  glossaryAdmin?: GlossaryAdmin | null;
 }
 
 /** The longest client key kept (the caller's key is stored with every conversation). */
@@ -453,6 +460,12 @@ export function buildApp(dependencies: AppDependencies = {}) {
   const conversations =
     dependencies.conversations ?? databaseConversationStore;
   const ratings = dependencies.ratings ?? databaseRatingStore;
+  const glossaryAdmin =
+    dependencies.glossaryAdmin !== undefined
+      ? dependencies.glossaryAdmin
+      : process.env.DATABASE_URL
+        ? createDatabaseGlossaryAdmin(pool)
+        : null;
   const glossary =
     dependencies.glossary ??
     createGlossaryProvider({
@@ -727,6 +740,57 @@ export function buildApp(dependencies: AppDependencies = {}) {
       source: current.source,
       instructionsVersion: instructionsVersionOf(current.text),
       entries: current.entries
+    };
+  });
+
+  /**
+   * THE GLOSSARY'S HISTORY AND WRITE PATH (card 7a5ea203, C1; the editor in the OS is C2/C3). Token required, like every /v1 route. No rate
+   * bucket for the same reason as the read: no model is called (rate-limit-route.spec.ts pins the model endpoints'). The write is the ONLY way a
+   * stored list changes; it is one transaction (glossary-store.ts) and refuses a list saved from an out-of-date base (409).
+   */
+  app.get("/v1/glossary/versions", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+    if (!glossaryAdmin) return reply.code(503).send({ error: "glossary store unavailable" });
+    return { versions: await glossaryAdmin.listVersions() };
+  });
+
+  app.get<{ Params: { version: string } }>("/v1/glossary/versions/:version", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+    if (!glossaryAdmin) return reply.code(503).send({ error: "glossary store unavailable" });
+    if (!/^[1-9][0-9]{0,8}$/.test(request.params.version)) return reply.code(400).send({ error: "invalid version" });
+    const detail = await glossaryAdmin.readVersion(Number(request.params.version));
+    if (!detail) return reply.code(404).send({ error: "version not found" });
+    return detail;
+  });
+
+  app.put("/v1/glossary", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) return reply.code(401).send({ error: "unauthorized" });
+    if (!glossaryAdmin) return reply.code(503).send({ error: "glossary store unavailable" });
+    const parsed = parseGlossarySave(request.body);
+    if (!parsed.ok) return reply.code(400).send({ error: "invalid glossary", message: parsed.message });
+    // the list's own rules (empty, a blank text, a duplicate, too long) BEFORE any store call; the store repeats them under its lock
+    const problem = validateGlossaryEntries(parsed.value.entries);
+    if (problem) return reply.code(400).send({ error: "invalid glossary", message: problem });
+    let version: number;
+    try {
+      version = await glossaryAdmin.save(parsed.value);
+    } catch (error) {
+      if (error instanceof GlossaryVersionConflict) {
+        return reply.code(409).send({ error: "version_conflict", activeVersion: error.activeVersion });
+      }
+      // a refused list (empty, a blank text, a duplicate, too long) is the caller's: its message names the row, no secret in it
+      if (error instanceof Error && !("code" in error)) return reply.code(400).send({ error: "invalid glossary", message: error.message });
+      request.log.error({ error: error instanceof Error ? error.message : String(error) }, "the glossary save failed");
+      return reply.code(500).send({ error: "glossary save failed" });
+    }
+    // THIS instance serves the new list at once; the other instances read it within the cache's TTL (barracuda, #147), and the answer says so
+    glossary.invalidate();
+    const current = await glossary.current();
+    return {
+      version,
+      activeVersion: current.version,
+      instructionsVersion: instructionsVersionOf(current.text),
+      takesEffectWithinSeconds: Math.ceil(DEFAULT_TTL_MS / 1000)
     };
   });
 
