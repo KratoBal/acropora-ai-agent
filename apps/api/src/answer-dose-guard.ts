@@ -171,6 +171,30 @@ const WORD_PRODUCT =
   /[\u00d7*]\s*\d+(?:[.,]\d+)?(?=\s*=)|(?<![\d.,])\d+(?:[.,]\d+)?\s*[\u00d7*](?=\s*[a-z][^=]*=)/g;
 
 /**
+ * "SZOROZD MEG N-TEL" IS ARITHMETIC TOO, WHEN IT LEADS TO THE SIZE OF A TANK (card 9ae2a149; the question-set run of 2026-11-26 17:45 UTC on e224a1e8): "Szorozd meg
+ * 7-tel: napi 3 liter -> egy hétre kb. 21 literes tartály lenne célszerű" sizes an ATO tank (3 litres a day, times 7 days, a 21 litre tank) and
+ * lost the answer to `per-volume-count`: the "7-tel" read as a bare count next to "napi" and a volume. The same multiplier written with a
+ * times sign ("napi 3 liter × 7 = 21 liter") already passes (`EQUATION`, `VOLUME_SUM`); this is the multiplier written as a verb phrase.
+ * IT IS TAKEN OUT ONLY WHEN (barracuda on #151): (1) the same sentence carries a result marker (an arrow, "=" or "≈") and, after it, a number in
+ * litres that belongs to a TANK noun ("21 literes tartály", "21 liter térfogatú tartályt", with the case endings): the result is the size of a
+ * vessel, not an amount given. The top-off dispenses litres too, when it runs Kalkwasser, and "szorozd meg 7-tel: napi 3 liter Kalkwasser -> 21
+ * liter" is a daily calcium hydroxide dose, so the litre number alone is no exemption; AND (2) the sentence has no LIME word (`LIME`: kalk-,
+ * mészvíz, kalcium-hidroxid, with endings, whatever the case). A closed word list is a weak exemption, which is why it only comes IN ADDITION
+ * to the tank noun, never instead of it. A recalculated dose has no tank result, so its count stays. The hyphen is any of the hyphens (the
+ * answer used U+2011), the verb any form of "szoroz-". The characters are built from code points, not typed: an invisible or look-alike
+ * character in the source is unreadable.
+ */
+const HYPHENS = "-" + String.fromCodePoint(0x2010) + String.fromCodePoint(0x2011);
+const RESULT_MARKERS = "=" + String.fromCodePoint(0x2248) + String.fromCodePoint(0x2192);
+const WORD_MULTIPLY = new RegExp(
+  `\\bszoroz\\w*\\s+(?:meg\\s+)?\\d+(?:[.,]\\d+)?[${HYPHENS}](?:tel|val|vel|szel|szal)\\b` +
+    `(?=[^${RESULT_MARKERS}]*[${RESULT_MARKERS}]>?[^0-9]*\\d+(?:[.,]\\d+)?\\s*(?:l|ltr|liter\\w*|litre\\w*)\\s+(?:[a-z-]+\\s+){0,2}tartaly\\w*)`,
+  "g"
+);
+/** A LIME WORD (barracuda on #151): what the top-off dispenses in litres when it runs Kalkwasser; folded text, so the case and the accents are gone. */
+const LIME = /kalk(?!ul)\w*|meszviz\w*|kalcium-?\s?hidroxid\w*|calcium-?\s?hydroxid\w*/;
+
+/**
  * THE OPERANDS OF A SUM THAT COMES OUT IN LITRES ARE WATER VOLUMES, NOT A COUNT ("kb. 14 + tartalék = 18–20 liter lenne a kényelmes heti méret"): the cron
  * guard's run of 2026-11-20 21:45 UTC lost an answer on the size of a top-off reservoir to it, the "14" read as a bare count next to "napi 2 liter" and "heti"
  * (acrobot 58977). A number followed by one or more "+ <number or word>" or "× <number>" terms and then "= <number or range> liter" is taken out; the
@@ -354,7 +378,8 @@ export function guardAnswerDoses(
   const facts = fixedDosesOf(outcome);
   let statements = 0;
   for (const raw of sentences(answer)) {
-    const s = fold(markSeriesNames(raw)).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ").replace(RANGE, "");
+    const folded = fold(markSeriesNames(raw)).replace(EMPHASIS, "").replace(LIST_MARKER, "").replace(VOLUME_SUM, " ").replace(EQUATION, " ").replace(WORD_PRODUCT, " ");
+    const s = (LIME.test(folded) ? folded : folded.replace(WORD_MULTIPLY, " ")).replace(RANGE, "");
     const amounts = [...s.matchAll(AMOUNT)];
     const volumes = [...s.matchAll(VOLUME)];
     const periods = (Object.keys(PERIOD) as Dose["period"][]).filter((p) => PERIOD[p].test(s));
