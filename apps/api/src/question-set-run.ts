@@ -290,7 +290,12 @@ export interface QuestionResult {
 const ATO = ABBREVIATIONS.find((entry) => entry.abbreviation === "ATO")!;
 
 /** The machine verdict for one answer, from the rules in the header. A failed call is `human`: nothing to score. */
-export function score(question: PinnedQuestion, answer: string | null): Pick<QuestionResult, "verdict" | "measures"> {
+export function score(
+  question: PinnedQuestion,
+  answer: string | null,
+  /** The abbreviation the two abbreviation checks expect: the server's stored ATO (B3), or the code constant. */
+  ato: Abbreviation = ATO
+): Pick<QuestionResult, "verdict" | "measures"> {
   if (answer === null) return { verdict: "human", measures: {} };
   switch (question.id) {
     case "glossary-preferred-term": {
@@ -312,7 +317,7 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
       };
     }
     case "abbreviation-expanded": {
-      const check = checkAbbreviation(answer, ATO);
+      const check = checkAbbreviation(answer, ato);
       return { verdict: check.firstExpanded ? "pass" : "fail", measures: check };
     }
     /*
@@ -349,7 +354,7 @@ export function score(question: PinnedQuestion, answer: string | null): Pick<Que
       };
     }
     case "abbreviation-not-repeated": {
-      const check = checkAbbreviation(answer, ATO);
+      const check = checkAbbreviation(answer, ato);
       return { verdict: check.expansions === 0 ? "pass" : "fail", measures: check };
     }
     default:
@@ -390,7 +395,8 @@ const VOID_BECAUSE = "the conversation holds an answer that is not the model's";
  */
 export async function runQuestionSet(
   send: SendQuestion,
-  questions: readonly PinnedQuestion[] = QUESTION_SET
+  questions: readonly PinnedQuestion[] = QUESTION_SET,
+  options: { ato?: Abbreviation } = {}
 ): Promise<QuestionResult[]> {
   const conversationOf = new Map<string, string>();
   // a question waits until the one it follows has been asked, at any depth; one whose parent is not in the set is
@@ -448,7 +454,7 @@ export async function runQuestionSet(
         ? { verdict: reply.source, measures: {} }
         : reply.ok && parentIsNotTheModels
           ? { verdict: "void" as const, measures: { voidBecause: VOID_BECAUSE } }
-          : score(question, answer))
+          : score(question, answer, options.ato))
     });
     if (reply.ok && reply.source !== "model") notTheModels.add(reply.conversationId);
   }
@@ -460,6 +466,12 @@ export interface RunReport {
   /** From the server's /health: which instruction text it answered under, and which code. */
   instructionsVersion: string | null;
   serverVersion: string | null;
+  /**
+   * Which glossary the abbreviation checks were measured against (card 7a5ea203, B3): the stored version the server reported (null when
+   * its code constants serve, or an older server), and where the ATO expectation came from: the server's list (`server`) or this runner's
+   * code constant (`constants`, with the reason). A glossary edit that changes ATO then shows in the report as the cause of a verdict.
+   */
+  glossary?: { version: number | null; expectation: "server" | "constants"; note?: string };
   startedAt: string;
   finishedAt: string;
   summary: {
@@ -887,6 +899,43 @@ function argument(argv: readonly string[], name: string): string | undefined {
  * included: it is checked BEFORE any model call is spent), 3 when `--compare` found a regression and no call failed.
  * Verdicts alone do not set the code.
  */
+/**
+ * The server's active glossary, for the abbreviation checks (B3). Never throws and never fails a run: an older server (404), an error, a
+ * body that is not the contract, or a list with no ATO falls back to the runner's code constant, and the report says so.
+ */
+export async function readServerAto(
+  fetchImpl: typeof fetch,
+  baseUrl: string,
+  token: string
+): Promise<{ ato: Abbreviation; glossary: NonNullable<RunReport["glossary"]> }> {
+  const fallback = (note: string, version: number | null = null) => ({ ato: ATO, glossary: { version, expectation: "constants" as const, note } });
+  let response: Response;
+  try {
+    response = await fetchImpl(`${baseUrl.replace(/\/$/, "")}/v1/glossary`, { headers: { authorization: `Bearer ${token}` } });
+  } catch (error) {
+    return fallback(`/v1/glossary unreachable: ${errorText(error)}`);
+  }
+  if (response.status === 404) return fallback("the server has no /v1/glossary (an older build)");
+  if (!response.ok) return fallback(`/v1/glossary answered ${response.status}`);
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    return fallback("/v1/glossary did not answer JSON");
+  }
+  const record = body !== null && typeof body === "object" ? (body as Record<string, unknown>) : {};
+  const version = typeof record.version === "number" ? record.version : null;
+  const entries = Array.isArray(record.entries) ? record.entries : null;
+  if (entries === null) return fallback("/v1/glossary answered no entries list", version);
+  const found = entries.find((entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object" && (entry as Record<string, unknown>).abbreviation === "ATO");
+  if (!found) return fallback("the server's glossary has no ATO", version);
+  const { abbreviation, original, language, hungarian } = found;
+  if (typeof abbreviation !== "string" || typeof original !== "string" || (language !== "en" && language !== "de") || typeof hungarian !== "string") {
+    return fallback("the server's ATO entry breaks the contract", version);
+  }
+  return { ato: { abbreviation, original, language, hungarian }, glossary: { version, expectation: "server" } };
+}
+
 export async function main(
   argv: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -936,10 +985,11 @@ export async function main(
   const health = (await fetchImpl(`${baseUrl.replace(/\/$/, "")}/health`)
     .then((r) => r.json())
     .catch(() => ({}))) as Record<string, unknown>;
+  const { ato, glossary } = await readServerAto(fetchImpl, baseUrl, token);
   const startedAt = new Date().toISOString();
   const sender = httpSender({ baseUrl, token, clientKey: argument(argv, "--client-key") ?? QUESTION_SET_CLIENT_KEY, fetchImpl });
   const runs: QuestionResult[][] = [];
-  for (let i = 0; i < repeat; i++) runs.push(await runQuestionSet(sender, questions));
+  for (let i = 0; i < repeat; i++) runs.push(await runQuestionSet(sender, questions, { ato }));
   const results = runs.flat();
   // the server's /health first; an older server without it still names the version on each model answer
   const fromAnswers = [...new Set(results.map((r) => r.instructionsVersion).filter((v): v is string => v !== null))];
@@ -952,6 +1002,7 @@ export async function main(
           ? fromAnswers[0]!
           : null,
     serverVersion: typeof health.version === "string" ? health.version : null,
+    glossary: { ...glossary, version: typeof health.glossaryVersion === "number" ? health.glossaryVersion : glossary.version },
     startedAt,
     finishedAt: new Date().toISOString(),
     summary: summarize(results),
@@ -967,7 +1018,8 @@ export async function main(
   if (sheet !== null) writeFileSync(sheetPath, sheet);
   const s = report.summary;
   io.log(
-    `question set ${report.questionSetVersion}, instructions ${report.instructionsVersion ?? "unknown"}, server ${report.serverVersion ?? "unknown"}: ` +
+    `question set ${report.questionSetVersion}, instructions ${report.instructionsVersion ?? "unknown"}, server ${report.serverVersion ?? "unknown"}, ` +
+      `glossary ${report.glossary?.version ?? "constants"} (ATO from the ${report.glossary?.expectation ?? "constants"}): ` +
       `pass ${s.pass}, fail ${s.fail}, human ${s.human}, replaced ${s.replaced}, local ${s.local}, errors ${s.errors}; ` +
       `glossary over ${s.glossary.answers} answers: preferred ${s.glossary.preferred}, avoided ${s.glossary.avoided}. Report: ${out}` +
       (sheet !== null ? `; judgement sheet for the ${s.human} human answers: ${sheetPath}` : "")

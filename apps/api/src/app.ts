@@ -711,6 +711,25 @@ export function buildApp(dependencies: AppDependencies = {}) {
    * that would have been cut with no HTTP answer now answers 504 `ai_chat_deadline`, which the OS names to the person.
    */
   const chatDeadline = chatDeadlineMs(limits.connectionTimeoutMs);
+  /**
+   * THE ACTIVE GLOSSARY, READ ONLY (card 7a5ea203, B3). The question-set runner reads its expectation for the abbreviation checks here, from
+   * the server it measures, so the measurement follows the stored list (a glossary edit moves the expectation with the text). Token
+   * required, like every /v1 route; no rate bucket: it calls no model (the rate limit is the model endpoints', rate-limit-route.spec.ts) and reads one
+   * cached list. Nothing here writes: the write path is the editor's (C).
+   */
+  app.get("/v1/glossary", async (request, reply) => {
+    if (!tokenIsValid(request.headers.authorization)) {
+      return reply.code(401).send({ error: "unauthorized" });
+    }
+    const current = await glossary.current();
+    return {
+      version: current.version,
+      source: current.source,
+      instructionsVersion: instructionsVersionOf(current.text),
+      entries: current.entries
+    };
+  });
+
   app.post<{ Body: ChatBody }>("/v1/chat", (request, reply) =>
     withChatDeadline(reply, chatDeadline, (deadline) => answerChat(request, reply, deadline))
   );
