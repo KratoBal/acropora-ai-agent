@@ -95,6 +95,13 @@ export const SCHEMA_SQL = `
     ALTER TABLE messages ADD COLUMN IF NOT EXISTS instructions_version TEXT;
 
     /*
+     * WHICH GLOSSARY VERSION the model was told (card 7a5ea203, B2): the number of the stored version (glossary_versions) whose list is in
+     * the instruction text of this answer. NULL is an answer made with the code constants (no stored version read), a local answer, a
+     * user row, and every row written before this column. The instructions_version hash says THAT the text differed; this says WHICH list.
+     */
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS glossary_version INTEGER;
+
+    /*
      * WHO the conversation is about, fixed when it is created.
      *
      * The customer used to be read per request and stored nowhere, so a

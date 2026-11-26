@@ -112,3 +112,77 @@ export async function loadActiveGlossary(db: GlossaryQuery): Promise<ActiveGloss
   }
   return version === null ? null : { version, entries };
 }
+
+/** Amit az írás egy `pg` poolból használ: egy kliens, amin a tranzakció fut. A teszt rögzítőt adhat át. */
+export interface GlossaryTransactionPool {
+  connect(): Promise<GlossaryQuery & { release(): void }>;
+}
+
+/**
+ * Egy lista érvényessége, MIELŐTT bármi íródna (a séma kényszerei ugyanezt tartják, de egy ellenőrizetlen lista félúton, tranzakció közben
+ * bukna el, és a hibaüzenet a sémáé lenne, nem a szerkesztőé). Üres lista nincs: egy üres verzió elvinné a szójegyzéket.
+ */
+export function validateGlossaryEntries(entries: readonly GlossaryEntry[]): string | null {
+  if (entries.length === 0) return "a szójegyzék nem lehet üres";
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (!entry.abbreviation.trim() || !entry.original.trim() || !entry.hungarian.trim()) {
+      return `a(z) "${entry.abbreviation}" sorban üres szöveg van`;
+    }
+    if (entry.language !== "en" && entry.language !== "de") return `a(z) "${entry.abbreviation}" nyelve nem en és nem de`;
+    if (seen.has(entry.abbreviation)) return `a(z) "${entry.abbreviation}" kétszer szerepel`;
+    seen.add(entry.abbreviation);
+  }
+  return null;
+}
+
+/**
+ * ÚJ VERZIÓ, EGY TRANZAKCIÓBAN: a verzió-sor és a bejegyzései együtt íródnak, vagy semmi (barracuda, #146). Egy félbehagyott írás különben egy
+ * bejegyzés nélküli legmagasabb verziót hagyna, az olvasás azt üresnek venné, és a szójegyzék eltűnne a promptból. Az új szám a legnagyobb +1,
+ * a két egyszerre író sorba áll egy tábla-zárolásnál. Visszaadja az új verzió számát; érvénytelen listára dob, és nem ír.
+ */
+export async function saveGlossaryVersion(
+  pool: GlossaryTransactionPool,
+  entries: readonly GlossaryEntry[],
+  createdBy: string,
+  note: string
+): Promise<number> {
+  const problem = validateGlossaryEntries(entries);
+  if (problem) throw new Error(problem);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("LOCK TABLE glossary_versions IN SHARE ROW EXCLUSIVE MODE");
+    const next = await client.query("SELECT COALESCE(MAX(version), 0) + 1 AS version FROM glossary_versions");
+    const version = Number(next.rows[0]?.version);
+    await client.query("INSERT INTO glossary_versions (version, created_by, note) VALUES ($1, $2, $3)", [version, createdBy, note]);
+    await client.query(
+      `
+        INSERT INTO glossary_entries (version, position, abbreviation, original, language, hungarian, approved)
+        SELECT $1, e.position, e.abbreviation, e.original, e.language, e.hungarian, e.approved
+        FROM unnest($2::int[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[])
+          AS e(position, abbreviation, original, language, hungarian, approved)
+      `,
+      [
+        version,
+        entries.map((_, index) => index + 1),
+        entries.map((entry) => entry.abbreviation),
+        entries.map((entry) => entry.original),
+        entries.map((entry) => entry.language),
+        entries.map((entry) => entry.hungarian),
+        entries.map((entry) => entry.approved)
+      ]
+    );
+    await client.query("COMMIT");
+    return version;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // a visszagörgetés hibája nem fedheti el az eredeti hibát
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
+}

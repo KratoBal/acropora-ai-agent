@@ -72,6 +72,45 @@ describe("the glossary store in Postgres", { skip: url ? false : "AI_GLOSSARY_DB
     assert.deepEqual(versions.rows.map((row) => row.version), [2]);
   });
 
+  it("saveGlossaryVersion writes the next version with its entries, and two parallel writes get two numbers", async () => {
+    const edited = store.SEED_ENTRIES.map((entry) => (entry.abbreviation === "ATO" ? { ...entry, hungarian: "más név" } : entry));
+    const versions = await Promise.all([store.saveGlossaryVersion(db.pool, edited, "test", "a"), store.saveGlossaryVersion(db.pool, edited, "test", "b")]);
+    assert.deepEqual([...versions].sort(), [3, 4]);
+    const loaded = await store.loadActiveGlossary(db.pool);
+    assert.equal(loaded?.version, 4);
+    assert.deepEqual(loaded?.entries, edited);
+    const counts = await db.pool.query("SELECT version, COUNT(*)::int AS n FROM glossary_entries WHERE version IN (3, 4) GROUP BY version ORDER BY version");
+    assert.deepEqual(counts.rows.map((row) => row.n), [6, 6]);
+  });
+
+  it("an invalid list writes nothing, and a failure between the version row and its entries leaves NO half version", async () => {
+    await assert.rejects(store.saveGlossaryVersion(db.pool, [], "test", "empty"));
+    const before = (await db.pool.query("SELECT MAX(version)::int AS v FROM glossary_versions")).rows[0].v;
+    // the same pool, but the entries insert fails: the version row written before it must roll back with it
+    const failing = {
+      connect: async () => {
+        const client = await db.pool.connect();
+        return {
+          query: async (text: string, values?: unknown[]) => {
+            if (text.includes("INSERT INTO glossary_entries")) throw new Error("the entries insert broke");
+            return client.query(text, values);
+          },
+          release: () => client.release()
+        };
+      }
+    };
+    await assert.rejects(store.saveGlossaryVersion(failing, store.SEED_ENTRIES, "test", "broken"), /entries insert broke/);
+    const after = (await db.pool.query("SELECT MAX(version)::int AS v FROM glossary_versions")).rows[0].v;
+    assert.equal(after, before);
+    const orphan = await db.pool.query("SELECT COUNT(*)::int AS n FROM glossary_versions v WHERE NOT EXISTS (SELECT 1 FROM glossary_entries e WHERE e.version = v.version)");
+    assert.equal(orphan.rows[0].n, 0);
+  });
+
+  it("the schema gives messages a glossary_version column", async () => {
+    const column = await db.pool.query("SELECT data_type FROM information_schema.columns WHERE table_name = 'messages' AND column_name = 'glossary_version'");
+    assert.equal(column.rows[0]?.data_type, "integer");
+  });
+
   it("refuses a language outside en/de and an empty text", async () => {
     await assert.rejects(
       db.pool.query(
